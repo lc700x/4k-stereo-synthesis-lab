@@ -1,0 +1,13 @@
+[project]
+name = "4k-stereo-synthesis-lab"
+version = "0.1.0"
+description = "4K stereo synthesis research prototypes"
+requires-python = ">=3.10"
+dependencies = [
+  "torch",
+  "pillow",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

@@ -6,6 +6,8 @@
 
 第一阶段不训练大模型，不直接改主项目。先在本仓库实现可复现 benchmark 和算法原型，再决定是否接回 `Desktop2Stereo`。
 
+当前实现不绑定任何深度模型。所有 backend 都接收外部 `RGB + depth` 输入；推荐用同一份 depth 对比不同 synthesis backend，避免把深度模型差异误判为左右眼生成算法差异。
+
 ## 阶段 1: Baseline 与评测框架
 
 目标：
@@ -20,10 +22,12 @@
 - `bench_4k.py` 性能脚本。
 - `compare_methods.py` 对比脚本。
 - 第一版测试场景集说明。
+- `half_sbs` 与 `full_sbs` 输出。
 
 验收：
 
 - 能对单帧 4K RGB + depth 输出 Half-SBS。
+- 能对单帧 4K RGB + depth 输出 Full-SBS。
 - 能记录每阶段耗时和峰值显存。
 - 能输出与当前 `Desktop2Stereo` 接近的 baseline 结果。
 
@@ -94,6 +98,8 @@ def synthesize_stereo(rgb, depth, config):
 | `symmetric` | `true` | 是否强制左右对称 |
 | `hole_fill` | `edge_aware` | `none`, `fast`, `edge_aware` |
 | `temporal` | `true` | 是否启用时序稳定 |
+| `output_format` | `half_sbs` | `half_sbs`, `full_sbs` |
+| `debug_output` | `false` | 是否输出 mask/layer/warp 调试信息 |
 
 ## 风险与降级
 
@@ -117,7 +123,8 @@ def synthesize_stereo(rgb, depth, config):
 
 - 4K 指 3840x2160 输入输出。
 - 深度推理分辨率以 518 为主，不追求 4K 深度模型直接推理。
+- 第一阶段不加载深度模型，只接收外部 depth 输入。
+- 推荐评估 depth 来源为 `Distill-Any-Depth-Base @ 518` 和 `Distill-Any-Depth-Large @ 518`。
 - RTX 2060 12GB 是最低可运行线，不保证 HQ。
 - RTX 3090 / RTX 5070 是 Quality/HQ 主要目标。
 - 第一阶段不训练模型，只做几何和局部修复算法。
-

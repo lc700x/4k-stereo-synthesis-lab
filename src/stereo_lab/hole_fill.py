@@ -1,0 +1,25 @@
+from __future__ import annotations
+
+import torch
+import torch.nn.functional as F
+
+from .output import ensure_bchw, ensure_b1hw
+
+
+def box_blur(x: torch.Tensor, radius: int) -> torch.Tensor:
+    if radius <= 0:
+        return x
+    k = radius * 2 + 1
+    channels = x.shape[1]
+    weight = torch.ones(channels, 1, k, k, device=x.device, dtype=x.dtype) / float(k * k)
+    return F.conv2d(x, weight, padding=radius, groups=channels)
+
+
+def edge_aware_fill(image: torch.Tensor, mask: torch.Tensor, radius: int = 3, strength: float = 1.0) -> torch.Tensor:
+    image = ensure_bchw(image, name="image").float()
+    mask = ensure_b1hw(mask).to(device=image.device, dtype=image.dtype).clamp(0, 1)
+    if mask.shape[-2:] != image.shape[-2:]:
+        mask = F.interpolate(mask, size=image.shape[-2:], mode="bilinear", align_corners=False)
+    blurred = box_blur(image, radius=radius)
+    blend = (mask * strength).clamp(0, 1)
+    return image * (1.0 - blend) + blurred * blend

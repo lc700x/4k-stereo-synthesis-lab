@@ -20,9 +20,19 @@
 - `Quality 4K`: 2-layer occlusion-aware synthesis。
 - `HQ 4K`: 3-4 layer synthesis + 更强 hole fill。
 
+## Model Boundary
+
+当前实现不加载、不训练任何深度模型或 stereo ML 模型。
+
+实验入口接收已经计算好的 `RGB + depth`，只比较 stereo synthesis 算法本身。建议评估时固定 depth 来源：
+
+- `Distill-Any-Depth-Base @ 518` 作为当前默认基线。
+- `Distill-Any-Depth-Large @ 518` 作为高端卡目标基线。
+- 同一份 depth 输入下比较 `fast / quality_4k / hq_4k`，避免把深度模型差异误判为左右眼生成算法差异。
+
 详细计划见：
 
 - [Implementation Plan](docs/04-implementation-plan.md)
 - [4K Performance Budget](docs/02-4k-performance-budget.md)
 - [iw3 Comparison](docs/03-iw3-comparison.md)
-
+- [Model Boundary](docs/05-model-boundary.md)

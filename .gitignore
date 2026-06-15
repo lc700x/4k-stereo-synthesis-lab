@@ -5,6 +5,7 @@ __pycache__/
 .mypy_cache/
 .venv/
 venv/
+python3/
 build/
 dist/
 *.egg-info/
@@ -19,4 +20,3 @@ samples/private/
 *.jpeg
 *.webp
 !samples/README.md
-

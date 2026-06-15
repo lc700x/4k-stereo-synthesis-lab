@@ -10,14 +10,14 @@ from .output import ensure_bchw, ensure_b1hw, to_uint8_image
 
 def load_rgb(path: str | Path, device: str | torch.device = "cpu") -> torch.Tensor:
     image = Image.open(path).convert("RGB")
-    data = torch.ByteTensor(torch.ByteStorage.from_buffer(image.tobytes()))
+    data = torch.frombuffer(bytearray(image.tobytes()), dtype=torch.uint8)
     data = data.view(image.height, image.width, 3).permute(2, 0, 1).float() / 255.0
     return data.unsqueeze(0).to(device)
 
 
 def load_depth(path: str | Path, device: str | torch.device = "cpu") -> torch.Tensor:
     image = Image.open(path).convert("L")
-    data = torch.ByteTensor(torch.ByteStorage.from_buffer(image.tobytes()))
+    data = torch.frombuffer(bytearray(image.tobytes()), dtype=torch.uint8)
     data = data.view(image.height, image.width).float() / 255.0
     return data.unsqueeze(0).unsqueeze(0).to(device)
 

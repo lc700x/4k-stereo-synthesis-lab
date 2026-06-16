@@ -1,7 +1,7 @@
 # API Handoff Progress
 
 更新时间：2026-06-16  
-当前提交：`5c5ac7b`  
+当前提交：`2a2bb30`  
 项目目录：`D:\AI_2D_to_3D\4.LC700X_Desktop2Stereo\4k-stereo-synthesis-lab`
 
 ## 目标
@@ -482,30 +482,58 @@ TensorRT FP16 -> ONNX CUDA -> PyTorch CUDA fallback
 
 目标：给 `Distill-Any-Depth-Base @ 294x518 fp16` 建立独立 TensorRT 路径。
 
-待做：
-
-- 新增 `scripts/build_distill_base_trt.py`。
-- 新增 `scripts/run_visible_build_distill_base_trt.bat`。
-- 输出到：
-
-```text
-models/models--lc700x--Distill-Any-Depth-Base-hf/model_fp16_294x518.trt
-```
+已完成：
 
 - 新增 `src/stereo_lab/depth_trt_provider.py`。
-- 实现优先 TensorRT、失败回退 ONNX CUDA、再回退 PyTorch CUDA 的 depth provider。
-- 报告中记录 `depth_backend = tensorrt | onnx_cuda | pytorch_cuda`。
-- 对比 `PyTorch CUDA / ONNX CUDA session.run / ONNX CUDA IOBinding / TensorRT FP16` 的单帧耗时、显存和端到端 FPS。
+- 实现 `TensorRT EP -> ONNX CUDA IOBinding -> PyTorch CUDA` depth backend fallback。
+- 自动发现并加入 TensorRT runtime DLL 路径：
+
+```text
+python3/Lib/site-packages/tensorrt_libs/
+```
+
+- 修复 benchmark 误把 TensorRT engine build / session creation 计入每帧 inference 的问题。
+- 新增 `scripts/bench_depth_backends.py`。
+- 新增 `scripts/compare_python_env_depth_backends.py`。
+- 新增 `scripts/probe_tensorrt_runtime.py`。
+- 新增 `scripts/run_visible_compare_env_depth_backends.bat`。
+- 已输出 benchmark 报告：
+
+```text
+docs/07-depth-backend-benchmark-2026-06-16.md
+```
+
+当前 4K 结论：
+
+| 环境 | TensorRT EP | ONNX CUDA IOBinding | PyTorch CUDA |
+|---|---:|---:|---:|
+| `python3` | `24.971 ms` | `37.483 ms` | `45.812 ms` |
+| `python-cu13` | `29.725 ms` | `38.670 ms` | `46.746 ms` |
+
+当前推荐：
+
+- `python3` 作为稳定主线。
+- `python-cu13` 作为实验线。
+- TensorRT provider/session 必须常驻复用，不能每帧重建。
+
+剩余细化：
+
+- 如果后续需要 native TensorRT engine API，再新增独立 build/run 脚本。
+- 继续拆分 `preprocess_ms / model_ms / postprocess_ms`，确认 4K 约 `25 ms` 内部瓶颈。
+- 在实时 API 中保持 provider/session 常驻。
 
 ### P0：ONNX IOBinding
 
 目标：验证 ONNX CUDA fallback 是否能避免 CPU copy。
 
-待做：
+已完成：
 
 - 在 `src/stereo_lab/depth_onnx_provider.py` 增加 IOBinding 路径。
-- 报告中记录 `output_device = cuda | cpu`。
-- benchmark 普通 `session.run()` 与 IOBinding 的耗时差异。
+- ONNX CUDA 默认使用 IOBinding。
+- 已纳入 `python3` / `python-cu13` 环境 benchmark。
+
+剩余细化：
+
 - 如果后续 stereo synthesis 仍是 PyTorch tensor path，研究 OrtValue/DLPack 或可接受的 GPU tensor 转换方式。
 
 ### P1：Quality 4K 算法增强
@@ -630,12 +658,11 @@ Distill-Any-Depth-Base @ 518
 
 ## 推荐下一步执行顺序
 
-1. 实现 `depth_trt_provider.py` 和 `build_distill_base_trt.py`，形成 `TensorRT -> ONNX CUDA -> PyTorch CUDA`。
-2. 给 ONNX provider 增加 IOBinding，验证 GPU-resident output。
-3. 做 depth backend benchmark：PyTorch CUDA、ONNX CUDA、ONNX IOBinding、TensorRT FP16。
-4. 把 depth provider API 稳定成 `estimate_depth(rgb, config)`。
-5. 把 one-shot API 稳定成 `rgb_to_stereo(rgb, depth_config, stereo_config)`。
+1. 把 depth benchmark 拆成 `preprocess_ms / model_ms / postprocess_ms`，确认 4K 约 `25 ms` 里面到底哪部分最贵。
+2. 做常驻 provider/session 的实时 API，避免每帧重复初始化；目标形态是 `create_depth_provider(config) -> provider.load() -> provider.predict(rgb)`。
+3. 开始实现并增强 2-layer occlusion-aware stereo synthesis，重点是 layer 分离、occlusion mask、edge-aware hole fill。
+4. 用同一张 RGB + depth 输出 `baseline` / `quality_4k` 对比图，固定输入，避免把 depth 差异误判为 stereo synthesis 差异。
+5. 测完整 4K `RGB -> depth -> stereo -> Half-SBS/Full-SBS` 端到端 FPS。
 6. 用真实图片批量评估 Distill depth 是否符合 3D 直觉。
-7. 增强 Quality 4K 的 occlusion/layer/hole fill。
-8. 做 iw3 同场景对比。
-9. 再评估是否接回 `Desktop2Stereo`。
+7. 做 iw3 同场景对比。
+8. 再评估是否接回 `Desktop2Stereo`。

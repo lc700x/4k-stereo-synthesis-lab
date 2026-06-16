@@ -12,6 +12,7 @@ from stereo_lab.hole_fill import box_blur, edge_aware_fill
 from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
 from stereo_lab.layers import composite_layers, depth_edges, make_depth_layers
 from stereo_lab.occlusion import make_occlusion_mask
+from stereo_lab.output import make_sbs
 from stereo_lab.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
 from stereo_lab.temporal import TemporalState
 
@@ -139,6 +140,17 @@ def test_fused_occlusion_cuda_matches_torch_path_when_available():
     assert torch.equal(actual, expected)
 
 
+def test_fused_half_sbs_cuda_matches_torch_path_when_available():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(19)
+    left = torch.rand(1, 3, 24, 40, device="cuda")
+    right = torch.rand(1, 3, 24, 40, device="cuda")
+    expected = make_sbs(left, right, "half_sbs", fused=False)
+    actual = make_sbs(left, right, "half_sbs", fused=True)
+    assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)
+
+
 def test_fused_config_false_uses_torch_backends():
     rgb, depth = make_inputs(width=40, height=24)
     result = synthesize_stereo(
@@ -149,6 +161,7 @@ def test_fused_config_false_uses_torch_backends():
     assert result.debug_info["warp_composite_backend"] == "torch_grid_sample"
     assert result.debug_info["occlusion_mask_backend"] == "torch_max_pool"
     assert result.debug_info["hole_fill_backend"] == "torch_avg_pool"
+    assert result.debug_info["sbs_backend"] == "torch_interpolate"
 
 
 def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch):
@@ -162,6 +175,7 @@ def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch)
     assert result.debug_info["warp_composite_backend"] == "torch_grid_sample"
     assert result.debug_info["occlusion_mask_backend"] == "torch_max_pool"
     assert result.debug_info["hole_fill_backend"] == "torch_avg_pool"
+    assert result.debug_info["sbs_backend"] == "torch_interpolate"
 
 
 def test_warp_horizontal_matches_cached_grid_formula():

@@ -10,7 +10,7 @@ from .baseline_shift import ShiftParams, compute_shift_px, synthesize_baseline, 
 from .hole_fill import edge_aware_fill, edge_aware_fill_backend
 from .layers import composite_layers, make_depth_layers
 from .occlusion import make_occlusion_mask, occlusion_backend
-from .output import OutputFormat, ensure_bchw, make_sbs, match_depth
+from .output import OutputFormat, ensure_bchw, make_sbs, match_depth, sbs_backend
 from .refine import refine_local
 from .temporal import TemporalState, apply_temporal
 
@@ -159,7 +159,8 @@ def synthesize_stereo(
     if config.temporal:
         left, right = apply_temporal(left, right, mask, temporal_state, strength=config.temporal_strength)
 
-    sbs = make_sbs(left, right, config.output_format)
+    debug["sbs_backend"] = sbs_backend(left, right, config.output_format, fused=config.fused)
+    sbs = make_sbs(left, right, config.output_format, fused=config.fused)
     if not config.debug_output:
         debug = {k: v for k, v in debug.items() if isinstance(v, (float, int, str))}
     return StereoResult(left_eye=left, right_eye=right, sbs=sbs, debug_info=debug)

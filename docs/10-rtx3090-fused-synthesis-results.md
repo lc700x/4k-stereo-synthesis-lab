@@ -17,13 +17,14 @@ Base Native TensorRT is resident and remains the recommended depth backend.
 
 ### Synthesis
 
-Three optional fused Triton paths are now available:
+Four optional fused Triton paths are now available:
 
 - `triton_radius3` hole fill for CUDA float32, `B x 3 x H x W` image, `B x 1 x H x W` mask, `radius=3`, `strength=1.0`.
 - `triton_warp_composite2` for CUDA float32, 2-layer, symmetric, single-frame `quality_4k` warp + composite.
 - `triton_occlusion_radius2` for CUDA float32, single-frame occlusion mask generation with `edge_threshold=0.04` and `dilation=2`.
+- `triton_half_sbs` for CUDA float32, single-frame `B=1, C=3`, even-width Half-SBS resize + pack.
 
-Both paths are guarded by strict shape/type/config checks and fall back to the original PyTorch implementation when unsupported.
+All paths are guarded by strict shape/type/config checks and fall back to the original PyTorch implementation when unsupported.
 
 Fused paths are enabled by default and can be disabled with:
 
@@ -38,13 +39,24 @@ Fused paths are enabled by default and can be disabled with:
 Command:
 
 ```powershell
-.\python3\python.exe -B scripts\bench_end_to_end_4k.py --rgb 4K.jpg --out outputs\rtx3090_end_to_end_base_quality_occlusion_fused_repeat.json --warmup 5 --iters 20 --backend quality_4k --layers 2 --depth-backend tensorrt_native --onnx models\models--lc700x--Distill-Any-Depth-Base-hf\model_fp16_294x518.onnx --trt-engine models\models--lc700x--Distill-Any-Depth-Base-hf\model_fp16_294x518.trt --output-format half_sbs --output-format full_sbs
+.\python3\python.exe -B scripts\bench_end_to_end_4k.py --rgb 4K.jpg --out outputs\rtx3090_end_to_end_base_quality_half_sbs_fused.json --warmup 5 --iters 20 --backend quality_4k --layers 2 --depth-backend tensorrt_native --onnx models\models--lc700x--Distill-Any-Depth-Base-hf\model_fp16_294x518.onnx --trt-engine models\models--lc700x--Distill-Any-Depth-Base-hf\model_fp16_294x518.trt --output-format half_sbs --output-format full_sbs
 ```
 
 | Output | Depth ms | Synthesis ms | Total ms | FPS |
 |---|---:|---:|---:|---:|
-| Half-SBS | 6.253 | 6.088 | 12.342 | 81.02 |
-| Full-SBS | 6.884 | 6.088 | 12.973 | 77.08 |
+| Half-SBS | 6.204 | 5.823 | 12.027 | 83.14 |
+| Full-SBS | 5.752 | 5.770 | 11.523 | 86.78 |
+
+This latest Base run includes `triton_half_sbs` for Half-SBS output packing:
+
+```text
+outputs/rtx3090_end_to_end_base_quality_half_sbs_fused.json
+```
+
+Backend fields:
+
+- Half-SBS: `triton_warp_composite2`, `triton_occlusion_radius2`, `triton_radius3`, `triton_half_sbs`
+- Full-SBS: `triton_warp_composite2`, `triton_occlusion_radius2`, `triton_radius3`, `torch_cat`
 
 ### Large
 
@@ -71,6 +83,7 @@ Provider metadata for explicit Large ONNX/TRT paths is inferred from the Hugging
 | Triton hole fill only | 46.57 | 50.50 |
 | Triton warp+composite + Triton hole fill | 74.55 | 72.58 |
 | Triton warp+composite + occlusion + hole fill | 81.02 | 77.08 |
+| Triton warp+composite + occlusion + hole fill + Half-SBS | 83.14 | 86.78 |
 
 ## Visual Regression
 
@@ -78,6 +91,12 @@ Latest set:
 
 ```text
 outputs/visual_regression/rtx3090_base_quality_occlusion_fused
+```
+
+Latest Half-SBS fused set:
+
+```text
+outputs/visual_regression/rtx3090_base_quality_half_sbs_fused
 ```
 
 Large set:
@@ -106,6 +125,17 @@ Compared with `rtx3090_base_quality_final_fused`, the fused occlusion path produ
 - `quality_4k_half_sbs.png`: identical
 - `quality_4k_full_sbs.png`: identical
 
+Compared with `rtx3090_base_quality_occlusion_fused`, the fused Half-SBS path preserved all non-Half-SBS outputs byte-identically:
+
+- `quality_4k_left.png`: identical
+- `quality_4k_right.png`: identical
+- `quality_4k_full_sbs.png`: identical
+- `quality_4k_occlusion_mask.png`: identical
+- `baseline_half_sbs.png`: max uint8 diff 1, mean 0.000016
+- `quality_4k_half_sbs.png`: max uint8 diff 1, mean 0.000026
+
+The Half-SBS differences are limited to 1/255-level rounding differences from the fused linear resize path.
+
 Manual visual inspection of `contact_sheet_labeled.png` for both Base and Large found:
 
 - Input/depth/left/right/SBS outputs are present and complete.
@@ -123,7 +153,7 @@ Manual visual inspection of `contact_sheet_labeled.png` for both Base and Large 
   - `breakdown_mean_ms`, which uses the manual unfused breakdown path for component attribution.
 - Fused warp/composite is not used for `hq_4k` 3+ layers, asymmetric mode, CPU, non-float32 tensors, or unsupported shapes.
 - Fused occlusion is not used for non-default threshold/dilation, CPU, non-float32 tensors, or unsupported shapes.
-- `bench_end_to_end_4k.py` records `synthesis_debug.warp_composite_backend`, `synthesis_debug.occlusion_mask_backend`, and `synthesis_debug.hole_fill_backend`; the latest Base run reports `triton_warp_composite2`, `triton_occlusion_radius2`, and `triton_radius3`.
+- `bench_end_to_end_4k.py` records `synthesis_debug.warp_composite_backend`, `synthesis_debug.occlusion_mask_backend`, `synthesis_debug.hole_fill_backend`, and `synthesis_debug.sbs_backend`; the latest Base run reports `triton_warp_composite2`, `triton_occlusion_radius2`, `triton_radius3`, and `triton_half_sbs` for Half-SBS.
 
 ## Next Verification Targets
 

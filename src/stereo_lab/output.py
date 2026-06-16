@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from typing import Literal
 
 import torch
@@ -33,7 +34,7 @@ def match_depth(depth: torch.Tensor, height: int, width: int) -> torch.Tensor:
     return F.interpolate(depth, size=(height, width), mode="bilinear", align_corners=False)
 
 
-def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputFormat) -> torch.Tensor:
+def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputFormat, fused: bool = True) -> torch.Tensor:
     left = ensure_bchw(left, name="left")
     right = ensure_bchw(right, name="right")
     if left.shape != right.shape:
@@ -43,6 +44,10 @@ def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputForma
         return torch.cat([left, right], dim=-1)
 
     if output_format == "half_sbs":
+        if sbs_backend(left, right, output_format, fused=fused) == "triton_half_sbs":
+            from .output_triton import make_half_sbs
+
+            return make_half_sbs(left, right)
         h, w = left.shape[-2:]
         left_w = max(1, w // 2)
         right_w = max(1, w - left_w)
@@ -51,6 +56,22 @@ def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputForma
         return torch.cat([left_half, right_half], dim=-1)
 
     raise ValueError(f"unknown output_format: {output_format}")
+
+
+def sbs_backend(left: torch.Tensor, right: torch.Tensor, output_format: OutputFormat, fused: bool = True) -> str:
+    if output_format == "full_sbs":
+        return "torch_cat"
+    if output_format != "half_sbs" or not fused or _triton_disabled_by_env():
+        return "torch_interpolate"
+    try:
+        from .output_triton import can_use_triton_half_sbs
+    except Exception:
+        return "torch_interpolate"
+    return "triton_half_sbs" if can_use_triton_half_sbs(left, right) else "torch_interpolate"
+
+
+def _triton_disabled_by_env() -> bool:
+    return os.environ.get("STEREO_LAB_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
 
 
 def to_uint8_image(x: torch.Tensor) -> torch.Tensor:

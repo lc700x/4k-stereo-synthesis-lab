@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
 from stereo_lab.hole_fill import box_blur
+from stereo_lab.baseline_shift import make_base_grid, warp_horizontal
 from stereo_lab.layers import depth_edges
 from stereo_lab.synthesis import StereoConfig, synthesize_stereo
 from stereo_lab.temporal import TemporalState
@@ -80,3 +81,16 @@ def test_depth_edges_matches_padded_gradient_formula():
     expected = ((dx + dy) > threshold).float()
     actual = depth_edges(depth, threshold=threshold)
     assert torch.equal(actual, expected)
+
+
+def test_warp_horizontal_matches_cached_grid_formula():
+    rgb, depth = make_inputs(width=32, height=16)
+    eye_sign = -1.0
+    b, _, h, w = rgb.shape
+    shift_px = depth * 0.75
+    grid = make_base_grid(b, h, w, rgb.device, rgb.dtype).clone()
+    shift_norm = (2.0 * shift_px.squeeze(1) / max(w - 1, 1)) * eye_sign
+    grid[..., 0] = grid[..., 0] + shift_norm
+    expected = F.grid_sample(rgb, grid, mode="bilinear", padding_mode="border", align_corners=True)
+    actual = warp_horizontal(rgb, shift_px, eye_sign=eye_sign)
+    assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)

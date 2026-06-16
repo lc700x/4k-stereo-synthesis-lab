@@ -26,6 +26,7 @@ The synthesis changes are limited to stereo generation after RGB + depth are alr
 | `49da1fc` | synthesis | Reduced quality synthesis allocations. |
 | `1e2a171` | synthesis | Reduced depth edge allocations. |
 | `5866878` | docs | Added this optimization log. |
+| `pending` | synthesis | Cache grid components for horizontal warp and avoid cloning the full base grid. |
 
 ## Workflow And Evaluation Optimizations
 
@@ -814,6 +815,71 @@ outputs/end_to_end_4k/quality_native_synthesis_edges_opt.json
 |---|---:|---:|---:|---:|
 | Half-SBS | 16.200 | 54.951 | 71.152 | 14.05 |
 | Full-SBS | 15.201 | 53.022 | 68.224 | 14.66 |
+
+## Kept Optimization 4: Base Grid Component Cache
+
+Commit:
+
+```text
+pending
+```
+
+Files:
+
+- `src/stereo_lab/baseline_shift.py`
+- `tests/test_synthesis.py`
+
+Changes:
+
+- Added cached base grid components:
+
+```text
+xx, yy = make_base_grid_components(height, width, device, dtype)
+```
+
+- `warp_horizontal` now builds the grid from cached x/y components instead of cloning the full `[B,H,W,2]` base grid and overwriting the x channel.
+
+Why this is safe:
+
+- The same normalized x/y grid values are used.
+- The shift formula is unchanged.
+- `grid_sample` parameters are unchanged:
+
+```text
+mode="bilinear", padding_mode="border", align_corners=True
+```
+
+- Added `test_warp_horizontal_matches_cached_grid_formula`, comparing against the old cached-grid-clone formula.
+- No depth inference path is touched.
+
+Profile:
+
+```text
+outputs/synthesis_profile_4k/quality_half_profile_grid_components_rerun.json
+```
+
+| Stage | Before ms | After ms |
+|---|---:|---:|
+| warp_layers | ~14.62 | ~14.45 |
+| synthesis mean | 56.166 | 55.742 |
+
+End-to-end:
+
+```text
+outputs/end_to_end_4k/quality_native_grid_components.json
+```
+
+| Output | Depth ms | Synthesis ms | Total ms | FPS |
+|---|---:|---:|---:|---:|
+| Half-SBS | 16.593 | 54.697 | 71.292 | 14.03 |
+| Full-SBS | 15.550 | 54.482 | 70.034 | 14.28 |
+
+Judgment:
+
+- Keep as a small safe synthesis optimization.
+- Synthesis-only profile improved slightly.
+- End-to-end FPS did not show a clear stable gain, likely due to depth/output bandwidth and GPU timing variance.
+- Do not overstate this as a major speedup.
 
 ## Verification Commands
 

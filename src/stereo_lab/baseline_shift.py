@@ -17,6 +17,7 @@ class ShiftParams:
 
 
 _GRID_CACHE: dict[tuple[int, int, int, str, torch.dtype], torch.Tensor] = {}
+_GRID_COMPONENT_CACHE: dict[tuple[int, int, str, torch.dtype], tuple[torch.Tensor, torch.Tensor]] = {}
 
 
 def make_base_grid(batch: int, height: int, width: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
@@ -33,6 +34,18 @@ def make_base_grid(batch: int, height: int, width: int, device: torch.device, dt
     return grid
 
 
+def make_base_grid_components(height: int, width: int, device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
+    key = (height, width, str(device), dtype)
+    cached = _GRID_COMPONENT_CACHE.get(key)
+    if cached is not None:
+        return cached
+    y = torch.linspace(-1.0, 1.0, height, device=device, dtype=dtype)
+    x = torch.linspace(-1.0, 1.0, width, device=device, dtype=dtype)
+    yy, xx = torch.meshgrid(y, x, indexing="ij")
+    _GRID_COMPONENT_CACHE[key] = (xx, yy)
+    return xx, yy
+
+
 def compute_shift_px(depth: torch.Tensor, width: int, params: ShiftParams) -> torch.Tensor:
     depth = depth.clamp(0, 1)
     centered = depth - params.convergence
@@ -44,10 +57,11 @@ def warp_horizontal(rgb: torch.Tensor, shift_px: torch.Tensor, eye_sign: float) 
     rgb = ensure_bchw(rgb, name="rgb").float()
     b, _, h, w = rgb.shape
     shift_px = match_depth(shift_px, h, w)
-    grid = make_base_grid(b, h, w, rgb.device, rgb.dtype)
+    xx, yy = make_base_grid_components(h, w, rgb.device, rgb.dtype)
     shift_norm = (2.0 * shift_px.squeeze(1) / max(w - 1, 1)) * eye_sign
-    grid = grid.clone()
-    grid[..., 0] = grid[..., 0] + shift_norm
+    grid_x = xx.unsqueeze(0) + shift_norm
+    grid_y = yy.expand(b, h, w)
+    grid = torch.stack((grid_x, grid_y), dim=-1)
     return F.grid_sample(rgb, grid, mode="bilinear", padding_mode="border", align_corners=True)
 
 

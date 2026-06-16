@@ -122,6 +122,38 @@ def test_create_depth_provider_supports_native_tensorrt(tmp_path):
     assert provider.build_engine is True
 
 
+def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
+    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+
+    model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
+    onnx_path = model_dir / "model_fp16_294x518.onnx"
+    engine_path = model_dir / "model_fp16_294x518.trt"
+    provider = DistillAnyDepthBaseNativeTensorRt(
+        device="cuda",
+        onnx_path=onnx_path,
+        engine_path=engine_path,
+    )
+
+    assert provider.info.model_id == "xingyang1/Distill-Any-Depth-Large-hf"
+    assert provider.info.model_name == "Distill-Any-Depth-Large"
+
+
+def test_native_tensorrt_keeps_explicit_metadata(tmp_path):
+    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+
+    model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
+    provider = DistillAnyDepthBaseNativeTensorRt(
+        device="cuda",
+        onnx_path=model_dir / "model_fp16_294x518.onnx",
+        engine_path=model_dir / "model_fp16_294x518.trt",
+        model_id="custom/model",
+        model_name="Custom Model",
+    )
+
+    assert provider.info.model_id == "custom/model"
+    assert provider.info.model_name == "Custom Model"
+
+
 def test_estimate_depth_uses_configured_provider(monkeypatch):
     class Provider:
         info = DepthProviderInfo(

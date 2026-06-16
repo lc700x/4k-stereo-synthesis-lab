@@ -60,6 +60,8 @@ Command:
 
 The Large model is visually usable for quality comparison on RTX 3090, but it is not a 4K 60 FPS end-to-end target in this current path because depth inference is the bottleneck.
 
+Provider metadata for explicit Large ONNX/TRT paths is inferred from the Hugging Face cache-style directory name, so JSON reports should show `xingyang1/Distill-Any-Depth-Large-hf` instead of the Base default.
+
 ## Progression
 
 | Version | Half-SBS FPS | Full-SBS FPS |

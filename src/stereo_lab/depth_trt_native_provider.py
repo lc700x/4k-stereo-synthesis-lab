@@ -25,6 +25,25 @@ def default_distill_base_native_trt_path(cache_dir: str | Path | None = None) ->
     return cache / "models--lc700x--Distill-Any-Depth-Base-hf" / "model_fp16_294x518.trt"
 
 
+def _infer_model_metadata_from_paths(
+    onnx_path: Path,
+    engine_path: Path,
+    *,
+    model_id: str,
+    model_name: str,
+) -> tuple[str, str]:
+    if model_id != DISTILL_ANY_DEPTH_BASE_MODEL_ID or model_name != DISTILL_ANY_DEPTH_BASE_NAME:
+        return model_id, model_name
+
+    for path in (onnx_path, engine_path):
+        for part in path.parts:
+            if part.startswith("models--") and "Distill-Any-Depth" in part:
+                inferred_id = part.removeprefix("models--").replace("--", "/")
+                inferred_name = inferred_id.rsplit("/", 1)[-1].replace("-hf", "")
+                return inferred_id, inferred_name
+    return model_id, model_name
+
+
 class NativeTensorRtEngine:
     def __init__(self, engine_path: str | Path, *, device: str | torch.device = "cuda", dtype: torch.dtype = torch.float16) -> None:
         self.engine_path = Path(engine_path)
@@ -231,8 +250,12 @@ class DistillAnyDepthBaseNativeTensorRt:
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
         self.onnx_path = Path(onnx_path) if onnx_path is not None else default_distill_base_onnx_path(self.cache_dir)
         self.engine_path = Path(engine_path) if engine_path is not None else default_distill_base_native_trt_path(self.cache_dir)
-        self.model_id = model_id
-        self.model_name = model_name
+        self.model_id, self.model_name = _infer_model_metadata_from_paths(
+            self.onnx_path,
+            self.engine_path,
+            model_id=model_id,
+            model_name=model_name,
+        )
         self.build_engine = bool(build_engine)
         self.force_rebuild = bool(force_rebuild)
         self.use_cuda_graph = bool(use_cuda_graph)

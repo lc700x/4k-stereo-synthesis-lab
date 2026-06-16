@@ -191,6 +191,35 @@ def test_fused_full_sbs_cuda_matches_torch_path_when_available():
     assert sbs_backend(left, right, "full_sbs", fused=True) == "triton_full_sbs"
 
 
+def test_fused_tab_outputs_cuda_match_torch_path_when_available():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(29)
+    left = torch.rand(1, 3, 24, 40, device="cuda")
+    right = torch.rand(1, 3, 24, 40, device="cuda")
+    expected_half = make_sbs(left, right, "half_tab", fused=False)
+    actual_half = make_sbs(left, right, "half_tab", fused=True)
+    expected_full = make_sbs(left, right, "full_tab", fused=False)
+    actual_full = make_sbs(left, right, "full_tab", fused=True)
+    assert torch.allclose(actual_half, expected_half, atol=1e-6, rtol=1e-6)
+    assert torch.equal(actual_full, expected_full)
+    assert sbs_backend(left, right, "half_tab", fused=True) == "triton_half_tab"
+    assert sbs_backend(left, right, "full_tab", fused=True) == "triton_full_tab"
+
+
+def test_fused_depth_map_cuda_matches_torch_path_when_available():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(31)
+    left = torch.rand(1, 3, 24, 40, device="cuda")
+    right = torch.rand(1, 3, 24, 40, device="cuda")
+    depth = torch.rand(1, 1, 24, 40, device="cuda")
+    expected = make_sbs(left, right, "depth_map", fused=False, depth=depth)
+    actual = make_sbs(left, right, "depth_map", fused=True, depth=depth)
+    assert torch.equal(actual, expected)
+    assert sbs_backend(left, right, "depth_map", fused=True, depth=depth) == "triton_depth_map"
+
+
 def test_depth_map_requires_depth():
     left = torch.rand(1, 3, 8, 10)
     right = torch.rand(1, 3, 8, 10)
@@ -217,6 +246,20 @@ def test_fused_config_false_uses_torch_backends():
     )
     assert full_result.debug_info["sbs_backend"] == "torch_cat"
 
+    half_tab_result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", layers=2, output_format="half_tab", debug_output=True, temporal=False, fused=False),
+    )
+    assert half_tab_result.debug_info["sbs_backend"] == "torch_interpolate"
+
+    depth_map_result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", layers=2, output_format="depth_map", debug_output=True, temporal=False, fused=False),
+    )
+    assert depth_map_result.debug_info["sbs_backend"] == "torch_depth_map"
+
 
 def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("STEREO_LAB_DISABLE_TRITON", "1")
@@ -237,6 +280,20 @@ def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch)
         StereoConfig(backend="quality_4k", layers=2, output_format="full_sbs", debug_output=True, temporal=False),
     )
     assert full_result.debug_info["sbs_backend"] == "torch_cat"
+
+    half_tab_result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", layers=2, output_format="half_tab", debug_output=True, temporal=False),
+    )
+    assert half_tab_result.debug_info["sbs_backend"] == "torch_interpolate"
+
+    depth_map_result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", layers=2, output_format="depth_map", debug_output=True, temporal=False),
+    )
+    assert depth_map_result.debug_info["sbs_backend"] == "torch_depth_map"
 
 
 def test_warp_horizontal_matches_cached_grid_formula():

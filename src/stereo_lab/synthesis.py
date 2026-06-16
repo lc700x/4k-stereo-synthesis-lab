@@ -162,7 +162,7 @@ def synthesize_stereo(
     output_depth = match_depth(depth, left.shape[-2], left.shape[-1])
     if config.debug_output:
         debug["output_depth"] = output_depth
-    debug["sbs_backend"] = sbs_backend(left, right, config.output_format, fused=config.fused)
+    debug["sbs_backend"] = sbs_backend(left, right, config.output_format, fused=config.fused, depth=output_depth)
     sbs = make_sbs(left, right, config.output_format, fused=config.fused, depth=output_depth)
     if not config.debug_output:
         debug = {k: v for k, v in debug.items() if isinstance(v, (float, int, str))}

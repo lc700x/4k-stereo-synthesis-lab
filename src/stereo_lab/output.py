@@ -53,6 +53,10 @@ def make_sbs(
         if depth is None:
             raise ValueError("depth_map output requires depth")
         depth = match_depth(depth, left.shape[-2], left.shape[-1])
+        if sbs_backend(left, right, output_format, fused=fused, depth=depth) == "triton_depth_map":
+            from .output_triton import make_depth_map
+
+            return make_depth_map(depth, left.shape[1])
         return depth.repeat(1, left.shape[1], 1, 1)
 
     if output_format == "full_sbs":
@@ -75,9 +79,17 @@ def make_sbs(
         return torch.cat([left_half, right_half], dim=-1)
 
     if output_format == "full_tab":
+        if sbs_backend(left, right, output_format, fused=fused) == "triton_full_tab":
+            from .output_triton import make_full_tab
+
+            return make_full_tab(left, right)
         return torch.cat([left, right], dim=-2)
 
     if output_format == "half_tab":
+        if sbs_backend(left, right, output_format, fused=fused) == "triton_half_tab":
+            from .output_triton import make_half_tab
+
+            return make_half_tab(left, right)
         h, w = left.shape[-2:]
         left_h = max(1, h // 2)
         right_h = max(1, h - left_h)
@@ -88,28 +100,48 @@ def make_sbs(
     raise ValueError(f"unknown output_format: {output_format}")
 
 
-def sbs_backend(left: torch.Tensor, right: torch.Tensor, output_format: OutputFormat, fused: bool = True) -> str:
-    if output_format == "full_sbs" and (not fused or _triton_disabled_by_env()):
+def sbs_backend(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    output_format: OutputFormat,
+    fused: bool = True,
+    depth: torch.Tensor | None = None,
+) -> str:
+    if output_format in {"full_sbs", "full_tab"} and (not fused or _triton_disabled_by_env()):
         return "torch_cat"
-    if output_format == "half_sbs" and (not fused or _triton_disabled_by_env()):
+    if output_format in {"half_sbs", "half_tab"} and (not fused or _triton_disabled_by_env()):
         return "torch_interpolate"
-    if output_format == "full_tab":
-        return "torch_cat_vertical"
-    if output_format == "half_tab":
-        return "torch_interpolate_vertical"
+    if output_format == "depth_map" and (not fused or _triton_disabled_by_env()):
+        return "torch_depth_map"
     if output_format == "mono":
         return "torch_mono_left"
-    if output_format == "depth_map":
-        return "torch_depth_map"
-    if output_format not in {"half_sbs", "full_sbs"}:
+    if output_format not in {"half_sbs", "full_sbs", "half_tab", "full_tab", "depth_map"}:
         return "torch_output"
     try:
-        from .output_triton import can_use_triton_full_sbs, can_use_triton_half_sbs
+        from .output_triton import (
+            can_use_triton_depth_map,
+            can_use_triton_full_sbs,
+            can_use_triton_full_tab,
+            can_use_triton_half_sbs,
+            can_use_triton_half_tab,
+        )
     except Exception:
-        return "torch_cat" if output_format == "full_sbs" else "torch_interpolate"
+        if output_format in {"full_sbs", "full_tab"}:
+            return "torch_cat"
+        if output_format == "depth_map":
+            return "torch_depth_map"
+        return "torch_interpolate"
     if output_format == "full_sbs":
         return "triton_full_sbs" if can_use_triton_full_sbs(left, right) else "torch_cat"
-    return "triton_half_sbs" if can_use_triton_half_sbs(left, right) else "torch_interpolate"
+    if output_format == "half_sbs":
+        return "triton_half_sbs" if can_use_triton_half_sbs(left, right) else "torch_interpolate"
+    if output_format == "full_tab":
+        return "triton_full_tab" if can_use_triton_full_tab(left, right) else "torch_cat_vertical"
+    if output_format == "half_tab":
+        return "triton_half_tab" if can_use_triton_half_tab(left, right) else "torch_interpolate_vertical"
+    if output_format == "depth_map" and depth is not None:
+        return "triton_depth_map" if can_use_triton_depth_map(depth, left.shape[1]) else "torch_depth_map"
+    return "torch_depth_map"
 
 
 def _triton_disabled_by_env() -> bool:

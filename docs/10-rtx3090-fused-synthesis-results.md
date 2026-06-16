@@ -17,13 +17,16 @@ Base Native TensorRT is resident and remains the recommended depth backend.
 
 ### Synthesis
 
-Five optional fused Triton paths are now available:
+Eight optional fused Triton paths are now available:
 
 - `triton_radius3` hole fill for CUDA float32, `B x 3 x H x W` image, `B x 1 x H x W` mask, `radius=3`, `strength=1.0`.
 - `triton_warp_composite2` for CUDA float32, 2-layer, symmetric, single-frame `quality_4k` warp + composite.
 - `triton_occlusion_radius2` for CUDA float32, single-frame occlusion mask generation with `edge_threshold=0.04` and `dilation=2`.
 - `triton_half_sbs` for CUDA float32, single-frame `B=1, C=3`, even-width Half-SBS resize + pack.
 - `triton_full_sbs` for CUDA float32, single-frame `B=1, C=3`, Full-SBS copy + pack.
+- `triton_half_tab` for CUDA float32, single-frame `B=1, C=3`, even-height Half-TAB resize + pack.
+- `triton_full_tab` for CUDA float32, single-frame `B=1, C=3`, Full-TAB copy + pack.
+- `triton_depth_map` for CUDA float32, single-frame `B=1, C=1` depth repeated to RGB channels.
 
 All paths are guarded by strict shape/type/config checks and fall back to the original PyTorch implementation when unsupported.
 
@@ -50,6 +53,8 @@ The core output API now covers the file/API formats that map directly from synth
 - `full_tab`: full-height left/right packed top/bottom.
 - `mono`: left-eye output, useful for fallback and debugging.
 - `depth_map`: matched output depth repeated to RGB channels, useful for debug/export. In `debug_output=True`, the exact tensor is also available as `debug_info["output_depth"]`.
+
+`mono` remains a direct left-eye return and does not need a Triton kernel.
 
 Desktop2Stereo also exposes `Anaglyph`, `Interleaved`, and `Leia`. Those are deferred here because Desktop2Stereo implements them as display/viewer-style shader modes rather than simple tensor packaging from existing left/right images.
 
@@ -200,7 +205,7 @@ Manual visual inspection of `contact_sheet_labeled.png` for both Base and Large 
   - `breakdown_mean_ms`, which uses the manual unfused breakdown path for component attribution.
 - Fused warp/composite is not used for `hq_4k` 3+ layers, asymmetric mode, CPU, non-float32 tensors, or unsupported shapes.
 - Fused occlusion is not used for non-default threshold/dilation, CPU, non-float32 tensors, or unsupported shapes.
-- `bench_end_to_end_4k.py` records `synthesis_debug.warp_composite_backend`, `synthesis_debug.occlusion_mask_backend`, `synthesis_debug.hole_fill_backend`, and `synthesis_debug.sbs_backend`; the latest Base run reports `triton_warp_composite2`, `triton_occlusion_radius2`, `triton_radius3`, `triton_half_sbs` for Half-SBS, and `triton_full_sbs` for Full-SBS.
+- `bench_end_to_end_4k.py` records `synthesis_debug.warp_composite_backend`, `synthesis_debug.occlusion_mask_backend`, `synthesis_debug.hole_fill_backend`, and `synthesis_debug.sbs_backend`; output backends include `triton_half_sbs`, `triton_full_sbs`, `triton_half_tab`, `triton_full_tab`, `triton_depth_map`, and `torch_mono_left`.
 
 ## Next Verification Targets
 

@@ -87,6 +87,9 @@ Current fused synthesis backends:
 - `triton_radius3`
 - `triton_half_sbs` for Half-SBS output
 - `triton_full_sbs` for Full-SBS output
+- `triton_half_tab` for Half-TAB output
+- `triton_full_tab` for Full-TAB output
+- `triton_depth_map` for depth-map output
 
 Current core output formats:
 
@@ -98,6 +101,8 @@ Current core output formats:
 - `depth_map`
 
 `depth_map` is the matched output depth repeated to RGB channels. With `debug_output=True`, the exact tensor is also available as `debug_info["output_depth"]`.
+
+`mono` remains a direct left-eye return and does not need a Triton kernel.
 
 Desktop2Stereo also has `Anaglyph`, `Interleaved`, and `Leia`; these are not yet ported because they are viewer/shader-style display modes, not simple left/right tensor pack formats.
 
@@ -127,7 +132,7 @@ Important:
 Latest verification:
 
 ```text
-37 passed
+39 passed
 syntax ok 45 files
 ```
 
@@ -136,6 +141,7 @@ Latest key outputs:
 ```text
 outputs/rtx3090_end_to_end_base_quality_full_sbs_triton.json
 outputs/rtx3090_end_to_end_large_quality_half_sbs_fused.json
+outputs/stereo_output_formats_triton_smoke.json
 outputs/visual_regression/rtx3090_base_quality_full_sbs_triton
 outputs/visual_regression/rtx3090_large_quality_half_sbs_fused
 ```

@@ -88,6 +88,19 @@ Current fused synthesis backends:
 - `triton_half_sbs` for Half-SBS output
 - `triton_full_sbs` for Full-SBS output
 
+Current core output formats:
+
+- `half_sbs`
+- `full_sbs`
+- `half_tab`
+- `full_tab`
+- `mono`
+- `depth_map`
+
+`depth_map` is the matched output depth repeated to RGB channels. With `debug_output=True`, the exact tensor is also available as `debug_info["output_depth"]`.
+
+Desktop2Stereo also has `Anaglyph`, `Interleaved`, and `Leia`; these are not yet ported because they are viewer/shader-style display modes, not simple left/right tensor pack formats.
+
 Confirmed in benchmark JSON under:
 
 ```text
@@ -114,7 +127,7 @@ Important:
 Latest verification:
 
 ```text
-34 passed
+37 passed
 syntax ok 45 files
 ```
 

@@ -134,10 +134,18 @@ def main() -> None:
 
             half_sbs = make_sbs(result.left_eye, result.right_eye, "half_sbs")
             full_sbs = make_sbs(result.left_eye, result.right_eye, "full_sbs")
+            half_tab = make_sbs(result.left_eye, result.right_eye, "half_tab")
+            full_tab = make_sbs(result.left_eye, result.right_eye, "full_tab")
+            mono = make_sbs(result.left_eye, result.right_eye, "mono")
+            depth_map = make_sbs(result.left_eye, result.right_eye, "depth_map", depth=depth)
             save_rgb(result.left_eye.cpu(), out_dir / f"{name}_left.png")
             save_rgb(result.right_eye.cpu(), out_dir / f"{name}_right.png")
             save_rgb(half_sbs.cpu(), out_dir / f"{name}_half_sbs.png")
             save_rgb(full_sbs.cpu(), out_dir / f"{name}_full_sbs.png")
+            save_rgb(half_tab.cpu(), out_dir / f"{name}_half_tab.png")
+            save_rgb(full_tab.cpu(), out_dir / f"{name}_full_tab.png")
+            save_rgb(mono.cpu(), out_dir / f"{name}_mono.png")
+            save_rgb(depth_map.cpu(), out_dir / f"{name}_depth_map.png")
 
             shift = result.debug_info.get("shift_px")
             if shift is not None:
@@ -155,6 +163,10 @@ def main() -> None:
                 "right_shape": list(result.right_eye.shape),
                 "half_sbs_shape": list(half_sbs.shape),
                 "full_sbs_shape": list(full_sbs.shape),
+                "half_tab_shape": list(half_tab.shape),
+                "full_tab_shape": list(full_tab.shape),
+                "mono_shape": list(mono.shape),
+                "depth_map_shape": list(depth_map.shape),
             }
             print(f"  {name}: {elapsed_ms:.3f} ms", flush=True)
 

@@ -17,7 +17,11 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--backend", choices=["fast", "quality_4k", "hq_4k"], default="quality_4k")
     parser.add_argument("--layers", type=int, default=2)
-    parser.add_argument("--output-format", choices=["half_sbs", "full_sbs"], default="half_sbs")
+    parser.add_argument(
+        "--output-format",
+        choices=["half_sbs", "full_sbs", "half_tab", "full_tab", "mono", "depth_map"],
+        default="half_sbs",
+    )
     parser.add_argument("--iters", type=int, default=10)
     parser.add_argument("--no-fused", action="store_true")
     args = parser.parse_args()
@@ -100,7 +104,7 @@ def main() -> None:
         fill_ms = (time.perf_counter() - start) * 1000.0
 
         start = time.perf_counter()
-        sbs = make_sbs(left, right, args.output_format)
+        sbs = make_sbs(left, right, args.output_format, depth=depth_matched)
         sync()
         sbs_ms = (time.perf_counter() - start) * 1000.0
         return sbs, {

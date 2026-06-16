@@ -159,8 +159,11 @@ def synthesize_stereo(
     if config.temporal:
         left, right = apply_temporal(left, right, mask, temporal_state, strength=config.temporal_strength)
 
+    output_depth = match_depth(depth, left.shape[-2], left.shape[-1])
+    if config.debug_output:
+        debug["output_depth"] = output_depth
     debug["sbs_backend"] = sbs_backend(left, right, config.output_format, fused=config.fused)
-    sbs = make_sbs(left, right, config.output_format, fused=config.fused)
+    sbs = make_sbs(left, right, config.output_format, fused=config.fused, depth=output_depth)
     if not config.debug_output:
         debug = {k: v for k, v in debug.items() if isinstance(v, (float, int, str))}
     return StereoResult(left_eye=left, right_eye=right, sbs=sbs, debug_info=debug)

@@ -12,7 +12,7 @@ from stereo_lab.hole_fill import box_blur, edge_aware_fill
 from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
 from stereo_lab.layers import composite_layers, depth_edges, make_depth_layers
 from stereo_lab.occlusion import make_occlusion_mask
-from stereo_lab.output import make_sbs, sbs_backend
+from stereo_lab.output import make_sbs, match_depth, sbs_backend
 from stereo_lab.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
 from stereo_lab.temporal import TemporalState
 
@@ -38,6 +38,34 @@ def test_full_sbs_shape():
     rgb, depth = make_inputs()
     result = synthesize_stereo(rgb, depth, StereoConfig(backend="fast", output_format="full_sbs"))
     assert result.sbs.shape == (1, 3, 32, 128)
+
+
+def test_tab_mono_and_depth_map_shapes():
+    rgb, depth = make_inputs()
+    half_tab = synthesize_stereo(rgb, depth, StereoConfig(backend="fast", output_format="half_tab"))
+    full_tab = synthesize_stereo(rgb, depth, StereoConfig(backend="fast", output_format="full_tab"))
+    mono = synthesize_stereo(rgb, depth, StereoConfig(backend="fast", output_format="mono"))
+    depth_map = synthesize_stereo(rgb, depth, StereoConfig(backend="fast", output_format="depth_map"))
+    assert half_tab.sbs.shape == rgb.shape
+    assert full_tab.sbs.shape == (1, 3, 64, 64)
+    assert mono.sbs.shape == rgb.shape
+    assert depth_map.sbs.shape == rgb.shape
+    assert torch.equal(mono.sbs, mono.left_eye)
+    assert torch.equal(depth_map.sbs[:, 0:1], depth)
+
+
+def test_quality_depth_map_uses_matched_output_depth():
+    rgb, depth = make_inputs(width=64, height=32)
+    low_res_depth = F.interpolate(depth, size=(16, 32), mode="bilinear", align_corners=False)
+    result = synthesize_stereo(
+        rgb,
+        low_res_depth,
+        StereoConfig(backend="quality_4k", layers=2, output_format="depth_map", debug_output=True, temporal=False),
+    )
+    expected = match_depth(low_res_depth, rgb.shape[-2], rgb.shape[-1])
+    assert result.sbs.shape == rgb.shape
+    assert torch.equal(result.debug_info["output_depth"], expected)
+    assert torch.equal(result.sbs[:, 0:1], expected)
 
 
 def test_quality_debug_outputs():
@@ -161,6 +189,13 @@ def test_fused_full_sbs_cuda_matches_torch_path_when_available():
     actual = make_sbs(left, right, "full_sbs", fused=True)
     assert torch.equal(actual, expected)
     assert sbs_backend(left, right, "full_sbs", fused=True) == "triton_full_sbs"
+
+
+def test_depth_map_requires_depth():
+    left = torch.rand(1, 3, 8, 10)
+    right = torch.rand(1, 3, 8, 10)
+    with pytest.raises(ValueError, match="requires depth"):
+        make_sbs(left, right, "depth_map")
 
 
 def test_fused_config_false_uses_torch_backends():

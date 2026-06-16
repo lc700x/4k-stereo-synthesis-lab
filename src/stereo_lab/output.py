@@ -6,7 +6,7 @@ from typing import Literal
 import torch
 import torch.nn.functional as F
 
-OutputFormat = Literal["half_sbs", "full_sbs"]
+OutputFormat = Literal["half_sbs", "full_sbs", "half_tab", "full_tab", "mono", "depth_map"]
 
 
 def ensure_bchw(x: torch.Tensor, *, name: str) -> torch.Tensor:
@@ -34,11 +34,26 @@ def match_depth(depth: torch.Tensor, height: int, width: int) -> torch.Tensor:
     return F.interpolate(depth, size=(height, width), mode="bilinear", align_corners=False)
 
 
-def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputFormat, fused: bool = True) -> torch.Tensor:
+def make_sbs(
+    left: torch.Tensor,
+    right: torch.Tensor,
+    output_format: OutputFormat,
+    fused: bool = True,
+    depth: torch.Tensor | None = None,
+) -> torch.Tensor:
     left = ensure_bchw(left, name="left")
     right = ensure_bchw(right, name="right")
     if left.shape != right.shape:
         raise ValueError(f"left and right shapes must match, got {left.shape} and {right.shape}")
+
+    if output_format == "mono":
+        return left
+
+    if output_format == "depth_map":
+        if depth is None:
+            raise ValueError("depth_map output requires depth")
+        depth = match_depth(depth, left.shape[-2], left.shape[-1])
+        return depth.repeat(1, left.shape[1], 1, 1)
 
     if output_format == "full_sbs":
         if sbs_backend(left, right, output_format, fused=fused) == "triton_full_sbs":
@@ -59,6 +74,17 @@ def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputForma
         right_half = F.interpolate(right, size=(h, right_w), mode="bilinear", align_corners=False)
         return torch.cat([left_half, right_half], dim=-1)
 
+    if output_format == "full_tab":
+        return torch.cat([left, right], dim=-2)
+
+    if output_format == "half_tab":
+        h, w = left.shape[-2:]
+        left_h = max(1, h // 2)
+        right_h = max(1, h - left_h)
+        left_half = F.interpolate(left, size=(left_h, w), mode="bilinear", align_corners=False)
+        right_half = F.interpolate(right, size=(right_h, w), mode="bilinear", align_corners=False)
+        return torch.cat([left_half, right_half], dim=-2)
+
     raise ValueError(f"unknown output_format: {output_format}")
 
 
@@ -67,8 +93,16 @@ def sbs_backend(left: torch.Tensor, right: torch.Tensor, output_format: OutputFo
         return "torch_cat"
     if output_format == "half_sbs" and (not fused or _triton_disabled_by_env()):
         return "torch_interpolate"
+    if output_format == "full_tab":
+        return "torch_cat_vertical"
+    if output_format == "half_tab":
+        return "torch_interpolate_vertical"
+    if output_format == "mono":
+        return "torch_mono_left"
+    if output_format == "depth_map":
+        return "torch_depth_map"
     if output_format not in {"half_sbs", "full_sbs"}:
-        return "torch_interpolate"
+        return "torch_output"
     try:
         from .output_triton import can_use_triton_full_sbs, can_use_triton_half_sbs
     except Exception:

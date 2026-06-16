@@ -23,7 +23,11 @@ def main() -> None:
     parser.add_argument("--depth-force-download", action="store_true")
     parser.add_argument("--out-dir", default="outputs/compare")
     parser.add_argument("--device", default=None)
-    parser.add_argument("--output-format", choices=["half_sbs", "full_sbs"], default="half_sbs")
+    parser.add_argument(
+        "--output-format",
+        choices=["half_sbs", "full_sbs", "half_tab", "full_tab", "mono", "depth_map"],
+        default="half_sbs",
+    )
     parser.add_argument("--depth-strength", type=float, default=3.0)
     parser.add_argument("--convergence", type=float, default=0.0)
     args = parser.parse_args()

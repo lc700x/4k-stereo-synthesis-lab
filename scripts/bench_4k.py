@@ -23,7 +23,11 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=3840)
     parser.add_argument("--height", type=int, default=2160)
     parser.add_argument("--backend", choices=["fast", "quality_4k", "hq_4k"], default="quality_4k")
-    parser.add_argument("--output-format", choices=["half_sbs", "full_sbs"], default="half_sbs")
+    parser.add_argument(
+        "--output-format",
+        choices=["half_sbs", "full_sbs", "half_tab", "full_tab", "mono", "depth_map"],
+        default="half_sbs",
+    )
     parser.add_argument("--layers", type=int, default=2)
     parser.add_argument("--frames", type=int, default=30)
     parser.add_argument("--device", default=None)

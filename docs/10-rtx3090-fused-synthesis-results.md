@@ -40,6 +40,19 @@ Fused paths are enabled by default and can be disabled with:
 - CLI flag `--no-fused`
 - Environment variable `STEREO_LAB_DISABLE_TRITON=1`
 
+## Stereo Output Formats
+
+The core output API now covers the file/API formats that map directly from synthesized left/right/depth tensors:
+
+- `half_sbs`: same size as input, left/right resized to half width and packed side by side.
+- `full_sbs`: full-width left/right packed side by side.
+- `half_tab`: same size as input, left/right resized to half height and packed top/bottom.
+- `full_tab`: full-height left/right packed top/bottom.
+- `mono`: left-eye output, useful for fallback and debugging.
+- `depth_map`: matched output depth repeated to RGB channels, useful for debug/export. In `debug_output=True`, the exact tensor is also available as `debug_info["output_depth"]`.
+
+Desktop2Stereo also exposes `Anaglyph`, `Interleaved`, and `Leia`. Those are deferred here because Desktop2Stereo implements them as display/viewer-style shader modes rather than simple tensor packaging from existing left/right images.
+
 ## End-to-End Results
 
 ### Base

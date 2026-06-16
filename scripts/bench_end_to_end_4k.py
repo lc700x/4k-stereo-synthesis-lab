@@ -31,7 +31,12 @@ def main() -> None:
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--backend", choices=["fast", "quality_4k", "hq_4k"], default="quality_4k")
     parser.add_argument("--layers", type=int, default=2)
-    parser.add_argument("--output-format", choices=["half_sbs", "full_sbs"], action="append", default=None)
+    parser.add_argument(
+        "--output-format",
+        choices=["half_sbs", "full_sbs", "half_tab", "full_tab", "mono", "depth_map"],
+        action="append",
+        default=None,
+    )
     parser.add_argument("--warmup", type=int, default=3)
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--depth-backend", choices=["tensorrt_native", "onnx_cuda_dlpack", "onnx_cuda_iobinding", "pytorch_cuda"], default="tensorrt_native")

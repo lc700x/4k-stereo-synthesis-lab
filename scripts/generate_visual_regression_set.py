@@ -35,7 +35,7 @@ def main() -> None:
     from stereo_lab.depth_provider import DepthProviderConfig, create_depth_provider
     from stereo_lab.io import load_depth, load_rgb, save_depth, save_rgb
     from stereo_lab.output import make_sbs
-    from stereo_lab.report import absdiff, basic_image_metrics, make_contact_sheet, write_json
+    from stereo_lab.report import absdiff, basic_image_metrics, make_contact_sheet, make_labeled_contact_sheet, write_json
     from stereo_lab.synthesis import StereoConfig, synthesize_stereo
 
     device_name = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -178,6 +178,17 @@ def main() -> None:
             sheet_items.append(quality_mask.repeat(1, 3, 1, 1).cpu())
         contact = make_contact_sheet(sheet_items, columns=2)
         save_rgb(contact, out_dir / "contact_sheet.png")
+        labeled_items = [
+            ("input_rgb", rgb.cpu()),
+            ("used_depth", depth.repeat(1, 3, 1, 1).cpu()),
+            ("baseline_half_sbs", baseline_half),
+            ("quality_4k_half_sbs", quality_half),
+            ("baseline_vs_quality_4k_half_absdiff", half_diff),
+        ]
+        if quality_mask is not None:
+            labeled_items.append(("quality_4k_occlusion_mask", quality_mask.repeat(1, 3, 1, 1).cpu()))
+        labeled_contact = make_labeled_contact_sheet(labeled_items, columns=2)
+        save_rgb(labeled_contact, out_dir / "contact_sheet_labeled.png")
         write_json(report, out_dir / "visual_regression_report.json")
 
     print(f"[5/5] wrote visual regression set: {out_dir}", flush=True)

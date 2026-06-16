@@ -92,6 +92,62 @@ def make_contact_sheet(images: list[torch.Tensor], columns: int = 2, pad: int = 
     return canvas
 
 
+def make_labeled_contact_sheet(
+    items: list[tuple[str, torch.Tensor]],
+    columns: int = 2,
+    pad: int = 8,
+    label_height: int = 34,
+) -> torch.Tensor:
+    if not items:
+        raise ValueError("items must not be empty")
+    labels = [label for label, _ in items]
+    tensors = [ensure_bchw(x, name="image").float() for _, x in items]
+    if any(x.shape[0] != 1 for x in tensors):
+        raise ValueError("contact sheet currently expects batch size 1")
+
+    max_h = max(x.shape[-2] for x in tensors)
+    max_w = max(x.shape[-1] for x in tensors)
+    rows = (len(tensors) + columns - 1) // columns
+    cell_h = label_height + max_h
+    canvas_h = rows * cell_h + (rows - 1) * pad
+    canvas_w = columns * max_w + (columns - 1) * pad
+    canvas = torch.zeros(1, tensors[0].shape[1], canvas_h, canvas_w)
+    for idx, image in enumerate(tensors):
+        row = idx // columns
+        col = idx % columns
+        y = row * (cell_h + pad) + label_height
+        x = col * (max_w + pad)
+        h, w = image.shape[-2:]
+        canvas[:, :, y : y + h, x : x + w] = image.cpu()
+    return _draw_labels(canvas, labels, columns=columns, cell_width=max_w, cell_height=cell_h, pad=pad, label_height=label_height)
+
+
+def _draw_labels(
+    canvas: torch.Tensor,
+    labels: list[str],
+    columns: int,
+    cell_width: int,
+    cell_height: int,
+    pad: int,
+    label_height: int,
+) -> torch.Tensor:
+    from PIL import Image, ImageDraw, ImageFont
+
+    array = (canvas[0].clamp(0, 1).permute(1, 2, 0).mul(255).byte().numpy())
+    image = Image.fromarray(array, mode="RGB")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    for idx, label in enumerate(labels):
+        row = idx // columns
+        col = idx % columns
+        x = col * (cell_width + pad)
+        y = row * (cell_height + pad)
+        draw.rectangle((x, y, x + cell_width - 1, y + label_height - 1), fill=(16, 16, 16))
+        draw.text((x + 10, y + 9), label, fill=(255, 255, 255), font=font)
+    data = torch.frombuffer(bytearray(image.tobytes()), dtype=torch.uint8)
+    return data.view(image.height, image.width, 3).permute(2, 0, 1).float().div(255.0).unsqueeze(0)
+
+
 def write_json(data: dict, path: str | Path) -> None:
     import json
 

@@ -602,6 +602,7 @@ Key outputs:
 - `quality_4k_occlusion_mask.png`
 - `baseline_vs_quality_4k_*_absdiff.png`
 - `contact_sheet.png`
+- `contact_sheet_labeled.png`
 - `visual_regression_report.json`
 
 ### Base Grid Cache

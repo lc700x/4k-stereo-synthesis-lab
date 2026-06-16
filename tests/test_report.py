@@ -6,7 +6,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.report import depth_comparison_metrics, depth_metrics
+from stereo_lab.report import depth_comparison_metrics, depth_metrics, make_labeled_contact_sheet
 
 
 def test_depth_metrics_summary_fields():
@@ -28,3 +28,12 @@ def test_depth_comparison_metrics_identical_depths():
     assert metrics["mse"] == 0.0
     assert metrics["mean_bias"] == 0.0
     assert 0.0 <= metrics["edge_overlap"] <= 1.0
+
+
+def test_make_labeled_contact_sheet_shape():
+    first = torch.zeros(1, 3, 8, 10)
+    second = torch.ones(1, 3, 8, 10)
+    sheet = make_labeled_contact_sheet([("first", first), ("second", second)], columns=2, pad=2, label_height=6)
+    assert sheet.shape == (1, 3, 14, 22)
+    assert 0.0 <= float(sheet.min()) <= 1.0
+    assert 0.0 <= float(sheet.max()) <= 1.0

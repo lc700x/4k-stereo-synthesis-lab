@@ -1,6 +1,6 @@
 # 实时立体参数说明
 
-本文定义实时桌面、播放器、VR 场景的立体参数面、参考标准、默认值，以及 GUI/API 传参映射。
+本文定义实时桌面、播放器、VR 场景的立体参数面、参考标准、默认值、GUI/API 传参映射，以及用视觉回归测试寻找最优参数的方法。
 
 ## 范围
 
@@ -132,6 +132,61 @@ StereoConfig(
 | `cross_eyed` | `StereoConfig.cross_eyed` |
 | `anaglyph_method` | `StereoConfig.anaglyph_method` |
 | OpenXR `pose/fov/roll` | `OpenXREyeView`, `OpenXRFov`, `OpenXRScreenPose`, `OpenXRRenderConfig.screen_roll` |
+
+## 视觉回归调参方法
+
+最优参数可以通过视觉回归测试判断，但不能只看一张图。单张 4K 图只能判断当前画面是否更好，不能代表所有视频、播放器和 VR 场景的全局最优。
+
+推荐建立一组代表性样本：
+
+- 人像近景：检查脸部、头发、肩膀边缘和前景平面感。
+- 快速运动：检查拖影、temporal lag 和边缘抖动。
+- 高对比边缘：检查撕裂、空洞、重复纹理和遮挡边界。
+- 暗场：检查 depth 噪声、闪烁和错误凸起。
+- 字幕 / GUI 边缘：检查文字变形、中线异常和高频边缘错位。
+- 镜头切换：检查 `auto_reset_temporal` 是否及时清掉旧状态。
+- VR/OpenXR 旋转画面：检查任意 roll 下立体方向是否跟随屏幕姿态。
+
+建议参数 sweep：
+
+```text
+depth_strength: 1.5 / 2.0 / 2.5 / 3.0
+temporal_strength: 0.65 / 0.75 / 0.85
+scene_reset_threshold: 0.18 / 0.22 / 0.25
+edge_dilation: 1 / 2 / 3
+foreground_scale: 0.0 / 0.2 / 0.4
+depth_antialias_strength: 0.0 / 0.5 / 1.0
+```
+
+视觉验收重点：
+
+- 边缘是否撕裂。
+- 遮挡处是否有空洞。
+- Half-SBS 中线是否异常。
+- 是否出现重复纹理。
+- temporal 后是否有拖影。
+- depth 是否过平、过锐或边缘闪烁。
+- VR 中是否出现错深度、突变视差或明显不适。
+
+推荐输出四类结果：
+
+- Desktop/player 默认：平衡立体强度和稳定性。
+- VR 保守默认：降低 `depth_strength` 和 `temporal_strength`，优先舒适度。
+- Quality/HQ 默认：可适度启用 `foreground_scale` 和 `depth_antialias_strength`，但必须通过视觉回归保护。
+- 强立体效果配置：提高 `depth_strength`，但必须受 `max_shift_ratio` 约束。
+- 边缘稳定优先配置：提高 `edge_dilation` 或 `depth_antialias_strength`，观察是否损失细节。
+
+推荐判定方式：
+
+```text
+1. 先固定 backend/output_format/depth model。
+2. 每次只改变一组参数，生成视觉回归输出。
+3. 对比 contact_sheet_labeled.png、左右眼、depth_map、occlusion_mask、absdiff。
+4. 记录每组参数的可见问题和性能影响。
+5. 选出 desktop/player、VR、quality/HQ 三套默认值。
+```
+
+视觉回归是调参的主要依据之一，但最终默认值必须同时满足画质、延迟和 VR 舒适度。
 
 ## 验证
 

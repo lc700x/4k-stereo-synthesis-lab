@@ -70,8 +70,8 @@ Final Base Native TensorRT + `quality_4k` + 2 layers on RTX 3090:
 
 | Output | Depth ms | Synthesis ms | Total ms | FPS |
 |---|---:|---:|---:|---:|
-| Half-SBS | 6.204 | 5.823 | 12.027 | 83.14 |
-| Full-SBS | 5.752 | 5.770 | 11.523 | 86.78 |
+| Half-SBS | 6.088 | 5.601 | 11.691 | 85.54 |
+| Full-SBS | 5.931 | 5.892 | 11.823 | 84.58 |
 
 Final Large Native TensorRT + `quality_4k` + 2 layers on RTX 3090:
 
@@ -86,6 +86,7 @@ Current fused synthesis backends:
 - `triton_occlusion_radius2`
 - `triton_radius3`
 - `triton_half_sbs` for Half-SBS output
+- `triton_full_sbs` for Full-SBS output
 
 Confirmed in benchmark JSON under:
 
@@ -113,16 +114,16 @@ Important:
 Latest verification:
 
 ```text
-33 passed
+34 passed
 syntax ok 45 files
 ```
 
 Latest key outputs:
 
 ```text
-outputs/rtx3090_end_to_end_base_quality_half_sbs_fused.json
+outputs/rtx3090_end_to_end_base_quality_full_sbs_triton.json
 outputs/rtx3090_end_to_end_large_quality_half_sbs_fused.json
-outputs/visual_regression/rtx3090_base_quality_half_sbs_fused
+outputs/visual_regression/rtx3090_base_quality_full_sbs_triton
 outputs/visual_regression/rtx3090_large_quality_half_sbs_fused
 ```
 

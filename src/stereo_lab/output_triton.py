@@ -56,6 +56,20 @@ def can_use_triton_half_sbs(left: torch.Tensor, right: torch.Tensor) -> bool:
     )
 
 
+def can_use_triton_full_sbs(left: torch.Tensor, right: torch.Tensor) -> bool:
+    return (
+        left.is_cuda
+        and right.is_cuda
+        and left.dtype == torch.float32
+        and right.dtype == torch.float32
+        and left.ndim == 4
+        and right.ndim == 4
+        and left.shape == right.shape
+        and left.shape[0] == 1
+        and left.shape[1] == 3
+    )
+
+
 def make_half_sbs(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
     left = left.contiguous()
     right = right.contiguous()
@@ -67,4 +81,47 @@ def make_half_sbs(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
     block = 256
     grid = (triton.cdiv(total, block),)
     _half_sbs_kernel[grid](left, right, out, total, width, half_width, pixels, block)
+    return out
+
+
+@triton.jit
+def _full_sbs_kernel(
+    left,
+    right,
+    out,
+    total: tl.constexpr,
+    width: tl.constexpr,
+    out_width: tl.constexpr,
+    out_pixels: tl.constexpr,
+    block: tl.constexpr,
+):
+    offsets = tl.program_id(0) * block + tl.arange(0, block)
+    active = offsets < total
+    out_pixel = offsets % out_pixels
+    y = out_pixel // out_width
+    x = out_pixel - y * out_width
+    channel = offsets // out_pixels
+
+    use_left = x < width
+    src_x = tl.where(use_left, x, x - width)
+    src_offset = channel * (out_pixels // 2) + y * width + src_x
+    value = tl.where(
+        use_left,
+        tl.load(left + src_offset, mask=active & use_left, other=0.0),
+        tl.load(right + src_offset, mask=active & ~use_left, other=0.0),
+    )
+    tl.store(out + offsets, value, mask=active)
+
+
+def make_full_sbs(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+    left = left.contiguous()
+    right = right.contiguous()
+    _, channels, height, width = left.shape
+    out = torch.empty((1, channels, height, width * 2), device=left.device, dtype=left.dtype)
+    out_width = width * 2
+    out_pixels = height * out_width
+    total = out.numel()
+    block = 256
+    grid = (triton.cdiv(total, block),)
+    _full_sbs_kernel[grid](left, right, out, total, width, out_width, out_pixels, block)
     return out

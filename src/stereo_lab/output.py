@@ -41,6 +41,10 @@ def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputForma
         raise ValueError(f"left and right shapes must match, got {left.shape} and {right.shape}")
 
     if output_format == "full_sbs":
+        if sbs_backend(left, right, output_format, fused=fused) == "triton_full_sbs":
+            from .output_triton import make_full_sbs
+
+            return make_full_sbs(left, right)
         return torch.cat([left, right], dim=-1)
 
     if output_format == "half_sbs":
@@ -59,14 +63,18 @@ def make_sbs(left: torch.Tensor, right: torch.Tensor, output_format: OutputForma
 
 
 def sbs_backend(left: torch.Tensor, right: torch.Tensor, output_format: OutputFormat, fused: bool = True) -> str:
-    if output_format == "full_sbs":
+    if output_format == "full_sbs" and (not fused or _triton_disabled_by_env()):
         return "torch_cat"
-    if output_format != "half_sbs" or not fused or _triton_disabled_by_env():
+    if output_format == "half_sbs" and (not fused or _triton_disabled_by_env()):
+        return "torch_interpolate"
+    if output_format not in {"half_sbs", "full_sbs"}:
         return "torch_interpolate"
     try:
-        from .output_triton import can_use_triton_half_sbs
+        from .output_triton import can_use_triton_full_sbs, can_use_triton_half_sbs
     except Exception:
-        return "torch_interpolate"
+        return "torch_cat" if output_format == "full_sbs" else "torch_interpolate"
+    if output_format == "full_sbs":
+        return "triton_full_sbs" if can_use_triton_full_sbs(left, right) else "torch_cat"
     return "triton_half_sbs" if can_use_triton_half_sbs(left, right) else "torch_interpolate"
 
 

@@ -53,11 +53,13 @@ class DistillAnyDepthBaseOnnxCuda:
         device: str | torch.device = "cuda",
         cache_dir: str | Path | None = None,
         onnx_path: str | Path | None = None,
+        use_iobinding: bool = True,
     ) -> None:
         self.device = torch.device(device)
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
         self.onnx_path = Path(onnx_path) if onnx_path is not None else default_distill_base_onnx_path(self.cache_dir)
         self.dtype = torch.float16 if self.device.type == "cuda" else torch.float32
+        self.use_iobinding = bool(use_iobinding and self.device.type == "cuda")
         self.info = DepthProviderInfo(
             provider="onnxruntime.InferenceSession",
             model_name=DISTILL_ANY_DEPTH_BASE_NAME,
@@ -68,6 +70,8 @@ class DistillAnyDepthBaseOnnxCuda:
             depth_backend="onnx_cuda" if self.device.type == "cuda" else "onnx_cpu",
             runtime="onnxruntime",
             onnx_path=str(self.onnx_path),
+            io_binding=self.use_iobinding,
+            output_device="cuda" if self.use_iobinding else "cpu",
         )
         self._session = None
 
@@ -97,11 +101,30 @@ class DistillAnyDepthBaseOnnxCuda:
         ort_input = tensor.detach().cpu().numpy()
 
         session = self.load()
-        predicted = session.run(["predicted_depth"], {"pixel_values": ort_input})[0]
-        depth = torch.from_numpy(predicted).float()
+        if self.use_iobinding:
+            predicted = self._run_iobinding(session, ort_input)
+        else:
+            predicted = session.run(["predicted_depth"], {"pixel_values": ort_input})[0]
+            predicted = torch.from_numpy(predicted)
+        depth = predicted.float()
         depth = ensure_b1hw(depth)
         depth = _normalize_depth(depth)
         return match_depth(depth, height, width)
+
+    def _run_iobinding(self, session, ort_input) -> torch.Tensor:
+        import numpy as np
+        import onnxruntime as ort
+
+        input_ort = ort.OrtValue.ortvalue_from_numpy(ort_input, "cuda", 0)
+        io_binding = session.io_binding()
+        io_binding.bind_ortvalue_input("pixel_values", input_ort)
+        io_binding.bind_output("predicted_depth", "cuda")
+        session.run_with_iobinding(io_binding)
+        output_ort = io_binding.get_outputs()[0]
+        output_np = output_ort.numpy()
+        if not isinstance(output_np, np.ndarray):
+            output_np = np.asarray(output_np)
+        return torch.from_numpy(output_np)
 
 
 def estimate_distill_any_depth_base_518_nvidia(
@@ -111,19 +134,49 @@ def estimate_distill_any_depth_base_518_nvidia(
     cache_dir: str | Path | None = None,
     onnx_path: str | Path | None = None,
     prefer_onnx: bool = True,
+    use_iobinding: bool = True,
+    allow_pytorch_fallback: bool = True,
+    local_files_only: bool = False,
+    force_download: bool = False,
+) -> tuple[torch.Tensor, DepthProviderInfo]:
+    from .depth_trt_provider import estimate_distill_any_depth_base_518_nvidia as estimate_with_nvidia_chain
+
+    return estimate_with_nvidia_chain(
+        rgb,
+        device=device,
+        cache_dir=cache_dir,
+        onnx_path=onnx_path,
+        prefer_tensorrt=False,
+        prefer_onnx=prefer_onnx,
+        allow_pytorch_fallback=allow_pytorch_fallback,
+        local_files_only=local_files_only,
+        force_download=force_download,
+    )
+
+def estimate_distill_any_depth_base_518_onnx_cuda(
+    rgb: torch.Tensor,
+    *,
+    device: str | torch.device = "cuda",
+    cache_dir: str | Path | None = None,
+    onnx_path: str | Path | None = None,
+    use_iobinding: bool = True,
     allow_pytorch_fallback: bool = True,
     local_files_only: bool = False,
     force_download: bool = False,
 ) -> tuple[torch.Tensor, DepthProviderInfo]:
     fallback_reason = None
-    if prefer_onnx:
-        try:
-            provider = DistillAnyDepthBaseOnnxCuda(device=device, cache_dir=cache_dir, onnx_path=onnx_path)
-            return provider.predict(rgb), provider.info
-        except Exception as exc:
-            fallback_reason = f"{type(exc).__name__}: {exc}"
-            if not allow_pytorch_fallback:
-                raise
+    try:
+        provider = DistillAnyDepthBaseOnnxCuda(
+            device=device,
+            cache_dir=cache_dir,
+            onnx_path=onnx_path,
+            use_iobinding=use_iobinding,
+        )
+        return provider.predict(rgb), provider.info
+    except Exception as exc:
+        fallback_reason = f"{type(exc).__name__}: {exc}"
+        if not allow_pytorch_fallback:
+            raise
 
     provider = DistillAnyDepthBase518(
         device=device,

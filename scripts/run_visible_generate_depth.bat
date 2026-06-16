@@ -27,7 +27,7 @@ title 4K Stereo Lab - Distill Depth Map
 echo [Info] RGB: %RGB%
 echo [Info] Output: %OUT_DIR%
 echo [Info] Depth model: Distill-Any-Depth-Base @ 518
-echo [Info] Backend priority: ONNX CUDA -^> PyTorch CUDA
+echo [Info] Backend priority: TensorRT -^> ONNX CUDA IOBinding -^> PyTorch CUDA
 echo [Info] Model ID: lc700x/Distill-Any-Depth-Base-hf
 echo [Info] This is the most direct 3D comparison: generated depth map first.
 if not "%REF_DEPTH%"=="" echo [Info] Reference depth: %REF_DEPTH%

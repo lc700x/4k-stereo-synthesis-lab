@@ -18,6 +18,7 @@ def main() -> None:
     parser.add_argument("--depth-cache-dir", default=None)
     parser.add_argument("--depth-onnx", default=None)
     parser.add_argument("--no-pytorch-fallback", action="store_true")
+    parser.add_argument("--require-tensorrt", action="store_true")
     parser.add_argument("--depth-local-only", action="store_true")
     parser.add_argument("--depth-force-download", action="store_true")
     parser.add_argument("--out-dir", default="outputs/compare")
@@ -32,7 +33,7 @@ def main() -> None:
 
     print("[3/6] importing stereo_lab ...", flush=True)
     from stereo_lab.auto_depth import estimate_luma_depth
-    from stereo_lab.depth_onnx_provider import estimate_distill_any_depth_base_518_nvidia
+    from stereo_lab.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
     from stereo_lab.depth_provider import estimate_distill_any_depth_base_518
     from stereo_lab.io import load_depth, load_rgb, save_depth, save_rgb
     from stereo_lab.report import absdiff, basic_image_metrics, make_contact_sheet, write_json
@@ -51,13 +52,14 @@ def main() -> None:
     elif args.auto_depth:
         if args.depth_provider == "distill_base_nvidia":
             print("[info] using Distill-Any-Depth-Base @ 518", flush=True)
-            print("[info] backend priority: onnx_cuda -> pytorch_cuda", flush=True)
+            print("[info] backend priority: tensorrt -> onnx_cuda_iobinding -> pytorch_cuda", flush=True)
             depth, provider_info = estimate_distill_any_depth_base_518_nvidia(
                 rgb,
                 device=device,
                 cache_dir=args.depth_cache_dir,
                 onnx_path=args.depth_onnx,
                 allow_pytorch_fallback=not args.no_pytorch_fallback,
+                require_tensorrt=args.require_tensorrt,
                 local_files_only=args.depth_local_only,
                 force_download=args.depth_force_download,
             )

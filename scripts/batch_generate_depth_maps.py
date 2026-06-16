@@ -43,6 +43,7 @@ def main() -> None:
     parser.add_argument("--provider", action="append", choices=["distill_base_518", "distill_base_nvidia", "luma"], default=None)
     parser.add_argument("--depth-onnx", default=None)
     parser.add_argument("--no-pytorch-fallback", action="store_true")
+    parser.add_argument("--require-tensorrt", action="store_true")
     parser.add_argument("--reference-depth", action="append", default=[], help="reference depth passed to each image")
     parser.add_argument("--out-dir", default="outputs/depth_batch")
     parser.add_argument("--device", default=None)
@@ -82,6 +83,8 @@ def main() -> None:
             command.extend(["--depth-onnx", args.depth_onnx])
         if args.no_pytorch_fallback:
             command.append("--no-pytorch-fallback")
+        if args.require_tensorrt:
+            command.append("--require-tensorrt")
         if args.depth_local_only:
             command.append("--depth-local-only")
         if args.depth_force_download:

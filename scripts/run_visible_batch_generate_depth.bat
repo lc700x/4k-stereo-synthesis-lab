@@ -26,7 +26,7 @@ title 4K Stereo Lab - Batch Distill Depth Maps
 echo [Info] RGB folder: %RGB_DIR%
 echo [Info] Output: %OUT_DIR%
 echo [Info] Depth model: Distill-Any-Depth-Base @ 518
-echo [Info] Backend priority: ONNX CUDA -^> PyTorch CUDA
+echo [Info] Backend priority: TensorRT -^> ONNX CUDA IOBinding -^> PyTorch CUDA
 echo [Info] First torch/CUDA import or model download may take several minutes.
 echo.
 

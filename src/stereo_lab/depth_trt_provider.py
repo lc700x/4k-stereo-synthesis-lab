@@ -1,0 +1,221 @@
+from __future__ import annotations
+
+from dataclasses import replace
+import os
+from pathlib import Path
+import sys
+
+import torch
+
+from .depth_onnx_provider import (
+    DistillAnyDepthBaseOnnxCuda,
+    _preprocess_distill_rgb,
+    default_distill_base_onnx_path,
+)
+from .depth_provider import (
+    DISTILL_ANY_DEPTH_BASE_MODEL_ID,
+    DISTILL_ANY_DEPTH_BASE_NAME,
+    DISTILL_ANY_DEPTH_BASE_RESOLUTION,
+    DepthProviderInfo,
+    DistillAnyDepthBase518,
+    _normalize_depth,
+    default_lab_cache_dir,
+)
+from .output import ensure_b1hw, ensure_bchw, match_depth
+
+
+def default_distill_base_trt_cache_dir(cache_dir: str | Path | None = None) -> Path:
+    cache = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
+    return cache / "models--lc700x--Distill-Any-Depth-Base-hf" / "trt_cache"
+
+
+def candidate_tensorrt_lib_dirs() -> list[Path]:
+    root = Path(__file__).resolve().parents[2]
+    candidates = [
+        Path(sys.prefix) / "Lib" / "site-packages" / "tensorrt_libs",
+        Path(sys.executable).resolve().parent / "Lib" / "site-packages" / "tensorrt_libs",
+        root / "python3" / "Lib" / "site-packages" / "tensorrt_libs",
+    ]
+    env_value = os.environ.get("STEREO_LAB_TENSORRT_LIBS")
+    if env_value:
+        candidates.insert(0, Path(env_value))
+
+    unique: list[Path] = []
+    seen: set[str] = set()
+    for path in candidates:
+        key = str(path.resolve()) if path.exists() else str(path)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(path)
+    return unique
+
+
+def ensure_tensorrt_dll_path() -> list[str]:
+    added: list[str] = []
+    for path in candidate_tensorrt_lib_dirs():
+        if not (path / "nvinfer_10.dll").exists():
+            continue
+        path_str = str(path)
+        path_entries = os.environ.get("PATH", "").split(os.pathsep)
+        if path_str not in path_entries:
+            os.environ["PATH"] = path_str + os.pathsep + os.environ.get("PATH", "")
+        if hasattr(os, "add_dll_directory"):
+            try:
+                os.add_dll_directory(path_str)
+            except OSError:
+                pass
+        added.append(path_str)
+    return added
+
+
+class DistillAnyDepthBaseTensorRtOrt:
+    def __init__(
+        self,
+        *,
+        device: str | torch.device = "cuda",
+        cache_dir: str | Path | None = None,
+        onnx_path: str | Path | None = None,
+        trt_cache_dir: str | Path | None = None,
+    ) -> None:
+        self.device = torch.device(device)
+        if self.device.type != "cuda":
+            raise RuntimeError("TensorRT depth provider requires CUDA")
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
+        self.onnx_path = Path(onnx_path) if onnx_path is not None else default_distill_base_onnx_path(self.cache_dir)
+        self.trt_cache_dir = Path(trt_cache_dir) if trt_cache_dir is not None else default_distill_base_trt_cache_dir(self.cache_dir)
+        self.dtype = torch.float16
+        self.info = DepthProviderInfo(
+            provider="onnxruntime.InferenceSession",
+            model_name=DISTILL_ANY_DEPTH_BASE_NAME,
+            model_id=DISTILL_ANY_DEPTH_BASE_MODEL_ID,
+            depth_resolution=DISTILL_ANY_DEPTH_BASE_RESOLUTION,
+            cache_dir=str(self.cache_dir),
+            load_mode="local_onnx_tensorrt_ep",
+            depth_backend="tensorrt",
+            runtime="onnxruntime-tensorrt",
+            onnx_path=str(self.onnx_path),
+            io_binding=True,
+            output_device="cuda",
+        )
+        self._session = None
+
+    def load(self):
+        if self._session is not None:
+            return self._session
+        if not self.onnx_path.exists():
+            raise FileNotFoundError(f"ONNX file not found: {self.onnx_path}")
+
+        trt_lib_dirs = ensure_tensorrt_dll_path()
+        import onnxruntime as ort
+
+        if hasattr(ort, "preload_dlls"):
+            ort.preload_dlls(directory="")
+        available = ort.get_available_providers()
+        if "TensorrtExecutionProvider" not in available:
+            raise RuntimeError(f"TensorRTExecutionProvider unavailable; available providers: {available}")
+
+        self.trt_cache_dir.mkdir(parents=True, exist_ok=True)
+        trt_options = {
+            "trt_fp16_enable": True,
+            "trt_engine_cache_enable": True,
+            "trt_engine_cache_path": str(self.trt_cache_dir),
+        }
+        session = ort.InferenceSession(
+            str(self.onnx_path),
+            providers=[
+                ("TensorrtExecutionProvider", trt_options),
+                "CUDAExecutionProvider",
+                "CPUExecutionProvider",
+            ],
+        )
+        active = session.get_providers()
+        if "TensorrtExecutionProvider" not in active:
+            raise RuntimeError(f"TensorRT provider did not activate; active providers: {active}")
+        self.info = replace(self.info, execution_provider=active[0] if active else None, trt_lib_dirs=trt_lib_dirs)
+        self._session = session
+        return session
+
+    def predict(self, rgb: torch.Tensor) -> torch.Tensor:
+        rgb = ensure_bchw(rgb, name="rgb")
+        _, _, height, width = rgb.shape
+        tensor = _preprocess_distill_rgb(rgb, device=self.device, dtype=self.dtype)
+        ort_input = tensor.detach().cpu().numpy()
+        session = self.load()
+
+        import numpy as np
+        import onnxruntime as ort
+
+        input_ort = ort.OrtValue.ortvalue_from_numpy(ort_input, "cuda", 0)
+        io_binding = session.io_binding()
+        io_binding.bind_ortvalue_input("pixel_values", input_ort)
+        io_binding.bind_output("predicted_depth", "cuda")
+        session.run_with_iobinding(io_binding)
+        output_np = io_binding.get_outputs()[0].numpy()
+        if not isinstance(output_np, np.ndarray):
+            output_np = np.asarray(output_np)
+        depth = torch.from_numpy(output_np).float()
+        depth = ensure_b1hw(depth)
+        depth = _normalize_depth(depth)
+        return match_depth(depth, height, width)
+
+
+def estimate_distill_any_depth_base_518_nvidia(
+    rgb: torch.Tensor,
+    *,
+    device: str | torch.device = "cuda",
+    cache_dir: str | Path | None = None,
+    onnx_path: str | Path | None = None,
+    trt_cache_dir: str | Path | None = None,
+    prefer_tensorrt: bool = True,
+    prefer_onnx: bool = True,
+    allow_pytorch_fallback: bool = True,
+    require_tensorrt: bool = False,
+    local_files_only: bool = False,
+    force_download: bool = False,
+) -> tuple[torch.Tensor, DepthProviderInfo]:
+    fallback_reasons: list[str] = []
+    if prefer_tensorrt:
+        try:
+            provider = DistillAnyDepthBaseTensorRtOrt(
+                device=device,
+                cache_dir=cache_dir,
+                onnx_path=onnx_path,
+                trt_cache_dir=trt_cache_dir,
+            )
+            return provider.predict(rgb), provider.info
+        except Exception as exc:
+            reason = f"tensorrt:{type(exc).__name__}: {exc}"
+            fallback_reasons.append(reason)
+            if require_tensorrt:
+                raise RuntimeError(reason) from exc
+
+    if prefer_onnx:
+        try:
+            provider = DistillAnyDepthBaseOnnxCuda(
+                device=device,
+                cache_dir=cache_dir,
+                onnx_path=onnx_path,
+                use_iobinding=True,
+            )
+            depth = provider.predict(rgb)
+            info = replace(provider.info, fallback_reason="; ".join(fallback_reasons) or None)
+            return depth, info
+        except Exception as exc:
+            fallback_reasons.append(f"onnx_cuda_iobinding:{type(exc).__name__}: {exc}")
+            if not allow_pytorch_fallback:
+                raise
+
+    provider = DistillAnyDepthBase518(
+        device=device,
+        cache_dir=cache_dir,
+        local_files_only=local_files_only,
+        force_download=force_download,
+    )
+    depth = provider.predict(rgb)
+    info = replace(
+        provider.info,
+        fallback_reason="; ".join(fallback_reasons) or None,
+        onnx_path=str(onnx_path or default_distill_base_onnx_path(cache_dir)),
+    )
+    return depth, info

@@ -28,6 +28,9 @@ class DepthProviderInfo:
     onnx_path: str | None = None
     execution_provider: str | None = None
     fallback_reason: str | None = None
+    io_binding: bool = False
+    output_device: str | None = None
+    trt_lib_dirs: list[str] | None = None
 
     def to_report(self) -> dict[str, Any]:
         return asdict(self)

@@ -52,6 +52,40 @@ Do not change these unless the user explicitly approves a separate quality evalu
   - `.codegraph/`
   - `4K.jpg`
 
+## Project Scope
+
+This repository is the algorithm / inference / stereo synthesis core library. It should provide stable external function calls, configuration parameters, output formats, performance verification, and visual regression tooling for another GUI/runtime host to call.
+
+In scope for this repository:
+
+- Depth inference providers and benchmarks.
+- Stereo synthesis and output packing.
+- `StereoConfig` / OpenXR core config fields and defaults.
+- Realtime temporal reset and depth post-processing primitives.
+- Mode preset definitions and recommended parameter values.
+- OpenXR roll-adaptive per-eye render core.
+- Visual regression tools and quality documentation.
+- Unit tests for arbitrary resolution, output formats, OpenXR roll, temporal reset, and config defaults.
+
+Out of scope for this repository:
+
+- Desktop capture and player/window capture.
+- GUI implementation.
+- Full OpenXR session / swapchain / frame timing runtime.
+- Installer / packaging.
+- Product logging UI and runtime configuration persistence UI.
+- Product-level error recovery UI.
+
+Those product pipeline pieces should live in a separate Desktop2Stereo / GUI runtime / OpenXR host project. This repository only needs to expose a stable API/preset layer for that host project.
+
+Current completion estimate for this repository:
+
+```text
+Core algorithm and performance validation: 85-90%
+External API/preset stability: 75-85%
+Product runtime pipeline: out of scope for this repository
+```
+
 ## Current Status
 
 ### 2026-06-17 RTX 3090 Update
@@ -393,24 +427,31 @@ Visual regression:
 
 ## Recommended Next Steps
 
-1. Implement GUI-side `Auto Mode` state machine:
-   - `frame_motion_score`
-   - `scene_cut_score`
-   - `still_duration`
-   - `foreground_process`
-   - `fullscreen_state`
-   - `openxr_active`
-   - `user_export_action`
-2. Map `Auto Mode` output to `StereoModePreset`, `StereoConfig`, and `OpenXRRenderConfig`.
-3. Generate visual regression sets for representative Cinema, Game / Low Latency, Still Image / HQ, and Debug / Export samples.
-4. Use visual regression to finalize default preset values.
-5. Optimize `hole_fill` only with visual regression checks.
-6. Re-run formal benchmarks on RTX 3090 / RTX 5070 when available:
+1. Formalize the external API/preset layer for host applications:
+   - `StereoConfig`
+   - `OpenXRRenderConfig`
+   - `StereoModePreset`
+   - helper functions that map mode presets to config objects
+2. Define preset outputs for:
+   - `Cinema`
+   - `Game / Low Latency`
+   - `Still Image / HQ`
+   - `Debug / Export`
+   - `Auto` classifier output schema
+3. Provide clear API examples for a GUI/OpenXR host project:
+   - RGB + depth -> stereo output
+   - RGB -> depth provider -> stereo output
+   - OpenXR per-eye pose/FOV/roll -> roll-adaptive stereo core
+   - Auto mode classifier output -> config mapping
+4. Generate visual regression sets for representative Cinema, Game / Low Latency, Still Image / HQ, and Debug / Export samples.
+5. Use visual regression to finalize default preset values.
+6. Optimize `hole_fill` only with visual regression checks.
+7. Re-run formal benchmarks on RTX 3090 / RTX 5070 when available:
    - `bench_depth_backends.py`
    - `profile_synthesis_4k.py`
    - `bench_end_to_end_4k.py`
    - `generate_visual_regression_set.py`
-7. Add true iw3 same-scene comparison later, after fixed RGB/depth/output format is locked.
+8. Add true iw3 same-scene comparison later, after fixed RGB/depth/output format is locked.
 
 ## Current Bottleneck
 

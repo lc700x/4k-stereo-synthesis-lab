@@ -37,6 +37,7 @@ def main() -> None:
     parser.add_argument("--depth-backend", choices=["tensorrt_native", "onnx_cuda_dlpack", "onnx_cuda_iobinding", "pytorch_cuda"], default="tensorrt_native")
     parser.add_argument("--onnx", default=None)
     parser.add_argument("--trt-engine", default=None)
+    parser.add_argument("--no-fused", action="store_true")
     args = parser.parse_args()
 
     import torch
@@ -82,11 +83,13 @@ def main() -> None:
             output_format=output_format,
             temporal=False,
             debug_output=False,
+            fused=not args.no_fused,
         )
         depth_times: list[float] = []
         synthesis_times: list[float] = []
         total_times: list[float] = []
         output_shape = None
+        synthesis_debug = {}
 
         with torch.inference_mode():
             for iteration in range(args.warmup + args.iters):
@@ -105,6 +108,11 @@ def main() -> None:
 
                 total_ms = (time.perf_counter() - total_start) * 1000.0
                 output_shape = list(result.sbs.shape)
+                synthesis_debug = {
+                    key: value
+                    for key, value in result.debug_info.items()
+                    if isinstance(value, (float, int, str))
+                }
                 if iteration >= args.warmup:
                     depth_times.append(depth_ms)
                     synthesis_times.append(synthesis_ms)
@@ -119,6 +127,7 @@ def main() -> None:
         median_ms = total_summary["median_ms"]
         report["formats"][output_format] = {
             "output_shape": output_shape,
+            "synthesis_debug": synthesis_debug,
             "depth": summarize(depth_times),
             "synthesis": summarize(synthesis_times),
             "total": total_summary,

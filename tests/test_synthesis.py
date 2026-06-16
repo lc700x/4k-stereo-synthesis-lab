@@ -1,16 +1,17 @@
 import sys
 from pathlib import Path
 
+import pytest
 import torch
 import torch.nn.functional as F
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.hole_fill import box_blur
-from stereo_lab.baseline_shift import make_base_grid, warp_horizontal
-from stereo_lab.layers import depth_edges
-from stereo_lab.synthesis import StereoConfig, synthesize_stereo
+from stereo_lab.hole_fill import box_blur, edge_aware_fill
+from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
+from stereo_lab.layers import composite_layers, depth_edges, make_depth_layers
+from stereo_lab.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
 from stereo_lab.temporal import TemporalState
 
 
@@ -72,6 +73,17 @@ def test_box_blur_matches_2d_kernel():
     assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)
 
 
+def test_edge_aware_fill_cuda_triton_matches_fallback_when_available():
+    if not torch.cuda.is_available():
+        return
+    torch.manual_seed(17)
+    image = torch.rand(2, 3, 32, 40, device="cuda")
+    mask = (torch.rand(2, 1, 32, 40, device="cuda") > 0.7).float()
+    expected = torch.lerp(image, box_blur(image, radius=3), mask)
+    actual = edge_aware_fill(image, mask, radius=3, strength=1.0)
+    assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)
+
+
 def test_depth_edges_matches_padded_gradient_formula():
     torch.manual_seed(11)
     depth = torch.rand(2, 1, 12, 14)
@@ -81,6 +93,61 @@ def test_depth_edges_matches_padded_gradient_formula():
     expected = ((dx + dy) > threshold).float()
     actual = depth_edges(depth, threshold=threshold)
     assert torch.equal(actual, expected)
+
+
+def test_composite_layers_two_layer_fast_path_matches_formula():
+    torch.manual_seed(13)
+    warped = [torch.rand(2, 3, 8, 10), torch.rand(2, 3, 8, 10)]
+    weights = torch.rand(2, 2, 8, 10)
+    expected = warped[0] * weights[:, 0:1] + warped[1] * weights[:, 1:2]
+    actual = composite_layers(warped, weights)
+    assert torch.equal(actual, expected)
+
+
+def test_fused_warp_composite_cuda_matches_torch_path_when_available():
+    if not torch.cuda.is_available():
+        return
+    rgb, depth = make_inputs(width=40, height=24)
+    rgb = rgb.cuda()
+    depth = depth.cuda()
+    base_shift = compute_shift_px(depth, rgb.shape[-1], ShiftParams())
+    weights = make_depth_layers(depth, layers=2)
+    left_layers = []
+    right_layers = []
+    for idx in range(2):
+        layer_shift = base_shift * (0.75 + 0.25 * (idx + 1) / 2)
+        left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=-1.0))
+        right_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=1.0))
+    expected_left = composite_layers(left_layers, weights)
+    expected_right = composite_layers(right_layers, weights)
+    actual = _try_fused_warp_composite2(rgb, depth, base_shift, layers=2, symmetric=True)
+    assert actual is not None
+    actual_left, actual_right = actual
+    assert torch.allclose(actual_left, expected_left, atol=5e-4, rtol=1e-4)
+    assert torch.allclose(actual_right, expected_right, atol=5e-4, rtol=1e-4)
+
+
+def test_fused_config_false_uses_torch_backends():
+    rgb, depth = make_inputs(width=40, height=24)
+    result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", layers=2, debug_output=True, temporal=False, fused=False),
+    )
+    assert result.debug_info["warp_composite_backend"] == "torch_grid_sample"
+    assert result.debug_info["hole_fill_backend"] == "torch_avg_pool"
+
+
+def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("STEREO_LAB_DISABLE_TRITON", "1")
+    rgb, depth = make_inputs(width=40, height=24)
+    result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", layers=2, debug_output=True, temporal=False),
+    )
+    assert result.debug_info["warp_composite_backend"] == "torch_grid_sample"
+    assert result.debug_info["hole_fill_backend"] == "torch_avg_pool"
 
 
 def test_warp_horizontal_matches_cached_grid_formula():

@@ -20,12 +20,15 @@ def main() -> None:
         default="tensorrt_native",
     )
     parser.add_argument("--device", default=None)
+    parser.add_argument("--onnx", default=None)
+    parser.add_argument("--trt-engine", default=None)
     parser.add_argument("--out-dir", default="outputs/visual_regression")
     parser.add_argument("--depth-strength", type=float, default=3.0)
     parser.add_argument("--convergence", type=float, default=0.0)
     parser.add_argument("--ipd", type=float, default=0.064)
     parser.add_argument("--max-shift-ratio", type=float, default=0.05)
     parser.add_argument("--quality-layers", type=int, default=2)
+    parser.add_argument("--no-fused", action="store_true")
     args = parser.parse_args()
 
     print("[1/5] importing torch and stereo_lab ...", flush=True)
@@ -57,7 +60,14 @@ def main() -> None:
             depth = estimate_luma_depth(rgb)
             depth_info = {"provider": "luma_pseudo_depth"}
         else:
-            provider = create_depth_provider(DepthProviderConfig(backend=args.depth_backend, device=str(device)))
+            provider = create_depth_provider(
+                DepthProviderConfig(
+                    backend=args.depth_backend,
+                    device=str(device),
+                    onnx_path=args.onnx,
+                    engine_path=args.trt_engine,
+                )
+            )
             provider.load()
             depth = provider.predict(rgb)
             info = provider.info() if callable(provider.info) else provider.info
@@ -72,6 +82,7 @@ def main() -> None:
         "max_shift_ratio": args.max_shift_ratio,
         "temporal": False,
         "debug_output": True,
+        "fused": not args.no_fused,
     }
     configs = {
         "baseline": StereoConfig(backend="fast", output_format="full_sbs", **base_config),
@@ -97,6 +108,7 @@ def main() -> None:
             "max_shift_ratio": args.max_shift_ratio,
             "quality_layers": args.quality_layers,
             "temporal": False,
+            "fused": not args.no_fused,
         },
         "methods": {},
         "comparisons": {},

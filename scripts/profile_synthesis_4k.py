@@ -19,6 +19,7 @@ def main() -> None:
     parser.add_argument("--layers", type=int, default=2)
     parser.add_argument("--output-format", choices=["half_sbs", "full_sbs"], default="half_sbs")
     parser.add_argument("--iters", type=int, default=10)
+    parser.add_argument("--no-fused", action="store_true")
     args = parser.parse_args()
 
     import torch
@@ -37,13 +38,14 @@ def main() -> None:
     provider = create_depth_provider(DepthProviderConfig(backend="tensorrt_native", device=device))
     provider.load()
     depth = provider.predict(rgb)
-    config = StereoConfig(backend=args.backend, layers=args.layers, output_format=args.output_format, temporal=False)
+    config = StereoConfig(backend=args.backend, layers=args.layers, output_format=args.output_format, temporal=False, fused=not args.no_fused)
 
     def sync() -> None:
         if device.type == "cuda" and torch.cuda.is_available():
             torch.cuda.synchronize()
 
     timings = []
+    end_to_end_timings = []
     breakdown = {
         "baseline_shift": [],
         "make_layers": [],
@@ -115,6 +117,11 @@ def main() -> None:
         for idx in range(args.iters):
             sync()
             start = time.perf_counter()
+            full_result = synthesize_stereo(rgb, depth, config)
+            sync()
+            end_to_end_timings.append((time.perf_counter() - start) * 1000.0)
+
+            start = time.perf_counter()
             if args.backend == "quality_4k":
                 sbs, parts = profile_quality_once()
                 result = type("ProfileResult", (), {"sbs": sbs})()
@@ -135,6 +142,9 @@ def main() -> None:
         "layers": args.layers,
         "output_format": args.output_format,
         "output_shape": list(result.sbs.shape),
+        "profile_note": "breakdown_mean_ms uses the manual unfused path; end_to_end_mean_ms uses synthesize_stereo and includes fused backends when available",
+        "end_to_end_timings_ms": end_to_end_timings,
+        "end_to_end_mean_ms": sum(end_to_end_timings) / len(end_to_end_timings),
         "timings_ms": timings,
         "mean_ms": sum(timings) / len(timings),
         "min_ms": min(timings),

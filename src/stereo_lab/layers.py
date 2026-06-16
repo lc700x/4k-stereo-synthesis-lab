@@ -34,6 +34,10 @@ def composite_layers(warped: list[torch.Tensor], weights: torch.Tensor) -> torch
     if not warped:
         raise ValueError("warped layer list is empty")
     weights = weights[:, : len(warped)]
+    if len(warped) == 1:
+        return warped[0] * weights[:, 0:1]
+    if len(warped) == 2:
+        return warped[0] * weights[:, 0:1] + warped[1] * weights[:, 1:2]
     out = torch.zeros_like(warped[0])
     for idx, layer in enumerate(warped):
         out.addcmul_(layer, weights[:, idx : idx + 1])

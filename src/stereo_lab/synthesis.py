@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Literal
 
 import torch
 
 from .baseline_shift import ShiftParams, compute_shift_px, synthesize_baseline, warp_horizontal
-from .hole_fill import edge_aware_fill
+from .hole_fill import edge_aware_fill, edge_aware_fill_backend
 from .layers import composite_layers, make_depth_layers
 from .occlusion import make_occlusion_mask
 from .output import OutputFormat, ensure_bchw, make_sbs, match_depth
@@ -33,6 +34,7 @@ class StereoConfig:
     max_shift_ratio: float = 0.05
     temporal_strength: float = 0.85
     refine: bool = False
+    fused: bool = True
 
 
 @dataclass
@@ -55,30 +57,74 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
     base_shift = compute_shift_px(depth, rgb.shape[-1], params)
 
     layer_count = max(1, int(config.layers))
-    weights = make_depth_layers(depth, layers=layer_count)
-    left_layers: list[torch.Tensor] = []
-    right_layers: list[torch.Tensor] = []
-    for idx in range(layer_count):
-        layer_shift = base_shift * (0.75 + 0.25 * (idx + 1) / layer_count)
-        left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=-1.0))
-        sign = 1.0 if config.symmetric else 0.9
-        right_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=sign))
+    fused = _try_fused_warp_composite2(
+        rgb,
+        depth,
+        base_shift,
+        layers=layer_count,
+        symmetric=config.symmetric,
+        enabled=config.fused,
+    )
+    warp_composite_backend = "triton_warp_composite2" if fused is not None else "torch_grid_sample"
+    if fused is not None:
+        left, right = fused
+    else:
+        weights = make_depth_layers(depth, layers=layer_count)
+        left_layers: list[torch.Tensor] = []
+        right_layers: list[torch.Tensor] = []
+        for idx in range(layer_count):
+            layer_shift = base_shift * (0.75 + 0.25 * (idx + 1) / layer_count)
+            left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=-1.0))
+            sign = 1.0 if config.symmetric else 0.9
+            right_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=sign))
 
-    left = composite_layers(left_layers, weights)
-    right = composite_layers(right_layers, weights)
+        left = composite_layers(left_layers, weights)
+        right = composite_layers(right_layers, weights)
     mask = make_occlusion_mask(depth, base_shift) if config.occlusion else torch.zeros_like(depth)
 
+    hole_fill_backend = "none"
     if config.hole_fill != "none":
         radius = 2 if config.hole_fill == "fast" else 3
         strength = 0.65 if config.hole_fill == "fast" else 1.0
         eyes = torch.cat([left, right], dim=0)
         fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
-        eyes = edge_aware_fill(eyes, fill_mask, radius=radius, strength=strength)
+        hole_fill_backend = edge_aware_fill_backend(eyes, fill_mask, radius=radius, strength=strength, fused=config.fused)
+        eyes = edge_aware_fill(eyes, fill_mask, radius=radius, strength=strength, fused=config.fused)
         left, right = eyes.chunk(2, dim=0)
 
     left = refine_local(left, mask, enabled=config.refine)
     right = refine_local(right, mask, enabled=config.refine)
-    return left, right, mask, {"layers": layer_count, "shift_px": base_shift, "occlusion_mask": mask}
+    return left, right, mask, {
+        "layers": layer_count,
+        "shift_px": base_shift,
+        "occlusion_mask": mask,
+        "warp_composite_backend": warp_composite_backend,
+        "hole_fill_backend": hole_fill_backend,
+    }
+
+
+def _try_fused_warp_composite2(
+    rgb: torch.Tensor,
+    depth: torch.Tensor,
+    base_shift: torch.Tensor,
+    *,
+    layers: int,
+    symmetric: bool,
+    enabled: bool = True,
+) -> tuple[torch.Tensor, torch.Tensor] | None:
+    if not enabled or _triton_disabled_by_env():
+        return None
+    try:
+        from .warp_composite_triton import can_use_triton_warp_composite2, warp_composite2
+    except Exception:
+        return None
+    if not can_use_triton_warp_composite2(rgb, depth, base_shift, layers=layers, symmetric=symmetric):
+        return None
+    return warp_composite2(rgb, depth, base_shift)
+
+
+def _triton_disabled_by_env() -> bool:
+    return os.environ.get("STEREO_LAB_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
 
 
 def synthesize_stereo(

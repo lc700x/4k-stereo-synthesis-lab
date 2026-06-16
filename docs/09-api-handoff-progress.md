@@ -50,6 +50,78 @@ Do not change these unless the user explicitly approves a separate quality evalu
 
 ## Current Status
 
+### 2026-06-17 RTX 3090 Update
+
+RTX 3090 formal fused-synthesis pass is complete. Current 4K `quality_4k` no longer has synthesis as the primary bottleneck for the Base model.
+
+Latest detailed result doc:
+
+```text
+docs/10-rtx3090-fused-synthesis-results-2026-06-17.md
+```
+
+Visual regression guide:
+
+```text
+docs/11-visual-regression-guide.md
+```
+
+Final Base Native TensorRT + `quality_4k` + 2 layers on RTX 3090:
+
+| Output | Depth ms | Synthesis ms | Total ms | FPS |
+|---|---:|---:|---:|---:|
+| Half-SBS | 6.250 | 7.163 | 13.414 | 74.55 |
+| Full-SBS | 6.127 | 7.650 | 13.778 | 72.58 |
+
+Final Large Native TensorRT + `quality_4k` + 2 layers on RTX 3090:
+
+| Output | Depth ms | Synthesis ms | Total ms | FPS |
+|---|---:|---:|---:|---:|
+| Half-SBS | 13.588 | 7.732 | 21.322 | 46.90 |
+| Full-SBS | 12.845 | 7.441 | 20.287 | 49.29 |
+
+Current fused synthesis backends:
+
+- `triton_warp_composite2`
+- `triton_radius3`
+
+Confirmed in benchmark JSON under:
+
+```text
+formats.<format>.synthesis_debug.warp_composite_backend
+formats.<format>.synthesis_debug.hole_fill_backend
+```
+
+Fused control:
+
+- `StereoConfig(fused=True)` enables fused paths by default.
+- `StereoConfig(fused=False)` forces PyTorch fallback.
+- CLI scripts support `--no-fused` for comparison/fallback.
+- Environment variable `STEREO_LAB_DISABLE_TRITON=1` disables Triton fused paths globally.
+
+Important:
+
+- First Triton execution includes compile overhead. Do not use visual regression script smoke timing for performance claims.
+- Use `bench_end_to_end_4k.py` for performance claims.
+- `profile_synthesis_4k.py` reports `end_to_end_mean_ms` for real fused `synthesize_stereo` timing and `breakdown_mean_ms` for manual unfused component attribution.
+- `generate_visual_regression_set.py` now accepts `--onnx` and `--trt-engine`; pass them explicitly for Large or other non-default engines.
+
+Latest verification:
+
+```text
+29 passed
+syntax ok 41 files
+```
+
+Latest key outputs:
+
+```text
+outputs/rtx3090_end_to_end_base_quality_final_fused.json
+outputs/rtx3090_end_to_end_large_quality_final_fused.json
+outputs/visual_regression/rtx3090_base_quality_final_fused
+outputs/visual_regression/rtx3090_large_engine_quality_final_fused
+```
+
 ### Depth Backend
 
 Current recommended backend order:

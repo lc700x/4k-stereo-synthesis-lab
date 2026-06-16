@@ -572,6 +572,8 @@ Why it matters:
 - This prevents optimizing only for milliseconds while silently hurting edges, holes, UI text, or left/right consistency.
 - The script defaults `temporal=False` so single-frame regression output is deterministic.
 - The script timing is only a coarse smoke value because it also performs first-use work and image output; use `profile_synthesis_4k.py` and `bench_end_to_end_4k.py` for performance claims.
+- Current visual-regression timing was measured on RTX 2060, which should be treated as the entry-level 4K baseline, not the final performance ceiling.
+- RTX 3090 / RTX 5070 class GPUs must rerun the formal benchmark scripts before drawing high-end performance conclusions.
 
 Example:
 
@@ -1027,6 +1029,18 @@ Current end-to-end Quality 4K on RTX 2060:
 ```text
 Half-SBS: about 14.05 FPS
 Full-SBS: about 14.66 FPS
+```
+
+Interpretation:
+
+```text
+RTX 2060 numbers are the entry-level baseline for this project.
+They should not be used as the final high-end GPU estimate.
+When RTX 3090 / RTX 5070 hardware is available, rerun:
+  - profile_synthesis_4k.py
+  - bench_end_to_end_4k.py
+  - bench_depth_backends.py
+  - generate_visual_regression_set.py
 ```
 
 Main remaining bottleneck:

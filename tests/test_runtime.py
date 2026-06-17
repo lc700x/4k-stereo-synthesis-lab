@@ -106,3 +106,14 @@ def test_rolling_runtime_stats_reports_percentiles_fps_and_memory():
 
     stats.reset()
     assert stats.to_report()["count"] == 0
+
+
+def test_stereo_runtime_package_aliases_new_public_names():
+    from stereo_runtime import StereoRuntime, StereoRuntimeConfig
+    from stereo_runtime.depth_provider import DepthProviderConfig
+    from stereo_runtime.runtime import RollingRuntimeStats as AliasRollingStats
+
+    assert StereoRuntime is StereoLabRuntime
+    assert StereoRuntimeConfig is StereoLabRuntimeConfig
+    assert DepthProviderConfig.__name__ == "DepthProviderConfig"
+    assert AliasRollingStats is RollingRuntimeStats

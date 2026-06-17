@@ -25,8 +25,8 @@
 ## 数据流 1：Host 已有 RGB + Depth
 
 ```python
-from stereo_lab import stereo_config_for_preset, synthesize_stereo
-from stereo_lab.temporal import TemporalState
+from stereo_runtime import stereo_config_for_preset, synthesize_stereo
+from stereo_runtime.temporal import TemporalState
 
 config = stereo_config_for_preset("cinema", output_format="half_sbs")
 temporal_state = TemporalState()
@@ -54,15 +54,15 @@ result = synthesize_stereo(rgb, depth, config, temporal_state=temporal_state)
 
 ## 数据流 2：Host 只有 RGB
 
-推荐外部 host 使用 `StereoLabRuntimeConfig` 作为边界对象。Desktop2Stereo 负责下载模型并确定 `model_id` / `model_dir`，本仓库从 `model_dir` 推导 ONNX 与 TensorRT artifact 路径，并负责后续转换、构建、预处理、推理和立体合成。
+推荐外部 host 使用 `StereoRuntimeConfig` 作为边界对象。Desktop2Stereo 负责下载模型并确定 `model_id` / `model_dir`，本仓库从 `model_dir` 推导 ONNX 与 TensorRT artifact 路径，并负责后续转换、构建、预处理、推理和立体合成。
 
 ```python
-from stereo_lab import (
-    StereoLabRuntime,
-    StereoLabRuntimeConfig,
+from stereo_runtime import (
+    StereoRuntime,
+    StereoRuntimeConfig,
 )
 
-runtime_config = StereoLabRuntimeConfig(
+runtime_config = StereoRuntimeConfig(
     model_id="lc700x/Distill-Any-Depth-Base-hf",
     model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
     mode="movie",
@@ -87,7 +87,7 @@ runtime_config = StereoLabRuntimeConfig(
     fused=True,
 )
 
-runtime = StereoLabRuntime(runtime_config)
+runtime = StereoRuntime(runtime_config)
 runtime.load()
 
 for rgb_frame in frames:
@@ -150,16 +150,16 @@ Host 只需要保证：
 
 | 对象 | 创建频率 | 说明 |
 |---|---|---|
-| `StereoLabRuntime` | 进程启动或模型/模式切换时创建一次 | Host 首选调用对象，内部持有 provider、stereo config、temporal state |
+| `StereoRuntime` | 进程启动或模型/模式切换时创建一次 | Host 首选调用对象，内部持有 provider、stereo config、temporal state |
 | `DepthProvider` | 进程启动或模型切换时创建一次 | 内部持有模型、ONNX session 或 TensorRT engine |
-| `StereoLabRuntimeConfig` | 模型、模式或参数改变时创建 | Host 传 `model_id` 和 `model_dir`，artifact 路径由本仓库推导 |
+| `StereoRuntimeConfig` | 模型、模式或参数改变时创建 | Host 传 `model_id` 和 `model_dir`，artifact 路径由本仓库推导 |
 | `StereoConfig` | 由 runtime config 转换生成 | 不需要每帧创建 |
 | `TemporalState` | 每条输入流一个 | 源切换或场景重置时可 reset |
 | OpenXR session/swapchain | Host runtime 管理 | 本仓库不创建完整 runtime |
 
 禁止行为：
 
-- 不要每帧创建 `StereoLabRuntime`。
+- 不要每帧创建 `StereoRuntime`。
 - 不要每帧调用 `create_depth_provider()`。
 - 不要每帧重新 load ONNX session 或 TensorRT engine。
 - 不要为了提速降低 `depth_resolution=518` 或修改 `294x518` 输入路径。
@@ -248,7 +248,7 @@ Preset 不控制：
 `auto` 只在用户选择 auto preset 时启动检测。手动选择 `cinema`、`game_low_latency`、`still_image_hq` 或 `debug_export` 时，host 不应启动场景检测线程。
 
 ```python
-from stereo_lab import AutoModeRuntime, AutoModeSignals, auto_detection_required
+from stereo_runtime import AutoModeRuntime, AutoModeSignals, auto_detection_required
 
 if auto_detection_required(selected_preset):
     runtime = AutoModeRuntime()
@@ -276,8 +276,8 @@ if auto_detection_required(selected_preset):
 固定 SBS/TAB 不能代替真正 OpenXR 输出。OpenXR host 应调用 per-eye render core，并由 host 管理 session、swapchain、projection layer 和 frame timing。
 
 ```python
-from stereo_lab import openxr_config_for_preset
-from stereo_lab.openxr_render import render_openxr_stereo
+from stereo_runtime import openxr_config_for_preset
+from stereo_runtime.openxr_render import render_openxr_stereo
 
 config = openxr_config_for_preset("cinema", screen_roll=screen_roll)
 result = render_openxr_stereo(rgb, depth, config)

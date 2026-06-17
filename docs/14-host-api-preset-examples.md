@@ -26,7 +26,7 @@ debug_export
 ## RGB + Depth 调用
 
 ```python
-from stereo_lab import stereo_config_for_preset, synthesize_stereo
+from stereo_runtime import stereo_config_for_preset, synthesize_stereo
 
 config = stereo_config_for_preset(
     "cinema",
@@ -44,12 +44,12 @@ packed = result.sbs
 ## 只有 RGB 时的常驻 depth provider
 
 ```python
-from stereo_lab import (
-    StereoLabRuntime,
-    StereoLabRuntimeConfig,
+from stereo_runtime import (
+    StereoRuntime,
+    StereoRuntimeConfig,
 )
 
-runtime_config = StereoLabRuntimeConfig(
+runtime_config = StereoRuntimeConfig(
     model_id="lc700x/Distill-Any-Depth-Base-hf",
     model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
     mode="movie",
@@ -74,7 +74,7 @@ runtime_config = StereoLabRuntimeConfig(
     fused=True,
 )
 
-runtime = StereoLabRuntime(runtime_config)
+runtime = StereoRuntime(runtime_config)
 runtime.load()
 
 for rgb_frame in frames:
@@ -112,7 +112,7 @@ model_fp16_294x518.trt
 只有用户选择 `auto` 时才启动异步检测。手动 preset 不需要检测线程。
 
 ```python
-from stereo_lab import (
+from stereo_runtime import (
     AutoModeRuntime,
     AutoModeSignals,
     auto_detection_required,
@@ -162,8 +162,8 @@ Host 应在后台线程或低频 timer 中采集系统信号，并把 2-3 秒均
 ## OpenXR per-eye core
 
 ```python
-from stereo_lab import openxr_config_for_preset
-from stereo_lab.openxr_render import render_openxr_stereo
+from stereo_runtime import openxr_config_for_preset
+from stereo_runtime.openxr_render import render_openxr_stereo
 
 config = openxr_config_for_preset(
     "cinema",

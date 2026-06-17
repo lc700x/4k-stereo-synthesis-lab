@@ -1,0 +1,79 @@
+"""4K stereo synthesis research prototypes."""
+
+from .openxr_render import (
+    OpenXREyeView,
+    OpenXRFov,
+    OpenXRRenderConfig,
+    OpenXRScreenPose,
+    OpenXRStereoResult,
+    build_openxr_eye_mvp,
+    is_pyopenxr_available,
+    render_openxr_stereo,
+)
+from .adapter import (
+    StereoLabRuntimeConfig,
+    depth_provider_config_from_runtime,
+    preset_for_runtime_mode,
+    runtime_frame_contract,
+    stereo_config_from_runtime,
+)
+from .presets import (
+    AutoModeDecision,
+    AutoModeRuntime,
+    AutoModeRuntimeState,
+    AutoModeSignals,
+    PRESET_CHOICES,
+    StereoModePreset,
+    auto_detection_required,
+    auto_mode_scores,
+    classify_auto_mode,
+    openxr_config_for_auto_mode,
+    openxr_config_for_preset,
+    preset_summary,
+    stereo_config_for_auto_mode,
+    stereo_config_for_preset,
+)
+from .runtime import StereoLabRuntime, StereoLabRuntimeResult
+from .synthesis import StereoConfig, StereoResult, synthesize_stereo
+
+StereoRuntimeConfig = StereoLabRuntimeConfig
+StereoRuntime = StereoLabRuntime
+StereoRuntimeResult = StereoLabRuntimeResult
+
+__all__ = [
+    "AutoModeDecision",
+    "AutoModeRuntime",
+    "AutoModeRuntimeState",
+    "AutoModeSignals",
+    "OpenXREyeView",
+    "OpenXRFov",
+    "OpenXRRenderConfig",
+    "OpenXRScreenPose",
+    "OpenXRStereoResult",
+    "PRESET_CHOICES",
+    "StereoLabRuntimeConfig",
+    "StereoLabRuntime",
+    "StereoLabRuntimeResult",
+    "StereoRuntimeConfig",
+    "StereoRuntime",
+    "StereoRuntimeResult",
+    "StereoConfig",
+    "StereoModePreset",
+    "StereoResult",
+    "auto_detection_required",
+    "build_openxr_eye_mvp",
+    "auto_mode_scores",
+    "classify_auto_mode",
+    "is_pyopenxr_available",
+    "openxr_config_for_auto_mode",
+    "openxr_config_for_preset",
+    "preset_summary",
+    "render_openxr_stereo",
+    "depth_provider_config_from_runtime",
+    "preset_for_runtime_mode",
+    "runtime_frame_contract",
+    "stereo_config_from_runtime",
+    "stereo_config_for_auto_mode",
+    "stereo_config_for_preset",
+    "synthesize_stereo",
+]

@@ -25,7 +25,8 @@
 
 | 路径 | 用途 |
 |---|---|
-| `src/stereo_lab/` | 核心库代码 |
+| `src/stereo_runtime/` | 推荐对外导入包，面向 Desktop2Stereo/host runtime |
+| `src/stereo_lab/` | 兼容入口和当前核心实现代码 |
 | `tests/` | 单元测试和 smoke contract 测试 |
 | `scripts/benchmark/` | 性能测试和 profile |
 | `scripts/tools/` | ONNX 导出、深度图生成、对比、视觉回归工具 |

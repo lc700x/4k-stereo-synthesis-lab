@@ -22,9 +22,9 @@ d6e77e2 docs: add auto mode runtime host demo
 
 Important docs:
 
-- `docs/07-depth-backend-benchmark-2026-06-16.md`
-- `docs/08-synthesis-optimization-log-2026-06-16.md`
-- `docs/10-rtx3090-fused-synthesis-results-2026-06-17.md`
+- `docs/benchmark/07-depth-backend-benchmark.md`
+- `docs/benchmark/08-synthesis-optimization-log.md`
+- `docs/benchmark/10-rtx3090-fused-synthesis-results.md`
 - `docs/11-visual-regression-guide.md`
 - `docs/12-openxr-stereo-runtime-plan.md`
 - `docs/13-realtime-stereo-parameter-guide.md`
@@ -165,7 +165,7 @@ RTX 3090 formal fused-synthesis pass is complete. Current 4K `quality_4k` no lon
 Latest detailed result doc:
 
 ```text
-docs/10-rtx3090-fused-synthesis-results-2026-06-17.md
+docs/benchmark/10-rtx3090-fused-synthesis-results.md
 ```
 
 Visual regression guide:
@@ -304,7 +304,7 @@ Source:
 
 ```text
 outputs/depth_backend_final_compare_4k/depth_backend_bench.json
-docs/07-depth-backend-benchmark-2026-06-16.md
+docs/benchmark/07-depth-backend-benchmark.md
 ```
 
 Important implementation files:
@@ -389,7 +389,7 @@ Important caveat:
 Detailed optimization history:
 
 ```text
-docs/08-synthesis-optimization-log-2026-06-16.md
+docs/benchmark/08-synthesis-optimization-log.md
 ```
 
 Highlights:

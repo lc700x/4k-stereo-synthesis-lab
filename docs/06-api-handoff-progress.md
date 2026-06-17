@@ -500,7 +500,7 @@ python3/Lib/site-packages/tensorrt_libs/
 - 已输出 benchmark 报告：
 
 ```text
-docs/07-depth-backend-benchmark-2026-06-16.md
+docs/benchmark/07-depth-backend-benchmark.md
 ```
 
 当前 4K 结论：

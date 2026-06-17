@@ -125,7 +125,7 @@ Why it matters:
 Primary reference:
 
 ```text
-docs/07-depth-backend-benchmark-2026-06-16.md
+docs/benchmark/07-depth-backend-benchmark.md
 ```
 
 ### TensorRT DLL Path Discovery

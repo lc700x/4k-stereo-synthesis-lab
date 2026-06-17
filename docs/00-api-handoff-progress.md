@@ -100,20 +100,9 @@ Recommended public import:
 from stereo_runtime import StereoRuntime, StereoRuntimeConfig
 ```
 
-The old `stereo_lab` package remains as a compatibility proxy only:
+The old `stereo_lab` compatibility proxy has been removed. Host projects must import from `stereo_runtime`.
 
-```python
-from stereo_lab import StereoRuntime, StereoRuntimeConfig
-from stereo_lab import StereoLabRuntime, StereoLabRuntimeConfig
-```
-
-Compatibility mapping:
-
-- `StereoLabRuntimeConfig = StereoRuntimeConfig`
-- `StereoLabRuntime = StereoRuntime`
-- `StereoLabRuntimeResult = StereoRuntimeResult`
-
-Actual scripts, smoke tools, benchmark tools, and tests have been migrated to import from `stereo_runtime`.
+Actual scripts, smoke tools, benchmark tools, and tests import from `stereo_runtime`.
 
 Current runtime handoff entry:
 
@@ -143,7 +132,7 @@ Document movement cleanup:
 
 - `4K 高质量立体生成算法实现计划书.md` moved from repo root to `docs/`.
 - Active implementation paths inside current handoff docs now point to `src/stereo_runtime/...`.
-- Historical benchmark logs may still mention `src/stereo_lab/...` because they describe past commits.
+- Historical benchmark logs may still mention `src/stereo_lab/...` because they describe past commits. Current implementation paths are under `src/stereo_runtime/...`.
 
 Latest verification after migration:
 

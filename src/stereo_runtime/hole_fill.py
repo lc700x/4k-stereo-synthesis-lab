@@ -42,4 +42,7 @@ def _can_use_triton_fill(image: torch.Tensor, mask: torch.Tensor, *, radius: int
 
 
 def _triton_disabled_by_env() -> bool:
-    return os.environ.get("STEREO_LAB_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
+    return (
+        os.environ.get("STEREO_RUNTIME_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
+        or os.environ.get("STEREO_LAB_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
+    )

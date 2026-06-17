@@ -40,9 +40,9 @@ def main() -> None:
     print("[1/5] importing torch ...", flush=True)
     import torch
 
-    print("[2/5] importing stereo_lab ...", flush=True)
-    from stereo_lab.io import save_depth, save_rgb
-    from stereo_lab.synthesis import StereoConfig, synthesize_stereo
+    print("[2/5] importing stereo_runtime ...", flush=True)
+    from stereo_runtime.io import save_depth, save_rgb
+    from stereo_runtime.synthesis import StereoConfig, synthesize_stereo
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[info] torch={torch.__version__} cuda={torch.cuda.is_available()} device={device}", flush=True)

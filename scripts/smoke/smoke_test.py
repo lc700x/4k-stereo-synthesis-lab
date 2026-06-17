@@ -11,9 +11,9 @@ def main() -> None:
     print("[1/4] importing torch ...", flush=True)
     import torch
 
-    print("[2/4] importing stereo_lab ...", flush=True)
-    from stereo_lab import StereoConfig, synthesize_stereo
-    from stereo_lab.temporal import TemporalState
+    print("[2/4] importing stereo_runtime ...", flush=True)
+    from stereo_runtime import StereoConfig, synthesize_stereo
+    from stereo_runtime.temporal import TemporalState
 
     print(f"[info] torch={torch.__version__} cuda={torch.cuda.is_available()}", flush=True)
     print("[3/4] running smoke cases ...", flush=True)

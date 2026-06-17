@@ -4,18 +4,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab import (
-    StereoLabRuntimeConfig,
+from stereo_runtime import (
+    StereoRuntimeConfig,
     depth_provider_config_from_runtime,
     runtime_frame_contract,
     stereo_config_from_runtime,
 )
-from stereo_lab.adapter import preset_for_runtime_mode
+from stereo_runtime.adapter import preset_for_runtime_mode
 
 
 def test_runtime_config_derives_artifacts_from_model_dir():
     model_dir = Path(r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf")
-    config = StereoLabRuntimeConfig(
+    config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=model_dir,
     )
@@ -28,7 +28,7 @@ def test_runtime_config_derives_artifacts_from_model_dir():
 
 
 def test_runtime_config_maps_depth_backend_auto_to_native_tensorrt():
-    config = StereoLabRuntimeConfig(
+    config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
         depth_backend="auto",
@@ -47,7 +47,7 @@ def test_runtime_config_maps_depth_backend_auto_to_native_tensorrt():
 
 
 def test_runtime_config_maps_modes_and_stereo_params():
-    config = StereoLabRuntimeConfig(
+    config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
         mode="game",
@@ -72,7 +72,7 @@ def test_runtime_config_maps_modes_and_stereo_params():
 
 
 def test_hq_quality_raises_layers_to_at_least_three():
-    config = StereoLabRuntimeConfig(
+    config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
         mode="image",
@@ -86,7 +86,7 @@ def test_hq_quality_raises_layers_to_at_least_three():
 
 
 def test_runtime_config_defines_d2s_rgb_frame_contract():
-    config = StereoLabRuntimeConfig(
+    config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
     )
@@ -95,6 +95,6 @@ def test_runtime_config_defines_d2s_rgb_frame_contract():
 
     assert contract["input"] == "rgb_frame"
     assert "perform capture-side color preprocessing" in contract["host_responsibility"]
-    assert "depth inference" in contract["stereo_lab_responsibility"]
-    assert "BGR/BGRA-to-RGB conversion" in contract["not_stereo_lab_responsibility"]
+    assert "depth inference" in contract["stereo_runtime_responsibility"]
+    assert "BGR/BGRA-to-RGB conversion" in contract["not_stereo_runtime_responsibility"]
     assert config.to_report()["frame_contract"] == contract

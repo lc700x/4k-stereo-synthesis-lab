@@ -17,11 +17,11 @@ OnnxDtypeMode = Literal["auto", "fp16", "fp32"]
 
 
 @dataclass(frozen=True)
-class StereoLabRuntimeConfig:
+class StereoRuntimeConfig:
     """Host-facing runtime config.
 
     The host owns model selection and download. It passes the downloaded
-    model directory here; stereo_lab derives ONNX/TensorRT artifact paths
+    model directory here; stereo_runtime derives ONNX/TensorRT artifact paths
     inside the same directory and owns export/build/inference after that.
     """
 
@@ -87,20 +87,20 @@ class StereoLabRuntimeConfig:
         return report
 
 
-def runtime_frame_contract(config: StereoLabRuntimeConfig) -> dict[str, str]:
+def runtime_frame_contract(config: StereoRuntimeConfig) -> dict[str, str]:
     """Return the host-facing RGB frame contract.
 
     The host/capture pipeline owns capture-side color preprocessing and passes
-    an already-RGB image frame. stereo_lab starts at depth-provider input
+    an already-RGB image frame. stereo_runtime starts at depth-provider input
     preparation and does not own BGR/BGRA-to-RGB conversion.
     """
 
     return {
         "input": "rgb_frame",
         "host_responsibility": "capture current image frame, perform capture-side color preprocessing, and pass an RGB frame at source resolution",
-        "stereo_lab_responsibility": "prepare RGB frame for depth inference, run depth provider, and synthesize stereo output",
-        "not_stereo_lab_responsibility": "desktop capture, BGR/BGRA-to-RGB conversion, window/monitor source handling",
-        "backend_detail": "TensorRT/ONNX/PyTorch/Triton packing remains internal to stereo_lab",
+        "stereo_runtime_responsibility": "prepare RGB frame for depth inference, run depth provider, and synthesize stereo output",
+        "not_stereo_runtime_responsibility": "desktop capture, BGR/BGRA-to-RGB conversion, window/monitor source handling",
+        "backend_detail": "TensorRT/ONNX/PyTorch/Triton packing remains internal to stereo_runtime",
         "quality_rule": "host must not downscale or alter depth inference resolution semantics",
     }
 
@@ -125,7 +125,7 @@ def preset_for_runtime_mode(mode: str) -> str:
         raise ValueError(f"unknown runtime mode: {mode!r}") from exc
 
 
-def depth_provider_config_from_runtime(config: StereoLabRuntimeConfig) -> DepthProviderConfig:
+def depth_provider_config_from_runtime(config: StereoRuntimeConfig) -> DepthProviderConfig:
     backend = config.depth_backend
     if backend == "auto":
         backend = "tensorrt_native"
@@ -151,7 +151,7 @@ def depth_provider_config_from_runtime(config: StereoLabRuntimeConfig) -> DepthP
     )
 
 
-def stereo_config_from_runtime(config: StereoLabRuntimeConfig) -> StereoConfig:
+def stereo_config_from_runtime(config: StereoRuntimeConfig) -> StereoConfig:
     preset = normalize_preset(preset_for_runtime_mode(config.mode))
     layers = config.layers
     if config.stereo_quality == "hq_4k" and layers < 3:
@@ -178,3 +178,6 @@ def stereo_config_from_runtime(config: StereoLabRuntimeConfig) -> StereoConfig:
             "fused": config.fused,
         },
     )
+
+
+StereoLabRuntimeConfig = StereoRuntimeConfig

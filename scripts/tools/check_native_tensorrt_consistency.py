@@ -21,8 +21,8 @@ def main() -> None:
 
     import torch
 
-    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
-    from stereo_lab.io import load_rgb
+    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.io import load_rgb
 
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     rgb = load_rgb(args.rgb, device=device)

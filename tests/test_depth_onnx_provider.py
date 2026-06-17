@@ -6,9 +6,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.depth_provider import DepthProviderConfig, DepthProviderInfo, DistillAnyDepthBase518, create_depth_provider, estimate_depth
-from stereo_lab.depth_onnx_provider import DistillPreprocessor, _preprocess_distill_rgb, estimate_distill_any_depth_base_518_onnx_cuda
-from stereo_lab.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
+from stereo_runtime.depth_provider import DepthProviderConfig, DepthProviderInfo, DistillAnyDepthBase518, create_depth_provider, estimate_depth
+from stereo_runtime.depth_onnx_provider import DistillPreprocessor, _preprocess_distill_rgb, estimate_distill_any_depth_base_518_onnx_cuda
+from stereo_runtime.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
 
 
 class FakeTorchProvider:
@@ -29,7 +29,7 @@ class FakeTorchProvider:
 
 
 def test_nvidia_provider_falls_back_when_onnx_missing(monkeypatch, tmp_path):
-    import stereo_lab.depth_trt_provider as provider_module
+    import stereo_runtime.depth_trt_provider as provider_module
 
     monkeypatch.setattr(provider_module, "DistillAnyDepthBase518", FakeTorchProvider)
     rgb = torch.zeros(1, 3, 8, 8)
@@ -68,7 +68,7 @@ def test_nvidia_provider_requires_tensorrt_when_requested(tmp_path):
 
 
 def test_onnx_cuda_provider_falls_back_when_onnx_missing(monkeypatch, tmp_path):
-    import stereo_lab.depth_onnx_provider as provider_module
+    import stereo_runtime.depth_onnx_provider as provider_module
 
     monkeypatch.setattr(provider_module, "DistillAnyDepthBase518", FakeTorchProvider)
     rgb = torch.zeros(1, 3, 8, 8)
@@ -103,7 +103,7 @@ def test_create_depth_provider_supports_persistent_pytorch_provider(tmp_path):
 
 
 def test_create_depth_provider_supports_native_tensorrt(tmp_path):
-    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
 
     engine_path = tmp_path / "model.trt"
     provider = create_depth_provider(
@@ -123,7 +123,7 @@ def test_create_depth_provider_supports_native_tensorrt(tmp_path):
 
 
 def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
-    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
 
     model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
     onnx_path = model_dir / "model_fp16_294x518.onnx"
@@ -139,7 +139,7 @@ def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
 
 
 def test_native_tensorrt_keeps_explicit_metadata(tmp_path):
-    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
 
     model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
     provider = DistillAnyDepthBaseNativeTensorRt(
@@ -170,7 +170,7 @@ def test_estimate_depth_uses_configured_provider(monkeypatch):
         def predict(self, rgb):
             return torch.ones(rgb.shape[0], 1, rgb.shape[-2], rgb.shape[-1])
 
-    import stereo_lab.depth_provider as provider_module
+    import stereo_runtime.depth_provider as provider_module
 
     monkeypatch.setattr(provider_module, "create_depth_provider", lambda config=None: Provider())
     depth, info = estimate_depth(torch.zeros(1, 3, 4, 5), {"backend": "fake"})

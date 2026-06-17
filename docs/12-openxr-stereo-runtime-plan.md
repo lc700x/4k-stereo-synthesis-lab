@@ -7,7 +7,7 @@ The local Python environment has pyopenxr available as the `xr` module.
 The lab repository now has OpenXR stereo rendering core helpers in:
 
 ```text
-src/stereo_lab/openxr_render.py
+src/stereo_runtime/openxr_render.py
 ```
 
 Preview script:

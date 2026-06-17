@@ -6,7 +6,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.report import depth_comparison_metrics, depth_metrics, make_labeled_contact_sheet
+from stereo_runtime.report import depth_comparison_metrics, depth_metrics, make_labeled_contact_sheet
 
 
 def test_depth_metrics_summary_fields():

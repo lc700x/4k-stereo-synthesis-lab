@@ -6,8 +6,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.openxr_render import OpenXRRenderConfig
-from stereo_lab.presets import (
+from stereo_runtime.openxr_render import OpenXRRenderConfig
+from stereo_runtime.presets import (
     AutoModeRuntime,
     AutoModeSignals,
     PRESET_CHOICES,
@@ -20,7 +20,7 @@ from stereo_lab.presets import (
     stereo_config_for_auto_mode,
     stereo_config_for_preset,
 )
-from stereo_lab.synthesis import StereoConfig
+from stereo_runtime.synthesis import StereoConfig
 
 
 def test_preset_choices_are_public_and_stable():

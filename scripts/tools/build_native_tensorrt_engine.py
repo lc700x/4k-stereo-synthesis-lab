@@ -18,8 +18,8 @@ def main() -> None:
     parser.add_argument("--workspace-gb", type=int, default=4)
     args = parser.parse_args()
 
-    from stereo_lab.depth_onnx_provider import default_distill_base_onnx_path
-    from stereo_lab.depth_trt_native_provider import build_native_tensorrt_engine, default_distill_base_native_trt_path
+    from stereo_runtime.depth_onnx_provider import default_distill_base_onnx_path
+    from stereo_runtime.depth_trt_native_provider import build_native_tensorrt_engine, default_distill_base_native_trt_path
 
     onnx_path = Path(args.onnx) if args.onnx else default_distill_base_onnx_path(args.cache_dir)
     engine_path = Path(args.engine) if args.engine else default_distill_base_native_trt_path(args.cache_dir)

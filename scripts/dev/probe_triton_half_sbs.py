@@ -11,7 +11,7 @@ import torch
 import triton
 import triton.language as tl
 
-from stereo_lab.output import make_sbs
+from stereo_runtime.output import make_sbs
 
 
 @triton.jit

@@ -31,7 +31,7 @@ def _synthetic_rgb_depth(height: int, width: int, device: str):
 
 
 def _load_rgb(path: Path, device: str):
-    from stereo_lab.io import load_rgb
+    from stereo_runtime.io import load_rgb
 
     return load_rgb(path, device=device)
 
@@ -40,7 +40,7 @@ def _make_depth(args, rgb):
     if not args.auto_depth:
         return None, None
 
-    from stereo_lab.depth_provider import DepthProviderConfig, create_depth_provider
+    from stereo_runtime.depth_provider import DepthProviderConfig, create_depth_provider
 
     provider = create_depth_provider(
         DepthProviderConfig(
@@ -76,8 +76,8 @@ def main() -> None:
 
     import torch
 
-    from stereo_lab import openxr_config_for_preset, render_openxr_stereo, stereo_config_for_preset, synthesize_stereo
-    from stereo_lab.temporal import TemporalState
+    from stereo_runtime import openxr_config_for_preset, render_openxr_stereo, stereo_config_for_preset, synthesize_stereo
+    from stereo_runtime.temporal import TemporalState
 
     device = args.device
     if device == "cuda" and not torch.cuda.is_available():

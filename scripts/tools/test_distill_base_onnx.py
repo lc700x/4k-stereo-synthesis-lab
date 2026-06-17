@@ -56,8 +56,8 @@ def main() -> None:
     import onnxruntime as ort
     from transformers import AutoModelForDepthEstimation
 
-    from stereo_lab.io import load_rgb, save_depth, save_rgb
-    from stereo_lab.report import absdiff, basic_image_metrics, write_json
+    from stereo_runtime.io import load_rgb, save_depth, save_rgb
+    from stereo_runtime.report import absdiff, basic_image_metrics, write_json
 
     onnx_path = Path(args.onnx)
     if not onnx_path.exists():

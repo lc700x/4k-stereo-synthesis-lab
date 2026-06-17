@@ -32,10 +32,10 @@ def summarize_ms(values: list[float]) -> dict[str, float]:
 
 
 def make_backend_provider(backend: str, *, device, cache_dir, onnx_path, trt_engine, model_id, model_name, build_native_engine, force_rebuild_native):
-    from stereo_lab.depth_onnx_provider import DistillAnyDepthBaseOnnxCuda
-    from stereo_lab.depth_provider import DistillAnyDepthBase518
-    from stereo_lab.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
-    from stereo_lab.depth_trt_provider import DistillAnyDepthBaseTensorRtOrt
+    from stereo_runtime.depth_onnx_provider import DistillAnyDepthBaseOnnxCuda
+    from stereo_runtime.depth_provider import DistillAnyDepthBase518
+    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.depth_trt_provider import DistillAnyDepthBaseTensorRtOrt
 
     if backend == "tensorrt_native":
         return DistillAnyDepthBaseNativeTensorRt(
@@ -93,8 +93,8 @@ def main() -> None:
 
     import torch
 
-    from stereo_lab.io import load_rgb
-    from stereo_lab.report import write_json
+    from stereo_runtime.io import load_rgb
+    from stereo_runtime.report import write_json
 
     backends = args.backend or ["tensorrt", "onnx_cuda_iobinding", "pytorch_cuda"]
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")

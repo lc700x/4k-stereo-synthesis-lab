@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.output import OUTPUT_FORMAT_CHOICES
+from stereo_runtime.output import OUTPUT_FORMAT_CHOICES
 
 
 def main() -> None:
@@ -50,13 +50,13 @@ def main() -> None:
     print("[2/6] importing torch ...", flush=True)
     import torch
 
-    print("[3/6] importing stereo_lab ...", flush=True)
-    from stereo_lab.auto_depth import estimate_luma_depth
-    from stereo_lab.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
-    from stereo_lab.depth_provider import estimate_distill_any_depth_base_518
-    from stereo_lab.io import load_depth, load_rgb, save_depth, save_rgb
-    from stereo_lab.report import absdiff, basic_image_metrics, make_contact_sheet, write_json
-    from stereo_lab.synthesis import StereoConfig, synthesize_stereo
+    print("[3/6] importing stereo_runtime ...", flush=True)
+    from stereo_runtime.auto_depth import estimate_luma_depth
+    from stereo_runtime.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
+    from stereo_runtime.depth_provider import estimate_distill_any_depth_base_518
+    from stereo_runtime.io import load_depth, load_rgb, save_depth, save_rgb
+    from stereo_runtime.report import absdiff, basic_image_metrics, make_contact_sheet, write_json
+    from stereo_runtime.synthesis import StereoConfig, synthesize_stereo
 
     device_name = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_name)

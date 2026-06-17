@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.output import OUTPUT_FORMAT_CHOICES
+from stereo_runtime.output import OUTPUT_FORMAT_CHOICES
 
 
 def summarize(values: list[float]) -> dict[str, float]:
@@ -64,9 +64,9 @@ def main() -> None:
 
     import torch
 
-    from stereo_lab.depth_provider import DepthProviderConfig, create_depth_provider
-    from stereo_lab.io import load_rgb
-    from stereo_lab.synthesis import StereoConfig, synthesize_stereo
+    from stereo_runtime.depth_provider import DepthProviderConfig, create_depth_provider
+    from stereo_runtime.io import load_rgb
+    from stereo_runtime.synthesis import StereoConfig, synthesize_stereo
 
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     rgb = load_rgb(args.rgb, device=device)

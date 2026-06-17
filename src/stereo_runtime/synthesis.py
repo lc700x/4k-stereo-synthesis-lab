@@ -156,7 +156,10 @@ def _try_fused_warp_composite2(
 
 
 def _triton_disabled_by_env() -> bool:
-    return os.environ.get("STEREO_LAB_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
+    return (
+        os.environ.get("STEREO_RUNTIME_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
+        or os.environ.get("STEREO_LAB_DISABLE_TRITON", "").lower() in {"1", "true", "yes", "on"}
+    )
 
 
 def synthesize_stereo(

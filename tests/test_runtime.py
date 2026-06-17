@@ -7,9 +7,9 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab import StereoLabRuntime, StereoLabRuntimeConfig
-from stereo_lab.depth_provider import DepthProfileResult, DepthProviderInfo
-from stereo_lab.runtime import RollingRuntimeStats
+from stereo_runtime import StereoRuntime, StereoRuntimeConfig
+from stereo_runtime.depth_provider import DepthProfileResult, DepthProviderInfo
+from stereo_runtime.runtime import RollingRuntimeStats
 
 
 class FakeDepthProvider:
@@ -42,7 +42,7 @@ class FakeDepthProvider:
 
 def test_runtime_process_rgb_frame_uses_persistent_provider_and_returns_report():
     provider = FakeDepthProvider()
-    config = StereoLabRuntimeConfig(
+    config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
         depth_backend="pytorch_cuda",
@@ -50,7 +50,7 @@ def test_runtime_process_rgb_frame_uses_persistent_provider_and_returns_report()
         output_format="half_sbs",
         temporal=False,
     )
-    runtime = StereoLabRuntime(config, depth_provider=provider, stats_window=4, collect_memory_stats=False)
+    runtime = StereoRuntime(config, depth_provider=provider, stats_window=4, collect_memory_stats=False)
     rgb = torch.rand(1, 3, 8, 12)
 
     first = runtime.process_rgb_frame(rgb)
@@ -109,11 +109,14 @@ def test_rolling_runtime_stats_reports_percentiles_fps_and_memory():
 
 
 def test_stereo_runtime_package_aliases_new_public_names():
+    import stereo_lab
     from stereo_runtime import StereoRuntime, StereoRuntimeConfig
     from stereo_runtime.depth_provider import DepthProviderConfig
     from stereo_runtime.runtime import RollingRuntimeStats as AliasRollingStats
 
-    assert StereoRuntime is StereoLabRuntime
-    assert StereoRuntimeConfig is StereoLabRuntimeConfig
+    assert stereo_lab.StereoRuntime is StereoRuntime
+    assert stereo_lab.StereoRuntimeConfig is StereoRuntimeConfig
+    assert stereo_lab.StereoLabRuntime is StereoRuntime
+    assert stereo_lab.StereoLabRuntimeConfig is StereoRuntimeConfig
     assert DepthProviderConfig.__name__ == "DepthProviderConfig"
     assert AliasRollingStats is RollingRuntimeStats

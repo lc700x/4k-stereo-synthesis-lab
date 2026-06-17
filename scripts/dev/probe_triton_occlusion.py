@@ -11,11 +11,11 @@ import torch
 import triton
 import triton.language as tl
 
-from stereo_lab.baseline_shift import ShiftParams, compute_shift_px
-from stereo_lab.depth_provider import DepthProviderConfig, create_depth_provider
-from stereo_lab.io import load_rgb
-from stereo_lab.occlusion import make_occlusion_mask
-from stereo_lab.output import match_depth
+from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px
+from stereo_runtime.depth_provider import DepthProviderConfig, create_depth_provider
+from stereo_runtime.io import load_rgb
+from stereo_runtime.occlusion import make_occlusion_mask
+from stereo_runtime.output import match_depth
 
 
 @triton.jit

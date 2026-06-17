@@ -7,14 +7,14 @@ from typing import Any
 
 import torch
 
-from .adapter import StereoLabRuntimeConfig, depth_provider_config_from_runtime, stereo_config_from_runtime
+from .adapter import StereoRuntimeConfig, depth_provider_config_from_runtime, stereo_config_from_runtime
 from .depth_provider import DepthProfileResult, create_depth_provider
 from .synthesis import StereoResult, synthesize_stereo
 from .temporal import TemporalState
 
 
 @dataclass(frozen=True)
-class StereoLabRuntimeResult:
+class StereoRuntimeResult:
     depth: torch.Tensor
     left_eye: torch.Tensor
     right_eye: torch.Tensor
@@ -106,12 +106,12 @@ def _percentile_sorted(values: list[float], q: float) -> float:
     return float(values[lo] * (1.0 - frac) + values[hi] * frac)
 
 
-class StereoLabRuntime:
+class StereoRuntime:
     """Persistent host-facing runtime for RGB frame -> depth -> stereo output."""
 
     def __init__(
         self,
-        config: StereoLabRuntimeConfig,
+        config: StereoRuntimeConfig,
         *,
         depth_provider: Any | None = None,
         temporal_state: TemporalState | None = None,
@@ -172,7 +172,7 @@ class StereoLabRuntime:
         report["rolling_stats"] = self.stats.to_report()
         return report
 
-    def process_rgb_frame(self, rgb_frame: torch.Tensor) -> StereoLabRuntimeResult:
+    def process_rgb_frame(self, rgb_frame: torch.Tensor) -> StereoRuntimeResult:
         self.load()
         self._reset_cuda_peak_if_needed()
 
@@ -211,7 +211,7 @@ class StereoLabRuntime:
         if memory:
             debug.update(memory)
 
-        return StereoLabRuntimeResult(
+        return StereoRuntimeResult(
             depth=profile.depth,
             left_eye=stereo.left_eye,
             right_eye=stereo.right_eye,
@@ -276,3 +276,7 @@ class StereoLabRuntime:
         except Exception:
             return None
         return device if device.type == "cuda" else None
+
+
+StereoLabRuntime = StereoRuntime
+StereoLabRuntimeResult = StereoRuntimeResult

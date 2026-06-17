@@ -9,7 +9,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.output import OUTPUT_FORMAT_CHOICES
+from stereo_runtime.output import OUTPUT_FORMAT_CHOICES
 
 
 def main() -> None:
@@ -40,15 +40,15 @@ def main() -> None:
 
     import torch
 
-    from stereo_lab.depth_provider import DepthProviderConfig, create_depth_provider
-    from stereo_lab.depth_postprocess import postprocess_depth
-    from stereo_lab.io import load_rgb
-    from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, warp_horizontal
-    from stereo_lab.hole_fill import edge_aware_fill
-    from stereo_lab.layers import composite_layers, make_depth_layers
-    from stereo_lab.occlusion import make_occlusion_mask
-    from stereo_lab.output import make_sbs, match_depth
-    from stereo_lab.synthesis import StereoConfig, synthesize_stereo
+    from stereo_runtime.depth_provider import DepthProviderConfig, create_depth_provider
+    from stereo_runtime.depth_postprocess import postprocess_depth
+    from stereo_runtime.io import load_rgb
+    from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px, warp_horizontal
+    from stereo_runtime.hole_fill import edge_aware_fill
+    from stereo_runtime.layers import composite_layers, make_depth_layers
+    from stereo_runtime.occlusion import make_occlusion_mask
+    from stereo_runtime.output import make_sbs, match_depth
+    from stereo_runtime.synthesis import StereoConfig, synthesize_stereo
 
     device = torch.device(args.device if args.device == "cpu" or torch.cuda.is_available() else "cpu")
     rgb = load_rgb(args.rgb, device=device)

@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.output import OUTPUT_FORMAT_CHOICES
+from stereo_runtime.output import OUTPUT_FORMAT_CHOICES
 
 
 def make_synthetic_frame(torch, width: int, height: int, device):
@@ -53,9 +53,9 @@ def main() -> None:
     print("[2/5] importing torch ...", flush=True)
     import torch
 
-    print("[3/5] importing stereo_lab ...", flush=True)
-    from stereo_lab.metrics import BenchStats, read_peak_memory_mb, reset_peak_memory, timed
-    from stereo_lab.synthesis import StereoConfig, synthesize_stereo
+    print("[3/5] importing stereo_runtime ...", flush=True)
+    from stereo_runtime.metrics import BenchStats, read_peak_memory_mb, reset_peak_memory, timed
+    from stereo_runtime.synthesis import StereoConfig, synthesize_stereo
 
     device_name = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     print(f"[info] torch={torch.__version__} cuda={torch.cuda.is_available()} device={device_name}", flush=True)

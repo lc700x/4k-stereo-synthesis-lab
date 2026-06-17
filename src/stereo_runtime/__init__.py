@@ -12,6 +12,7 @@ from .openxr_render import (
 )
 from .adapter import (
     StereoLabRuntimeConfig,
+    StereoRuntimeConfig,
     depth_provider_config_from_runtime,
     preset_for_runtime_mode,
     runtime_frame_contract,
@@ -33,12 +34,8 @@ from .presets import (
     stereo_config_for_auto_mode,
     stereo_config_for_preset,
 )
-from .runtime import StereoLabRuntime, StereoLabRuntimeResult
+from .runtime import StereoLabRuntime, StereoLabRuntimeResult, StereoRuntime, StereoRuntimeResult
 from .synthesis import StereoConfig, StereoResult, synthesize_stereo
-
-StereoRuntimeConfig = StereoLabRuntimeConfig
-StereoRuntime = StereoLabRuntime
-StereoRuntimeResult = StereoLabRuntimeResult
 
 __all__ = [
     "AutoModeDecision",

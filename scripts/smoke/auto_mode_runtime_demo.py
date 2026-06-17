@@ -11,7 +11,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def _signal_sequence():
-    from stereo_lab import AutoModeSignals
+    from stereo_runtime import AutoModeSignals
 
     video = AutoModeSignals(
         gpu_3d_util=0.06,
@@ -52,7 +52,7 @@ def _signal_sequence():
 
 
 def _manual_report(preset: str, output_format: str) -> dict:
-    from stereo_lab import auto_detection_required, stereo_config_for_preset
+    from stereo_runtime import auto_detection_required, stereo_config_for_preset
 
     config = stereo_config_for_preset(preset, output_format=output_format)
     return {
@@ -70,7 +70,7 @@ def _manual_report(preset: str, output_format: str) -> dict:
 
 
 def _auto_report(output_format: str, dt_s: float) -> dict:
-    from stereo_lab import AutoModeRuntime, auto_detection_required, stereo_config_for_preset
+    from stereo_runtime import AutoModeRuntime, auto_detection_required, stereo_config_for_preset
 
     runtime = AutoModeRuntime()
     timeline = []

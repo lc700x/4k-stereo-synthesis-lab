@@ -1,4 +1,4 @@
-﻿# Handoff - 2026-06-16
+# Handoff - 2026-06-16
 
 ## Project
 
@@ -89,6 +89,68 @@ Product runtime pipeline: out of scope for this repository
 ```
 
 ## Current Status
+
+### 2026-06-17 `stereo_runtime` API Migration
+
+The real implementation package and host-facing calls now use `stereo_runtime`.
+
+Recommended public import:
+
+```python
+from stereo_runtime import StereoRuntime, StereoRuntimeConfig
+```
+
+The old `stereo_lab` package remains as a compatibility proxy only:
+
+```python
+from stereo_lab import StereoRuntime, StereoRuntimeConfig
+from stereo_lab import StereoLabRuntime, StereoLabRuntimeConfig
+```
+
+Compatibility mapping:
+
+- `StereoLabRuntimeConfig = StereoRuntimeConfig`
+- `StereoLabRuntime = StereoRuntime`
+- `StereoLabRuntimeResult = StereoRuntimeResult`
+
+Actual scripts, smoke tools, benchmark tools, and tests have been migrated to import from `stereo_runtime`.
+
+Current runtime handoff entry:
+
+```python
+runtime_config = StereoRuntimeConfig(
+    model_id="lc700x/Distill-Any-Depth-Base-hf",
+    model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
+    mode="movie",
+    stereo_quality="quality_4k",
+    output_format="half_sbs",
+    depth_backend="auto",
+)
+
+runtime = StereoRuntime(runtime_config)
+runtime.load()
+result = runtime.process_rgb_frame(rgb_frame)
+```
+
+Runtime contract field names now use `stereo_runtime_responsibility` and `not_stereo_runtime_responsibility`.
+
+Triton disable environment variable:
+
+- preferred: `STEREO_RUNTIME_DISABLE_TRITON=1`
+- compatibility alias: `STEREO_LAB_DISABLE_TRITON=1`
+
+Document movement cleanup:
+
+- `4K 高质量立体生成算法实现计划书.md` moved from repo root to `docs/`.
+- Active implementation paths inside current handoff docs now point to `src/stereo_runtime/...`.
+- Historical benchmark logs may still mention `src/stereo_lab/...` because they describe past commits.
+
+Latest verification after migration:
+
+```text
+syntax ok 88 files
+86 passed, 1 warning
+```
 
 ### 2026-06-17 Repository Organization Update
 
@@ -262,7 +324,7 @@ Realtime parameter status:
 
 4K is the stress/performance target, not a functional input-size limit. The output API and fast synthesis path are covered by tests for 720p, 1080p, portrait, and odd-size inputs. Unsupported Triton cases fall back to PyTorch instead of restricting input resolution.
 
-OpenXR note: the local environment has pyopenxr available as the `xr` module, but this lab does not yet include a full OpenXR session/swapchain runtime. The rotation-adaptive stereo core has been added in `src/stereo_lab/openxr_render.py`; it accepts arbitrary `screen_roll` angles in radians and should be used by a future runtime integration instead of fixed SBS output. `scripts/examples/generate_openxr_stereo_preview.py` can generate roll-adaptive left/right preview images from RGB+depth inputs.
+OpenXR note: the local environment has pyopenxr available as the `xr` module, but this lab does not yet include a full OpenXR session/swapchain runtime. The rotation-adaptive stereo core has been added in `src/stereo_runtime/openxr_render.py`; it accepts arbitrary `screen_roll` angles in radians and should be used by a future runtime integration instead of fixed SBS output. `scripts/examples/generate_openxr_stereo_preview.py` can generate roll-adaptive left/right preview images from RGB+depth inputs.
 
 `depth_map` is the matched output depth repeated to RGB channels. With `debug_output=True`, the exact tensor is also available as `debug_info["output_depth"]`.
 
@@ -290,7 +352,7 @@ Fused control:
 - `StereoConfig(fused=True)` enables fused paths by default.
 - `StereoConfig(fused=False)` forces PyTorch fallback.
 - CLI scripts support `--no-fused` for comparison/fallback.
-- Environment variable `STEREO_LAB_DISABLE_TRITON=1` disables Triton fused paths globally.
+- Environment variable `STEREO_RUNTIME_DISABLE_TRITON=1` disables Triton fused paths globally. `STEREO_LAB_DISABLE_TRITON=1` remains supported as a compatibility alias.
 
 Important:
 
@@ -343,10 +405,10 @@ docs/benchmark/07-depth-backend-benchmark.md
 
 Important implementation files:
 
-- `src/stereo_lab/depth_provider.py`
-- `src/stereo_lab/depth_onnx_provider.py`
-- `src/stereo_lab/depth_trt_provider.py`
-- `src/stereo_lab/depth_trt_native_provider.py`
+- `src/stereo_runtime/depth_provider.py`
+- `src/stereo_runtime/depth_onnx_provider.py`
+- `src/stereo_runtime/depth_trt_provider.py`
+- `src/stereo_runtime/depth_trt_native_provider.py`
 
 Native TensorRT engine path:
 
@@ -393,12 +455,12 @@ Implemented backends:
 
 Key files:
 
-- `src/stereo_lab/synthesis.py`
-- `src/stereo_lab/baseline_shift.py`
-- `src/stereo_lab/layers.py`
-- `src/stereo_lab/occlusion.py`
-- `src/stereo_lab/hole_fill.py`
-- `src/stereo_lab/output.py`
+- `src/stereo_runtime/synthesis.py`
+- `src/stereo_runtime/baseline_shift.py`
+- `src/stereo_runtime/layers.py`
+- `src/stereo_runtime/occlusion.py`
+- `src/stereo_runtime/hole_fill.py`
+- `src/stereo_runtime/output.py`
 
 Latest 4K end-to-end on RTX 2060, Native TensorRT + `quality_4k`:
 

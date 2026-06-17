@@ -11,7 +11,7 @@ import torch
 import triton
 import triton.language as tl
 
-from stereo_lab.hole_fill import edge_aware_fill
+from stereo_runtime.hole_fill import edge_aware_fill
 
 
 @triton.jit

@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "src"))
 def colorize_depth(depth):
     import torch
 
-    from stereo_lab.output import ensure_b1hw
+    from stereo_runtime.output import ensure_b1hw
 
     depth = ensure_b1hw(depth).float().clamp(0, 1)
     near = depth
@@ -63,13 +63,13 @@ def main() -> None:
     print("[2/6] importing torch ...", flush=True)
     import torch
 
-    print("[3/6] importing stereo_lab ...", flush=True)
-    from stereo_lab.auto_depth import estimate_luma_depth
-    from stereo_lab.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
-    from stereo_lab.depth_provider import estimate_distill_any_depth_base_518
-    from stereo_lab.io import load_depth, load_rgb, save_depth, save_rgb
-    from stereo_lab.output import match_depth
-    from stereo_lab.report import absdiff, depth_comparison_metrics, depth_metrics, make_contact_sheet, write_json
+    print("[3/6] importing stereo_runtime ...", flush=True)
+    from stereo_runtime.auto_depth import estimate_luma_depth
+    from stereo_runtime.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
+    from stereo_runtime.depth_provider import estimate_distill_any_depth_base_518
+    from stereo_runtime.io import load_depth, load_rgb, save_depth, save_rgb
+    from stereo_runtime.output import match_depth
+    from stereo_runtime.report import absdiff, depth_comparison_metrics, depth_metrics, make_contact_sheet, write_json
 
     device_name = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(device_name)

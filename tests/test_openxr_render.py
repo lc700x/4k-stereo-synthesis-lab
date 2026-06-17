@@ -8,8 +8,8 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, warp_horizontal
-from stereo_lab.openxr_render import (
+from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px, warp_horizontal
+from stereo_runtime.openxr_render import (
     OpenXREyeView,
     OpenXRFov,
     OpenXRRenderConfig,

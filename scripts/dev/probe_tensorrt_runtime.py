@@ -14,7 +14,7 @@ def main() -> None:
     parser.add_argument("--create-session", action="store_true")
     args = parser.parse_args()
 
-    from stereo_lab.depth_trt_provider import candidate_tensorrt_lib_dirs, ensure_tensorrt_dll_path
+    from stereo_runtime.depth_trt_provider import candidate_tensorrt_lib_dirs, ensure_tensorrt_dll_path
 
     print("[TensorRT DLL candidates]", flush=True)
     for path in candidate_tensorrt_lib_dirs():

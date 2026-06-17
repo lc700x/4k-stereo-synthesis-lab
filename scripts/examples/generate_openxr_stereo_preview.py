@@ -25,8 +25,8 @@ def main() -> None:
 
     import torch
 
-    from stereo_lab.io import load_depth, load_rgb, save_rgb
-    from stereo_lab.openxr_render import OpenXRRenderConfig, is_pyopenxr_available, render_openxr_stereo
+    from stereo_runtime.io import load_depth, load_rgb, save_rgb
+    from stereo_runtime.openxr_render import OpenXRRenderConfig, is_pyopenxr_available, render_openxr_stereo
 
     device = torch.device(args.device or ("cuda" if torch.cuda.is_available() else "cpu"))
     rgb = load_rgb(args.rgb, device=device)

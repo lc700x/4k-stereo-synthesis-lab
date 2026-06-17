@@ -8,14 +8,14 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab.hole_fill import box_blur, edge_aware_fill
-from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
-from stereo_lab.depth_upsample import upsample_depth
-from stereo_lab.layers import composite_layers, depth_edges, make_depth_layers
-from stereo_lab.occlusion import make_occlusion_mask
-from stereo_lab.output import OUTPUT_FORMAT_CHOICES, make_sbs, match_depth, sbs_backend
-from stereo_lab.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
-from stereo_lab.temporal import TemporalState
+from stereo_runtime.hole_fill import box_blur, edge_aware_fill
+from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
+from stereo_runtime.depth_upsample import upsample_depth
+from stereo_runtime.layers import composite_layers, depth_edges, make_depth_layers
+from stereo_runtime.occlusion import make_occlusion_mask
+from stereo_runtime.output import OUTPUT_FORMAT_CHOICES, make_sbs, match_depth, sbs_backend
+from stereo_runtime.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
+from stereo_runtime.temporal import TemporalState
 
 
 def make_inputs(width=64, height=32):
@@ -517,7 +517,7 @@ def test_fused_config_false_uses_torch_backends():
 
 
 def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv("STEREO_LAB_DISABLE_TRITON", "1")
+    monkeypatch.setenv("STEREO_RUNTIME_DISABLE_TRITON", "1")
     rgb, depth = make_inputs(width=40, height=24)
     result = synthesize_stereo(
         rgb,

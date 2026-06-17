@@ -452,6 +452,7 @@ Host API smoke:
    - Depth providers and runtime sessions must be persistent, not recreated per frame.
    - Presets must not lower depth inference resolution or silently change model paths.
 4. Re-run API and preset unit tests after host-facing changes, plus `scripts/host_api_smoke.py` for a synthetic no-model smoke check.
+   - `tests/test_host_api_smoke.py` locks the CLI JSON report contract for stereo and OpenXR host smoke paths.
 5. Optimize `hole_fill` only after the API/preset boundary is stable.
 6. Re-run formal benchmarks on RTX 3090 / RTX 5070 when available:
    - `bench_depth_backends.py`

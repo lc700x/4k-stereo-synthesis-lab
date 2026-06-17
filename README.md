@@ -32,7 +32,7 @@
 
 详细计划见：
 
-- [Implementation Plan](docs/04-implementation-plan.md)
-- [4K Performance Budget](docs/02-4k-performance-budget.md)
-- [iw3 Comparison](docs/03-iw3-comparison.md)
-- [Model Boundary](docs/05-model-boundary.md)
+- [Implementation Plan](docs/archive/04-implementation-plan.md)
+- [4K Performance Budget](docs/archive/02-4k-performance-budget.md)
+- [iw3 Comparison](docs/archive/03-iw3-comparison.md)
+- [Model Boundary](docs/archive/05-model-boundary.md)

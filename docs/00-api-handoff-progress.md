@@ -34,7 +34,7 @@ Important docs:
 
 Note:
 
-- `docs/06-api-handoff-progress.md` contains useful history but may display mojibake in some viewers. Prefer this UTF-8 handoff plus docs `07/08`.
+- `docs/archive/06-api-handoff-progress.md` contains useful history but may display mojibake in some viewers. Prefer this UTF-8 handoff plus docs `07/08`.
 
 ## Hard Boundaries
 

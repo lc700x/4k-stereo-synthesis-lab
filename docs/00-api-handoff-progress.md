@@ -17,7 +17,7 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Latest pushed commit at handoff:
 
 ```text
-5b024b5 chore: categorize project scripts
+e28b2e3 refactor: use stereo runtime imports
 ```
 
 Important docs:
@@ -159,7 +159,7 @@ The docs and scripts layout has been cleaned up for API handoff.
 Latest pushed commit before this documentation refresh:
 
 ```text
-5b024b5 chore: categorize project scripts
+e28b2e3 refactor: use stereo runtime imports
 ```
 
 Current script layout:
@@ -193,7 +193,7 @@ The external preset/API layer is now implemented and pushed.
 Latest pushed commit:
 
 ```text
-5b024b5 chore: categorize project scripts
+e28b2e3 refactor: use stereo runtime imports
 ```
 
 Implemented host-facing API:

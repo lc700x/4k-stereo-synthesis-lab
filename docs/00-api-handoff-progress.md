@@ -14,10 +14,10 @@ GitHub:
 https://github.com/laiyangli001/4k-stereo-synthesis-lab
 ```
 
-Latest pushed commit at handoff:
+Latest pushed commit:
 
 ```text
-e28b2e3 refactor: use stereo runtime imports
+Use `git log -1 --oneline` after pulling; this file is updated frequently.
 ```
 
 Important docs:
@@ -139,6 +139,7 @@ Latest verification after migration:
 ```text
 syntax ok 88 files
 86 passed, 1 warning
+host API smoke commands pass
 ```
 
 ### 2026-06-17 Repository Organization Update
@@ -148,7 +149,7 @@ The docs and scripts layout has been cleaned up for API handoff.
 Latest pushed commit before this documentation refresh:
 
 ```text
-e28b2e3 refactor: use stereo runtime imports
+Use `git log -1 --oneline` after pulling.
 ```
 
 Current script layout:
@@ -182,7 +183,7 @@ The external preset/API layer is now implemented and pushed.
 Latest pushed commit:
 
 ```text
-e28b2e3 refactor: use stereo runtime imports
+Use `git log -1 --oneline` after pulling.
 ```
 
 Implemented host-facing API:

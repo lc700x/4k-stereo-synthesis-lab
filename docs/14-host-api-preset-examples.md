@@ -137,7 +137,7 @@ if auto_detection_required(selected):
         target_fps=120.0,
     )
     decision = runtime.update(signals)
-    config = stereo_config_for_auto_mode(decision.mode, output_format="half_sbs")
+    config = stereo_config_for_preset(decision.preset, output_format="half_sbs")
 else:
     config = stereo_config_for_preset(selected, output_format="half_sbs")
 ```

@@ -41,6 +41,7 @@ class StereoConfig:
     depth_antialias_strength: float = 0.0
     edge_dilation: int = 2
     edge_threshold: float = 0.04
+    screen_edge_mask_suppression: int = 0
     cross_eyed: bool = False
     anaglyph_method: AnaglyphMethod = "red_cyan"
     refine: bool = False
@@ -108,6 +109,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
             edge_threshold=config.edge_threshold,
             dilation=config.edge_dilation,
             fused=config.fused,
+            screen_edge_suppression=config.screen_edge_mask_suppression,
         )
     else:
         occlusion_mask_backend = "none"

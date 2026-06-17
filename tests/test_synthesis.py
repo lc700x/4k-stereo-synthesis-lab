@@ -12,7 +12,7 @@ from stereo_runtime.hole_fill import box_blur, edge_aware_fill
 from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
 from stereo_runtime.depth_upsample import upsample_depth
 from stereo_runtime.layers import composite_layers, depth_edges, make_depth_layers
-from stereo_runtime.occlusion import make_occlusion_mask
+from stereo_runtime.occlusion import make_occlusion_mask, suppress_screen_edge_mask
 from stereo_runtime.output import OUTPUT_FORMAT_CHOICES, make_sbs, match_depth, sbs_backend
 from stereo_runtime.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
 from stereo_runtime.temporal import TemporalState
@@ -256,6 +256,42 @@ def test_edge_dilation_parameter_affects_occlusion_mask():
         StereoConfig(backend="quality_4k", layers=2, debug_output=True, temporal=False, edge_dilation=3, fused=False),
     )
     assert dilation.debug_info["occlusion_mask"].sum() >= no_dilation.debug_info["occlusion_mask"].sum()
+
+
+def test_screen_edge_mask_suppression_clears_only_border():
+    mask = torch.ones(1, 1, 8, 10)
+    actual = suppress_screen_edge_mask(mask, border_px=2)
+
+    assert actual[..., :2, :].sum() == 0
+    assert actual[..., -2:, :].sum() == 0
+    assert actual[..., :, :2].sum() == 0
+    assert actual[..., :, -2:].sum() == 0
+    assert torch.equal(actual[..., 2:-2, 2:-2], torch.ones(1, 1, 4, 6))
+
+
+def test_screen_edge_mask_suppression_preserves_internal_occlusion():
+    rgb, depth = make_inputs(width=64, height=32)
+    depth = torch.zeros_like(depth)
+    depth[..., :, :1] = 1.0
+    depth[..., :, 31:33] = 1.0
+    result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(
+            backend="quality_4k",
+            layers=2,
+            debug_output=True,
+            temporal=False,
+            edge_dilation=1,
+            screen_edge_mask_suppression=2,
+            fused=False,
+        ),
+    )
+    mask = result.debug_info["occlusion_mask"]
+
+    assert mask[..., :, :2].sum() == 0
+    assert mask[..., :, -2:].sum() == 0
+    assert mask[..., :, 30:34].sum() > 0
 
 
 def test_quality_debug_outputs():

@@ -18,6 +18,7 @@ from .adapter import (
     runtime_frame_contract,
     stereo_config_from_runtime,
 )
+from .depth_safety import DepthSafetyConfig, DepthSafetyDecision, apply_depth_safety, evaluate_depth_safety
 from .presets import (
     AutoModeDecision,
     AutoModeRuntime,
@@ -42,6 +43,8 @@ __all__ = [
     "AutoModeRuntime",
     "AutoModeRuntimeState",
     "AutoModeSignals",
+    "DepthSafetyConfig",
+    "DepthSafetyDecision",
     "OpenXREyeView",
     "OpenXRFov",
     "OpenXRRenderConfig",
@@ -58,9 +61,11 @@ __all__ = [
     "StereoModePreset",
     "StereoResult",
     "auto_detection_required",
+    "apply_depth_safety",
     "build_openxr_eye_mvp",
     "auto_mode_scores",
     "classify_auto_mode",
+    "evaluate_depth_safety",
     "is_pyopenxr_available",
     "openxr_config_for_auto_mode",
     "openxr_config_for_preset",

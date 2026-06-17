@@ -516,6 +516,129 @@ foreground_scale=0.2 + depth_antialias_strength=0.5
 
 视觉回归是调参的主要依据之一，但最终默认值必须同时满足画质、延迟和 VR 舒适度。
 
+## 电影 / 游戏 / 图片模式自动测试
+
+三类模式的自动测试应使用固定 manifest，而不是临时挑一张 4K 图。manifest 的作用是把“这张图代表什么场景”“期望走哪个 preset”“肉眼重点检查什么”写死，保证每次调参都能复现同一组比较。
+
+推荐输出目录：
+
+```text
+outputs/visual_preset_matrix/<timestamp>/
+  summary.json
+  summary.md
+  cinema/<sample_id>/
+  game_low_latency/<sample_id>/
+  still_image_hq/<sample_id>/
+```
+
+自动测试入口：
+
+```powershell
+.\python3\python.exe -B scripts\tools\generate_preset_visual_matrix.py `
+  --manifest samples\visual_preset_manifest.json `
+  --depth-backend tensorrt_native `
+  --out-dir outputs\visual_preset_matrix
+```
+
+如果只验证 manifest 和输出结构，不跑模型：
+
+```powershell
+.\python3\python.exe -B scripts\tools\generate_preset_visual_matrix.py `
+  --manifest samples\visual_preset_manifest.json `
+  --depth-backend luma `
+  --out-dir outputs\visual_preset_matrix `
+  --dry-run
+```
+
+manifest 示例：
+
+```json
+{
+  "samples": [
+    {
+      "id": "cinema_face_closeup",
+      "path": "cinema/face_closeup.png",
+      "category": "cinema",
+      "expected_preset": "cinema",
+      "checks": ["face_edges", "hair_occlusion", "subtitle_safe"]
+    },
+    {
+      "id": "game_hud_motion",
+      "path": "game/hud_motion.png",
+      "category": "game",
+      "expected_preset": "game_low_latency",
+      "checks": ["hud_edges", "no_temporal_lag", "no_softening"]
+    },
+    {
+      "id": "image_portrait_single",
+      "path": "image/portrait_single.png",
+      "category": "image_natural",
+      "expected_preset": "still_image_hq",
+      "checks": ["subject_edges", "natural_depth", "background_not_overpulled"]
+    },
+    {
+      "id": "image_thumbnail_grid",
+      "path": "image/thumbnail_grid.png",
+      "category": "image_thumbnail_grid",
+      "expected_preset": "still_image_hq",
+      "depth_policy": "flat_or_thumbnail_refine",
+      "checks": ["no_curved_screen", "thumbnail_boundaries_flat", "text_stable"]
+    }
+  ]
+}
+```
+
+### 测试图片选择标准
+
+最小样本集必须覆盖四类：`cinema`、`game`、`image_natural`、`image_unsafe_ui`。推荐再补 `image_thumbnail_grid` 和 `image_low_texture`。图片文件不建议直接提交到仓库，优先放在本地私有样本目录或由宿主产品测试集提供。
+
+电影模式样本应覆盖：
+
+- 人像近景：脸、头发、肩膀、衣领边缘清楚，用于看遮挡和人物边缘。
+- 暗场：低亮度、高噪声、局部高光，用于看 depth 闪烁和错误凸起。
+- 字幕场景：底部字幕或 UI 条，用于看文字是否被拉出深度或中线异常。
+- 前景 / 背景高对比：人物、栏杆、树枝、门框等，用于看空洞、撕裂和重复纹理。
+- 动画 / 二次元画面：大色块和强轮廓，用于看 depth 是否过锐或边缘毛刺。
+
+游戏模式样本应覆盖：
+
+- HUD / 小地图 / 血条 / 准星：文字和 UI 必须稳定，不能漂浮或软化。
+- 快速运动截图：运动模糊、爆炸、粒子、快速转向，用于看低延迟参数是否保守。
+- 暗色游戏场景：用来检查暗部错误 depth 和边缘空洞。
+- UI overlay + 3D 背景：菜单、背包、弹窗叠在 3D 场景上，用于看 UI 平面是否被错误立体化。
+- 高帧率交互场景：参数默认应减少 temporal lag，不能为了稳定牺牲响应。
+
+图片模式样本必须同时包含“可做深度”的正样本和“应该平面化”的反样本：
+
+- 单张大图 / 人像 / 风景：这是 `still_image_hq` 正样本，应允许更清晰、更强立体。
+- 天空、墙面、海面、雪地等低纹理自然照片：不能只因低纹理就强制全图平面化。
+- 桌面 / 文件管理器 / 设置页：应触发 flat depth 或强 flatten，避免整块屏幕弯曲。
+- 浏览器普通页面 / 文档页：文字必须稳定，不能漂浮、凹陷或产生双边。
+- 图片搜索 / 缩略图网格：先全局平面化，再可选后台 `thumbnail_hq_refine`，不能把整个网页当成一张自然照片。
+- 纯色 / 深色背景：用于检查中心近、四角远的径向错误 depth 是否被安全门控压住。
+
+图片选择的关键不是“漂亮”，而是覆盖失败模式。至少要有一半图片模式样本是负例：UI、缩略图、文本页、纯色背景。否则 `still_image_hq` 很容易在自然照片上看起来很好，但在真实桌面/浏览器里产生内凹屏幕、漂浮文字和错误深度。
+
+### 自动测试判定
+
+每个样本至少跑 `cinema`、`game_low_latency`、`still_image_hq` 三个 preset，生成同一套 `contact_sheet_labeled.png`、左右眼、SBS、depth_map、occlusion_mask 和 absdiff。最终判定不只看 expected preset，也要看其他 preset 是否暴露风险。
+
+重点判定：
+
+- Cinema：立体感稳定，人物/字幕/暗场没有明显错深度，temporal 不拖影。
+- Game：HUD 和文字稳定，边缘不软化，快速画面不出现明显 temporal lag。
+- Still Image / HQ 正样本：主体层次更清楚，边缘更干净，背景没有被过度拉出。
+- Still Image / HQ 负样本：UI、文本、缩略图、纯色背景不应弯曲、漂浮或产生局部凹凸。
+- Half-SBS / Full-SBS：中线不能异常，左右眼不能撕裂、空洞或重复纹理。
+
+用于最终默认参数选择时，建议按样本记录人工判定：
+
+```text
+pass: 没有明显肉眼问题，可以作为默认候选
+warn: 可接受但有轻微问题，只适合特定内容或高级选项
+fail: 出现撕裂、空洞、重复纹理、文字漂浮、屏幕弯曲或明显不适
+```
+
 ## 验证
 
 修改 P0/P1 默认值或映射后，运行：

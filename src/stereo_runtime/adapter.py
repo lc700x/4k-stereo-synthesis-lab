@@ -50,7 +50,9 @@ class StereoRuntimeConfig:
     auto_reset_temporal: bool = True
     edge_threshold: float = 0.04
     edge_dilation: int = 2
+    screen_edge_mask_suppression: int = 0
     fused: bool = True
+    depth_safety: bool | None = None
 
     @property
     def model_path(self) -> Path:
@@ -175,6 +177,7 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> StereoConfig:
             "auto_reset_temporal": config.auto_reset_temporal,
             "edge_threshold": config.edge_threshold,
             "edge_dilation": config.edge_dilation,
+            "screen_edge_mask_suppression": config.screen_edge_mask_suppression,
             "fused": config.fused,
         },
     )

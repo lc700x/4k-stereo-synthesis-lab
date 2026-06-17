@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from dataclasses import replace
 import time
 from typing import Any
 
 import torch
 
 from .adapter import StereoRuntimeConfig, depth_provider_config_from_runtime, stereo_config_from_runtime
+from .depth_safety import apply_depth_safety
 from .depth_provider import DepthProfileResult, create_depth_provider
 from .synthesis import StereoResult, synthesize_stereo
 from .temporal import TemporalState
@@ -180,12 +182,23 @@ class StereoRuntime:
         depth_start = time.perf_counter()
         profile = self._predict_depth_profile(rgb_frame)
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
+        depth = profile.depth
+        stereo_config = self.stereo_config
+        depth_safety_report: dict[str, Any] | None = None
+        if self._depth_safety_enabled():
+            depth, decision = apply_depth_safety(rgb_frame, depth)
+            depth_safety_report = decision.to_report()
+            if decision.depth_strength_scale != 1.0:
+                stereo_config = replace(
+                    stereo_config,
+                    depth_strength=stereo_config.depth_strength * decision.depth_strength_scale,
+                )
 
         synth_start = time.perf_counter()
         stereo = synthesize_stereo(
             rgb_frame,
-            profile.depth,
-            self.stereo_config,
+            depth,
+            stereo_config,
             temporal_state=self.temporal_state,
         )
         synthesis_ms = (time.perf_counter() - synth_start) * 1000.0
@@ -210,9 +223,11 @@ class StereoRuntime:
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         if memory:
             debug.update(memory)
+        if depth_safety_report is not None:
+            debug["depth_safety"] = depth_safety_report
 
         return StereoRuntimeResult(
-            depth=profile.depth,
+            depth=depth,
             left_eye=stereo.left_eye,
             right_eye=stereo.right_eye,
             sbs=stereo.sbs,
@@ -240,6 +255,11 @@ class StereoRuntime:
         depth = self.depth_provider.predict(rgb_frame)
         elapsed = (time.perf_counter() - start) * 1000.0
         return DepthProfileResult(depth=depth, preprocess_ms=0.0, model_ms=float(elapsed), postprocess_ms=0.0)
+
+    def _depth_safety_enabled(self) -> bool:
+        if self.config.depth_safety is not None:
+            return bool(self.config.depth_safety)
+        return self.config.mode == "image"
 
     def _reset_cuda_peak_if_needed(self) -> None:
         if not self.collect_memory_stats or not torch.cuda.is_available():

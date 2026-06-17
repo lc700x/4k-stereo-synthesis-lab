@@ -1,38 +1,64 @@
 # 4K Stereo Synthesis Lab
 
-面向 `Desktop2Stereo` 的 4K 实时立体生成算法实验仓库。
+`4k-stereo-synthesis-lab` 是面向 Desktop2Stereo / OpenXR host 的 4K 立体生成实验核心库。它不负责桌面捕捉、GUI、OpenXR session 或安装包，而是提供可复用的 depth provider、stereo synthesis、输出打包、preset、benchmark 和视觉回归工具。
 
-本仓库目标不是直接替代主项目，而是独立验证比 `iw3 row_flow_v3_sym` 更适合 4K 实时桌面/游戏/视频的 stereo synthesis 路线。
+当前主线目标是在 4K RGB + depth 输入下，验证 layered / occlusion-aware / symmetric stereo synthesis 是否能超过简单 depth-shift 路线，并为后续 GUI/OpenXR host 提供稳定 API。
 
-## Goals
+## 当前状态
 
-- 以 4K 输入输出为核心目标，而不是只满足 1080p。
-- 以 RTX 2060 12GB 作为最低可运行基线。
-- 以 RTX 3090 / RTX 5070 等高端卡作为 Quality/HQ 模式目标硬件。
-- 优先探索 layered / occlusion-aware / symmetric stereo synthesis。
-- 与 `iw3 row_flow_v3_sym` 和当前 `Desktop2Stereo` depth-shift 路线做可复现实验对比。
+- 4K `fast` baseline、`quality_4k`、`hq_4k` synthesis 已实现。
+- Half-SBS、Full-SBS、TAB、mono、depth map、anaglyph、interleaved、Leia 输出已支持。
+- Distill-Any-Depth Base/Large @ 518 的 PyTorch、ONNX CUDA、Native TensorRT 路径已接入。
+- Native TensorRT 支持 engine dtype 检测、预分配、常驻 provider/session。
+- Host preset/API 层已实现：`cinema`、`game_low_latency`、`still_image_hq`、`debug_export`、`auto`。
+- OpenXR roll-adaptive per-eye render core 已实现，但完整 OpenXR runtime/swapchain 不在本仓库范围内。
 
-## First Milestone
+## 硬边界
 
-第一阶段只做工程可验证原型：
+- 不为了性能降低 depth 推理分辨率。
+- 不改变当前 Base 模型 `294x518` / `depth_resolution=518` 路径的语义。
+- 不把模型、engine、outputs、Python 便携环境提交到 GitHub。
+- 不把模型产物写进 Desktop2Stereo 原项目模型目录。
+- GUI、桌面捕捉、OpenXR session、安装包、产品级错误 UI 属于外部 host 项目。
 
-- `Fast 4K`: 当前 depth-shift 基线复现。
-- `Quality 4K`: 2-layer occlusion-aware synthesis。
-- `HQ 4K`: 3-4 layer synthesis + 更强 hole fill。
+## 目录
 
-## Model Boundary
+| 路径 | 用途 |
+|---|---|
+| `src/stereo_lab/` | 核心库代码 |
+| `tests/` | 单元测试和 smoke contract 测试 |
+| `scripts/benchmark/` | 性能测试和 profile |
+| `scripts/tools/` | ONNX 导出、深度图生成、对比、视觉回归工具 |
+| `scripts/smoke/` | Host/API smoke 示例 |
+| `scripts/examples/` | demo 和 OpenXR preview |
+| `scripts/windows/` | 可见窗口 Windows 启动脚本 |
+| `docs/` | 当前文档入口 |
+| `docs/benchmark/` | benchmark 与优化记录 |
+| `docs/archive/` | 早期设计文档归档 |
 
-当前实现不加载、不训练任何深度模型或 stereo ML 模型。
+## 重要文档
 
-实验入口接收已经计算好的 `RGB + depth`，只比较 stereo synthesis 算法本身。建议评估时固定 depth 来源：
+- 当前交接入口：[docs/00-api-handoff-progress.md](docs/00-api-handoff-progress.md)
+- 项目目标：[docs/00-goals.md](docs/00-goals.md)
+- Host API 合同：[docs/15-host-api-contract.md](docs/15-host-api-contract.md)
+- Preset 调用示例：[docs/14-host-api-preset-examples.md](docs/14-host-api-preset-examples.md)
+- OpenXR 计划：[docs/12-openxr-stereo-runtime-plan.md](docs/12-openxr-stereo-runtime-plan.md)
+- Benchmark 汇总：[docs/benchmark/07-depth-backend-benchmark.md](docs/benchmark/07-depth-backend-benchmark.md)
 
-- `Distill-Any-Depth-Base @ 518` 作为当前默认基线。
-- `Distill-Any-Depth-Large @ 518` 作为高端卡目标基线。
-- 同一份 depth 输入下比较 `fast / quality_4k / hq_4k`，避免把深度模型差异误判为左右眼生成算法差异。
+## 快速验证
 
-详细计划见：
+```powershell
+.\python3\python.exe -B -m pytest -q
+```
 
-- [Implementation Plan](docs/archive/04-implementation-plan.md)
-- [4K Performance Budget](docs/archive/02-4k-performance-budget.md)
-- [iw3 Comparison](docs/archive/03-iw3-comparison.md)
-- [Model Boundary](docs/archive/05-model-boundary.md)
+Host API smoke：
+
+```powershell
+.\python3\python.exe -B scripts\smoke\host_api_smoke.py --preset cinema --output-format half_sbs --out -
+```
+
+4K end-to-end benchmark：
+
+```powershell
+.\python3\python.exe -B scripts\benchmark\bench_end_to_end_4k.py --rgb 4K.jpg --backend quality_4k --layers 2 --depth-backend tensorrt_native --output-format half_sbs --output-format full_sbs
+```

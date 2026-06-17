@@ -1,4 +1,4 @@
-# Handoff - 2026-06-16
+﻿# Handoff - 2026-06-16
 
 ## Project
 
@@ -17,7 +17,7 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Latest pushed commit at handoff:
 
 ```text
-d6e77e2 docs: add auto mode runtime host demo
+5b024b5 chore: categorize project scripts
 ```
 
 Important docs:
@@ -90,6 +90,40 @@ Product runtime pipeline: out of scope for this repository
 
 ## Current Status
 
+### 2026-06-17 Repository Organization Update
+
+The docs and scripts layout has been cleaned up for API handoff.
+
+Latest pushed commit before this documentation refresh:
+
+```text
+5b024b5 chore: categorize project scripts
+```
+
+Current script layout:
+
+- `scripts/benchmark/`: performance benchmarks and profiling entry points.
+- `scripts/tools/`: model export, depth generation, comparison, consistency, and visual regression utilities.
+- `scripts/smoke/`: host/API smoke checks and Auto runtime demos.
+- `scripts/examples/`: small demos and OpenXR preview helpers.
+- `scripts/windows/`: visible Windows launchers for manual testing.
+- `scripts/dev/`: low-level TensorRT/Triton development probes.
+
+Current docs layout:
+
+- `docs/00-api-handoff-progress.md`: single current handoff entry point.
+- `docs/00-goals.md`: current project goals and non-goals.
+- `docs/14-host-api-preset-examples.md`: host/preset usage examples.
+- `docs/15-host-api-contract.md`: API boundary and host responsibilities.
+- `docs/benchmark/`: benchmark and optimization reports.
+- `docs/archive/`: early design documents retained for history only.
+
+Notes:
+
+- `README.md`, `docs/00-goals.md`, `docs/14-host-api-preset-examples.md`, and `docs/15-host-api-contract.md` were rewritten as current concise entry documents for API handoff.
+- Some consoles may display Chinese documents incorrectly if the active code page/decoder is not UTF-8. Prefer editor view or explicit UTF-8 reads when checking Chinese docs.
+- Prefer the current entry documents above when handing off to another Agent.
+
 ### 2026-06-17 API / Preset / Auto Runtime Update
 
 The external preset/API layer is now implemented and pushed.
@@ -97,7 +131,7 @@ The external preset/API layer is now implemented and pushed.
 Latest pushed commit:
 
 ```text
-d6e77e2 docs: add auto mode runtime host demo
+5b024b5 chore: categorize project scripts
 ```
 
 Implemented host-facing API:
@@ -543,4 +577,5 @@ The next major jump likely requires:
 - fused CUDA/shader warp + composite, or
 - a semantically equivalent lower-bandwidth hole fill, or
 - stronger hardware such as RTX 3090 / RTX 5070 for the current prototype path.
+
 

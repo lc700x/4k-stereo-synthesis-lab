@@ -508,6 +508,42 @@ Native TensorRT -> ONNX CUDA DLPack -> ONNX CUDA IOBinding -> PyTorch CUDA
 
 All optimizations in this section happen after depth is already produced.
 
+### Depth Upsample And Half Output Downsample Policy
+
+Commit:
+
+```text
+pending
+```
+
+Files:
+
+- `src/stereo_lab/depth_upsample.py`
+- `src/stereo_lab/depth_provider.py`
+- `src/stereo_lab/depth_onnx_provider.py`
+- `src/stereo_lab/depth_trt_provider.py`
+- `src/stereo_lab/depth_trt_native_provider.py`
+- `src/stereo_lab/output.py`
+- `src/stereo_lab/output_triton.py`
+
+What changed:
+
+- Added a shared depth upsample helper:
+  - `bilinear`: default, preserves current behavior.
+  - `guided`: optional RGB-edge-guided upsample for edge quality evaluation.
+- Depth providers now upsample low-resolution depth back to the RGB source size through the shared helper.
+- Half-SBS / Half-TAB torch fallback now uses `area` downsampling instead of `bilinear`.
+- Half-SBS / Half-TAB Triton kernels now use area-equivalent 2:1 downsampling for even source dimensions.
+
+Why this is safe:
+
+- Depth inference resolution is unchanged.
+- Model input resize/normalize semantics are unchanged.
+- Default depth upsample remains `bilinear`.
+- `guided` is opt-in and should be evaluated with visual regression before becoming a preset default.
+- Full-SBS / Full-TAB still preserve original per-eye resolution and only concatenate.
+- Triton Half-SBS / Half-TAB fused paths are enabled only for even dimensions, where 2:1 area downsampling is an exact adjacent-pixel average.
+
 ### Initial 4K Synthesis Profiling And Benchmark Scripts
 
 Commit:

@@ -25,19 +25,15 @@ def _half_sbs_kernel(
 
     use_left = x < half_width
     src_x_out = tl.where(use_left, x, x - half_width)
-    src_x = (src_x_out.to(tl.float32) + 0.5) * (width / half_width) - 0.5
-    src_x_clamped = tl.minimum(tl.maximum(src_x, 0.0), width - 1.0)
-    x0_float = tl.floor(src_x_clamped)
-    x0 = x0_float.to(tl.int64)
-    x1 = tl.minimum(x0 + 1, width - 1)
-    frac = src_x_clamped - x0_float
+    x0 = src_x_out * 2
+    x1 = x0 + 1
     base = channel * pixels + y * width
 
     left_v0 = tl.load(left + base + x0, mask=active & use_left, other=0.0)
     left_v1 = tl.load(left + base + x1, mask=active & use_left, other=0.0)
     right_v0 = tl.load(right + base + x0, mask=active & ~use_left, other=0.0)
     right_v1 = tl.load(right + base + x1, mask=active & ~use_left, other=0.0)
-    value = tl.where(use_left, left_v0 + (left_v1 - left_v0) * frac, right_v0 + (right_v1 - right_v0) * frac)
+    value = tl.where(use_left, (left_v0 + left_v1) * 0.5, (right_v0 + right_v1) * 0.5)
     tl.store(out + offsets, value, mask=active)
 
 
@@ -204,19 +200,15 @@ def _half_tab_kernel(
 
     use_left = y < half_height
     src_y_out = tl.where(use_left, y, y - half_height)
-    src_y = (src_y_out.to(tl.float32) + 0.5) * (height / half_height) - 0.5
-    src_y_clamped = tl.minimum(tl.maximum(src_y, 0.0), height - 1.0)
-    y0_float = tl.floor(src_y_clamped)
-    y0 = y0_float.to(tl.int64)
-    y1 = tl.minimum(y0 + 1, height - 1)
-    frac = src_y_clamped - y0_float
+    y0 = src_y_out * 2
+    y1 = y0 + 1
     channel_base = channel * pixels
 
     left_v0 = tl.load(left + channel_base + y0 * width + x, mask=active & use_left, other=0.0)
     left_v1 = tl.load(left + channel_base + y1 * width + x, mask=active & use_left, other=0.0)
     right_v0 = tl.load(right + channel_base + y0 * width + x, mask=active & ~use_left, other=0.0)
     right_v1 = tl.load(right + channel_base + y1 * width + x, mask=active & ~use_left, other=0.0)
-    value = tl.where(use_left, left_v0 + (left_v1 - left_v0) * frac, right_v0 + (right_v1 - right_v0) * frac)
+    value = tl.where(use_left, (left_v0 + left_v1) * 0.5, (right_v0 + right_v1) * 0.5)
     tl.store(out + offsets, value, mask=active)
 
 

@@ -1,0 +1,108 @@
+import sys
+from pathlib import Path
+
+import pytest
+import torch
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))
+
+from stereo_lab import StereoLabRuntime, StereoLabRuntimeConfig
+from stereo_lab.depth_provider import DepthProfileResult, DepthProviderInfo
+from stereo_lab.runtime import RollingRuntimeStats
+
+
+class FakeDepthProvider:
+    def __init__(self) -> None:
+        self.load_count = 0
+        self.predict_count = 0
+        self.close_count = 0
+        self.info = DepthProviderInfo(
+            provider="fake",
+            model_name="fake-depth",
+            model_id="fake/model",
+            depth_resolution=2,
+            cache_dir=".",
+            depth_backend="fake",
+            runtime="test",
+        )
+
+    def load(self) -> None:
+        self.load_count += 1
+
+    def predict_profile(self, rgb: torch.Tensor) -> DepthProfileResult:
+        self.predict_count += 1
+        b, _, h, w = rgb.shape
+        depth = torch.linspace(0, 1, w, dtype=rgb.dtype, device=rgb.device).view(1, 1, 1, w).expand(b, 1, h, w)
+        return DepthProfileResult(depth=depth, preprocess_ms=1.0, model_ms=2.0, postprocess_ms=3.0)
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+def test_runtime_process_rgb_frame_uses_persistent_provider_and_returns_report():
+    provider = FakeDepthProvider()
+    config = StereoLabRuntimeConfig(
+        model_id="lc700x/Distill-Any-Depth-Base-hf",
+        model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
+        depth_backend="pytorch_cuda",
+        stereo_quality="fast",
+        output_format="half_sbs",
+        temporal=False,
+    )
+    runtime = StereoLabRuntime(config, depth_provider=provider, stats_window=4, collect_memory_stats=False)
+    rgb = torch.rand(1, 3, 8, 12)
+
+    first = runtime.process_rgb_frame(rgb)
+    second = runtime.process_rgb_frame(rgb)
+
+    assert provider.load_count == 1
+    assert provider.predict_count == 2
+    assert first.depth.shape == (1, 1, 8, 12)
+    assert first.left_eye.shape == rgb.shape
+    assert first.right_eye.shape == rgb.shape
+    assert first.sbs.shape == rgb.shape
+    assert first.timing["depth_preprocess_ms"] == 1.0
+    assert first.timing["depth_model_ms"] == 2.0
+    assert first.timing["depth_postprocess_ms"] == 3.0
+    assert first.timing["synthesis_ms"] >= 0.0
+    assert first.debug_info["runtime_depth_backend"] == "pytorch_cuda"
+    assert first.debug_info["runtime_output_format"] == "half_sbs"
+    assert first.provider_info["provider"] == "fake"
+    assert second.timing["total_ms"] >= 0.0
+
+    report = runtime.to_report()
+    assert report["depth_backend_resolved"] == "pytorch_cuda"
+    assert report["stereo_backend"] == "fast"
+    assert report["depth_provider"]["provider"] == "fake"
+    assert "last_timing" in report
+    assert report["rolling_stats"]["count"] == 2
+    assert report["rolling_stats"]["stages"]["depth_model_ms"]["mean"] == 2.0
+    assert report["rolling_stats"]["fps"]["latest"] > 0.0
+
+    runtime.close()
+    assert provider.close_count == 1
+
+
+def test_rolling_runtime_stats_reports_percentiles_fps_and_memory():
+    stats = RollingRuntimeStats(maxlen=3)
+    stats.update({"total_ms": 10.0, "synthesis_ms": 4.0}, {"cuda_peak_memory_allocated_mb": 100.0})
+    stats.update({"total_ms": 20.0, "synthesis_ms": 5.0}, {"cuda_peak_memory_allocated_mb": 150.0})
+    stats.update({"total_ms": 30.0, "synthesis_ms": 6.0}, {"cuda_peak_memory_allocated_mb": 200.0})
+    stats.update({"total_ms": 40.0, "synthesis_ms": 7.0}, {"cuda_peak_memory_allocated_mb": 250.0})
+
+    report = stats.to_report()
+
+    assert report["count"] == 3
+    assert report["stages"]["total_ms"]["min"] == 20.0
+    assert report["stages"]["total_ms"]["max"] == 40.0
+    assert report["stages"]["total_ms"]["mean"] == 30.0
+    assert report["stages"]["total_ms"]["median"] == 30.0
+    assert report["stages"]["total_ms"]["p90"] == 38.0
+    assert report["stages"]["total_ms"]["p99"] == pytest.approx(39.8)
+    assert report["fps"]["latest"] == 25.0
+    assert report["fps"]["mean_from_mean_ms"] == pytest.approx(1000.0 / 30.0)
+    assert report["memory"]["cuda_peak_memory_allocated_mb"]["max"] == 250.0
+
+    stats.reset()
+    assert stats.to_report()["count"] == 0

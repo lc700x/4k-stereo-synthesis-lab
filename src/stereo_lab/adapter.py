@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .depth_provider import DepthProviderConfig
+from .depth_upsample import DepthUpsampleMode
 from .output import OutputFormat
 from .presets import normalize_preset, stereo_config_for_preset
 from .synthesis import HoleFill, StereoConfig
@@ -34,6 +35,8 @@ class StereoLabRuntimeConfig:
     onnx_dtype: OnnxDtypeMode = "auto"
     export_height: int = 294
     export_width: int = 518
+    depth_upsample: DepthUpsampleMode = "bilinear"
+    depth_upsample_edge_strength: float = 0.35
     depth_strength: float = 2.0
     convergence: float = 0.0
     ipd: float = 0.064
@@ -73,11 +76,33 @@ class StereoLabRuntimeConfig:
             "trt_engine_path": str(self.trt_engine_path),
         }
 
+    def frame_contract(self) -> dict[str, str]:
+        return runtime_frame_contract(self)
+
     def to_report(self) -> dict[str, Any]:
         report = asdict(self)
         report["model_dir"] = str(self.model_path)
         report.update(self.artifact_paths())
+        report["frame_contract"] = self.frame_contract()
         return report
+
+
+def runtime_frame_contract(config: StereoLabRuntimeConfig) -> dict[str, str]:
+    """Return the host-facing RGB frame contract.
+
+    The host/capture pipeline owns capture-side color preprocessing and passes
+    an already-RGB image frame. stereo_lab starts at depth-provider input
+    preparation and does not own BGR/BGRA-to-RGB conversion.
+    """
+
+    return {
+        "input": "rgb_frame",
+        "host_responsibility": "capture current image frame, perform capture-side color preprocessing, and pass an RGB frame at source resolution",
+        "stereo_lab_responsibility": "prepare RGB frame for depth inference, run depth provider, and synthesize stereo output",
+        "not_stereo_lab_responsibility": "desktop capture, BGR/BGRA-to-RGB conversion, window/monitor source handling",
+        "backend_detail": "TensorRT/ONNX/PyTorch/Triton packing remains internal to stereo_lab",
+        "quality_rule": "host must not downscale or alter depth inference resolution semantics",
+    }
 
 
 def preset_for_runtime_mode(mode: str) -> str:
@@ -121,6 +146,8 @@ def depth_provider_config_from_runtime(config: StereoLabRuntimeConfig) -> DepthP
         prefer_onnx=backend == "onnx_cuda_iobinding",
         use_iobinding=True,
         use_dlpack=backend == "onnx_cuda_iobinding",
+        depth_upsample=config.depth_upsample,
+        depth_upsample_edge_strength=config.depth_upsample_edge_strength,
     )
 
 

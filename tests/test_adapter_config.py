@@ -4,7 +4,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_lab import StereoLabRuntimeConfig, depth_provider_config_from_runtime, stereo_config_from_runtime
+from stereo_lab import (
+    StereoLabRuntimeConfig,
+    depth_provider_config_from_runtime,
+    runtime_frame_contract,
+    stereo_config_from_runtime,
+)
 from stereo_lab.adapter import preset_for_runtime_mode
 
 
@@ -27,6 +32,8 @@ def test_runtime_config_maps_depth_backend_auto_to_native_tensorrt():
         model_id="lc700x/Distill-Any-Depth-Base-hf",
         model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
         depth_backend="auto",
+        depth_upsample="guided",
+        depth_upsample_edge_strength=0.5,
     )
     depth_config = depth_provider_config_from_runtime(config)
 
@@ -35,6 +42,8 @@ def test_runtime_config_maps_depth_backend_auto_to_native_tensorrt():
     assert depth_config.onnx_path == config.onnx_path
     assert depth_config.engine_path == config.trt_engine_path
     assert depth_config.local_files_only is True
+    assert depth_config.depth_upsample == "guided"
+    assert depth_config.depth_upsample_edge_strength == 0.5
 
 
 def test_runtime_config_maps_modes_and_stereo_params():
@@ -74,3 +83,18 @@ def test_hq_quality_raises_layers_to_at_least_three():
 
     assert stereo.backend == "hq_4k"
     assert stereo.layers == 3
+
+
+def test_runtime_config_defines_d2s_rgb_frame_contract():
+    config = StereoLabRuntimeConfig(
+        model_id="lc700x/Distill-Any-Depth-Base-hf",
+        model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
+    )
+
+    contract = runtime_frame_contract(config)
+
+    assert contract["input"] == "rgb_frame"
+    assert "perform capture-side color preprocessing" in contract["host_responsibility"]
+    assert "depth inference" in contract["stereo_lab_responsibility"]
+    assert "BGR/BGRA-to-RGB conversion" in contract["not_stereo_lab_responsibility"]
+    assert config.to_report()["frame_contract"] == contract

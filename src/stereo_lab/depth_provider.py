@@ -7,6 +7,7 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from .depth_upsample import DepthUpsampleMode, upsample_depth
 from .output import ensure_bchw, ensure_b1hw, match_depth
 
 DISTILL_ANY_DEPTH_BASE_NAME = "Distill-Any-Depth-Base"
@@ -77,6 +78,8 @@ class DepthProviderConfig:
     build_engine: bool = False
     force_rebuild: bool = False
     use_cuda_graph: bool = False
+    depth_upsample: DepthUpsampleMode = "bilinear"
+    depth_upsample_edge_strength: float = 0.35
 
 
 def default_lab_cache_dir() -> Path:
@@ -126,12 +129,16 @@ class DistillAnyDepthBase518:
         dtype: torch.dtype | None = None,
         local_files_only: bool = False,
         force_download: bool = False,
+        depth_upsample: DepthUpsampleMode = "bilinear",
+        depth_upsample_edge_strength: float = 0.35,
     ) -> None:
         self.device = torch.device(device)
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
         self.dtype = dtype or (torch.float16 if self.device.type == "cuda" else torch.float32)
         self.local_files_only = bool(local_files_only)
         self.force_download = bool(force_download)
+        self.depth_upsample = depth_upsample
+        self.depth_upsample_edge_strength = float(depth_upsample_edge_strength)
         self.info = DepthProviderInfo(
             provider="transformers.AutoModelForDepthEstimation",
             model_name=DISTILL_ANY_DEPTH_BASE_NAME,
@@ -212,7 +219,14 @@ class DistillAnyDepthBase518:
         start = time.perf_counter()
         depth = ensure_b1hw(predicted)
         depth = _normalize_depth(depth)
-        depth = match_depth(depth, height, width)
+        depth = upsample_depth(
+            depth,
+            height,
+            width,
+            rgb=rgb,
+            mode=self.depth_upsample,
+            edge_strength=self.depth_upsample_edge_strength,
+        )
         sync()
         postprocess_ms = (time.perf_counter() - start) * 1000.0
         return DepthProfileResult(depth, preprocess_ms, model_ms, postprocess_ms)
@@ -236,6 +250,8 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
             build_engine=cfg.build_engine,
             force_rebuild=cfg.force_rebuild,
             use_cuda_graph=cfg.use_cuda_graph or backend == "tensorrt_native_graph",
+            depth_upsample=cfg.depth_upsample,
+            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
         )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
@@ -246,6 +262,8 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
             cache_dir=cfg.cache_dir,
             onnx_path=cfg.onnx_path,
             trt_cache_dir=cfg.trt_cache_dir,
+            depth_upsample=cfg.depth_upsample,
+            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
         )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "onnx_cuda", "onnx_cuda_iobinding"} and cfg.prefer_onnx:
@@ -257,6 +275,8 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
             onnx_path=cfg.onnx_path,
             use_iobinding=cfg.use_iobinding,
             use_dlpack=cfg.use_dlpack,
+            depth_upsample=cfg.depth_upsample,
+            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
         )
 
     if backend in {"distill_base_518", "pytorch_cuda", "pytorch"}:
@@ -265,6 +285,8 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
             cache_dir=cfg.cache_dir,
             local_files_only=cfg.local_files_only,
             force_download=cfg.force_download,
+            depth_upsample=cfg.depth_upsample,
+            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
         )
 
     raise ValueError(f"unknown depth backend: {backend}")

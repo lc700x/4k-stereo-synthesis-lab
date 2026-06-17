@@ -45,13 +45,9 @@ packed = result.sbs
 
 ```python
 from stereo_lab import (
+    StereoLabRuntime,
     StereoLabRuntimeConfig,
-    depth_provider_config_from_runtime,
-    stereo_config_from_runtime,
-    synthesize_stereo,
 )
-from stereo_lab.depth_provider import create_depth_provider
-from stereo_lab.temporal import TemporalState
 
 runtime_config = StereoLabRuntimeConfig(
     model_id="lc700x/Distill-Any-Depth-Base-hf",
@@ -60,6 +56,8 @@ runtime_config = StereoLabRuntimeConfig(
     stereo_quality="quality_4k",
     output_format="half_sbs",
     depth_backend="auto",
+    depth_upsample="bilinear",
+    depth_upsample_edge_strength=0.35,
     depth_strength=2.0,
     convergence=0.0,
     ipd=0.064,
@@ -76,18 +74,30 @@ runtime_config = StereoLabRuntimeConfig(
     fused=True,
 )
 
-provider = create_depth_provider(depth_provider_config_from_runtime(runtime_config))
-provider.load()
+runtime = StereoLabRuntime(runtime_config)
+runtime.load()
 
-config = stereo_config_from_runtime(runtime_config)
-temporal_state = TemporalState()
-
-for rgb in frames:
-    depth = provider.predict(rgb)
-    result = synthesize_stereo(rgb, depth, config, temporal_state=temporal_state)
+for rgb_frame in frames:
+    result = runtime.process_rgb_frame(rgb_frame)
 ```
 
-不要每帧创建 provider 或重新加载 engine/session。
+不要每帧创建 runtime/provider 或重新加载 engine/session。
+
+Desktop2Stereo 的 `capture.py` / `main.py` 仍然负责画面捕捉和颜色前处理，例如 BGR/BGRA 转 RGB；这里的 `rgb` 表示已经完成捕捉侧颜色前处理的当前 RGB 图像帧：
+
+```python
+for rgb_frame in frames:
+    result = runtime.process_rgb_frame(rgb_frame)
+```
+
+D2S/GUI 不需要声明 TensorRT、ONNX、PyTorch 或 Triton 的输入绑定细节。本仓库从 RGB frame 开始，负责 depth provider 输入预处理、推理和后续立体合成；桌面捕捉、窗口裁剪、DPI 处理和 BGR/BGRA 转 RGB 仍属于 D2S capture 管线。
+
+上采/下采规则：
+
+- depth 默认用 `bilinear` 上采回 RGB 源分辨率；
+- 需要边缘质量评估时可切到 `depth_upsample="guided"`；
+- Half-SBS / Half-TAB 的 torch fallback 使用 `area` 下采；
+- Full-SBS / Full-TAB 保留左右眼原始分辨率，不做下采。
 
 Desktop2Stereo 侧只需要传 `model_id` 和下载后的 `model_dir`。ONNX 和 TensorRT artifact 默认放在同一个 `model_dir` 下：
 

@@ -10,6 +10,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stereo_lab.hole_fill import box_blur, edge_aware_fill
 from stereo_lab.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
+from stereo_lab.depth_upsample import upsample_depth
 from stereo_lab.layers import composite_layers, depth_edges, make_depth_layers
 from stereo_lab.occlusion import make_occlusion_mask
 from stereo_lab.output import OUTPUT_FORMAT_CHOICES, make_sbs, match_depth, sbs_backend
@@ -69,6 +70,36 @@ def test_composite_display_output_semantics():
     leia = make_sbs(left, right, "leia", fused=False)
     assert torch.equal(leia[..., :, 0::2], left[..., :, 0::2])
     assert torch.equal(leia[..., :, 1::2], right[..., :, 1::2])
+
+
+def test_half_sbs_fallback_uses_area_downsample():
+    left = torch.arange(1 * 1 * 2 * 4, dtype=torch.float32).view(1, 1, 2, 4)
+    right = left + 100.0
+
+    actual = make_sbs(left, right, "half_sbs", fused=False)
+    expected = torch.cat(
+        [
+            F.interpolate(left, size=(2, 2), mode="area"),
+            F.interpolate(right, size=(2, 2), mode="area"),
+        ],
+        dim=-1,
+    )
+
+    assert torch.equal(actual, expected)
+
+
+def test_guided_depth_upsample_preserves_shape_range_and_uses_rgb_edges():
+    depth = torch.tensor([[[[0.0, 1.0], [0.0, 1.0]]]], dtype=torch.float32)
+    rgb = torch.zeros(1, 3, 4, 4)
+    rgb[..., :, 2:] = 1.0
+
+    bilinear = upsample_depth(depth, 4, 4, rgb=rgb, mode="bilinear")
+    guided = upsample_depth(depth, 4, 4, rgb=rgb, mode="guided", edge_strength=1.0)
+
+    assert guided.shape == (1, 1, 4, 4)
+    assert guided.amin() >= 0
+    assert guided.amax() <= 1
+    assert not torch.equal(guided, bilinear)
 
 
 def test_anaglyph_methods_have_stable_defaults():

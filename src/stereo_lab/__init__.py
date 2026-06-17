@@ -14,6 +14,7 @@ from .adapter import (
     StereoLabRuntimeConfig,
     depth_provider_config_from_runtime,
     preset_for_runtime_mode,
+    runtime_frame_contract,
     stereo_config_from_runtime,
 )
 from .presets import (
@@ -32,6 +33,7 @@ from .presets import (
     stereo_config_for_auto_mode,
     stereo_config_for_preset,
 )
+from .runtime import StereoLabRuntime, StereoLabRuntimeResult
 from .synthesis import StereoConfig, StereoResult, synthesize_stereo
 
 __all__ = [
@@ -46,6 +48,8 @@ __all__ = [
     "OpenXRStereoResult",
     "PRESET_CHOICES",
     "StereoLabRuntimeConfig",
+    "StereoLabRuntime",
+    "StereoLabRuntimeResult",
     "StereoConfig",
     "StereoModePreset",
     "StereoResult",
@@ -60,6 +64,7 @@ __all__ = [
     "render_openxr_stereo",
     "depth_provider_config_from_runtime",
     "preset_for_runtime_mode",
+    "runtime_frame_contract",
     "stereo_config_from_runtime",
     "stereo_config_for_auto_mode",
     "stereo_config_for_preset",

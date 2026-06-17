@@ -16,6 +16,7 @@ from .depth_provider import (
     _normalize_depth,
     default_lab_cache_dir,
 )
+from .depth_upsample import DepthUpsampleMode, upsample_depth
 from .depth_trt_provider import ensure_tensorrt_dll_path
 from .output import ensure_b1hw, ensure_bchw, match_depth
 
@@ -243,6 +244,8 @@ class DistillAnyDepthBaseNativeTensorRt:
         build_engine: bool = False,
         force_rebuild: bool = False,
         use_cuda_graph: bool = False,
+        depth_upsample: DepthUpsampleMode = "bilinear",
+        depth_upsample_edge_strength: float = 0.35,
     ) -> None:
         self.device = torch.device(device)
         if self.device.type != "cuda":
@@ -259,6 +262,8 @@ class DistillAnyDepthBaseNativeTensorRt:
         self.build_engine = bool(build_engine)
         self.force_rebuild = bool(force_rebuild)
         self.use_cuda_graph = bool(use_cuda_graph)
+        self.depth_upsample = depth_upsample
+        self.depth_upsample_edge_strength = float(depth_upsample_edge_strength)
         self.dtype = torch.float16
         self.info = DepthProviderInfo(
             provider="tensorrt.Runtime",
@@ -316,7 +321,14 @@ class DistillAnyDepthBaseNativeTensorRt:
         start = time.perf_counter()
         depth = ensure_b1hw(predicted.float())
         depth = _normalize_depth(depth)
-        depth = match_depth(depth, height, width)
+        depth = upsample_depth(
+            depth,
+            height,
+            width,
+            rgb=rgb,
+            mode=self.depth_upsample,
+            edge_strength=self.depth_upsample_edge_strength,
+        )
         sync()
         postprocess_ms = (time.perf_counter() - start) * 1000.0
         return DepthProfileResult(depth, preprocess_ms, model_ms, postprocess_ms)

@@ -124,8 +124,8 @@ def make_sbs(
         h, w = left.shape[-2:]
         left_w = max(1, w // 2)
         right_w = max(1, w - left_w)
-        left_half = F.interpolate(left, size=(h, left_w), mode="bilinear", align_corners=False)
-        right_half = F.interpolate(right, size=(h, right_w), mode="bilinear", align_corners=False)
+        left_half = F.interpolate(left, size=(h, left_w), mode="area")
+        right_half = F.interpolate(right, size=(h, right_w), mode="area")
         return torch.cat([left_half, right_half], dim=-1)
 
     if output_format == "full_tab":
@@ -143,8 +143,8 @@ def make_sbs(
         h, w = left.shape[-2:]
         left_h = max(1, h // 2)
         right_h = max(1, h - left_h)
-        left_half = F.interpolate(left, size=(left_h, w), mode="bilinear", align_corners=False)
-        right_half = F.interpolate(right, size=(right_h, w), mode="bilinear", align_corners=False)
+        left_half = F.interpolate(left, size=(left_h, w), mode="area")
+        right_half = F.interpolate(right, size=(right_h, w), mode="area")
         return torch.cat([left_half, right_half], dim=-2)
 
     raise ValueError(f"unknown output_format: {output_format}")

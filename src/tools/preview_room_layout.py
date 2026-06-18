@@ -25,7 +25,7 @@ warnings.filterwarnings(
     category=UserWarning,
 )
 
-from viewer.xrviewer_core import load_glb_model  # noqa: E402
+from xr_viewer.implementation import load_glb_model  # noqa: E402
 
 
 ENV_VERT = """

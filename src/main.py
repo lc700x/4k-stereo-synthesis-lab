@@ -1486,9 +1486,9 @@ def main(mode="Viewer"):
             env_name = str(ENVIRONMENT_MODEL or "").strip()
             use_environment_viewer = bool(env_name) and env_name.lower() != "none"
             if use_environment_viewer:
-                from viewer.xrviewer_env import OpenXRViewer, OPENXR_AVAILABLE
+                from xr_viewer.environment import OpenXRViewer, OPENXR_AVAILABLE
             else:
-                from viewer.xrviewer_base import OpenXRViewer, OPENXR_AVAILABLE
+                from xr_viewer.base import OpenXRViewer, OPENXR_AVAILABLE
             if not OPENXR_AVAILABLE:
                 raise ImportError("pyopenxr not installed -run: pip install pyopenxr")
             runtime_result, capture_start_time = runtime_q.get()

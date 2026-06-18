@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from stereo_runtime.depth_provider import DepthProviderConfig, DepthProviderInfo, DistillAnyDepthBase518, GenericAutoDepthProvider, create_depth_provider, estimate_depth
 from stereo_runtime.depth_onnx_provider import DistillPreprocessor, _preprocess_distill_rgb, estimate_distill_any_depth_base_518_onnx_cuda
-from stereo_runtime.depth_trt_provider import estimate_distill_any_depth_base_518_nvidia
+from stereo_runtime.providers.nvidia.tensorrt_ort import estimate_distill_any_depth_base_518_nvidia
 
 
 class FakeTorchProvider:
@@ -29,7 +29,7 @@ class FakeTorchProvider:
 
 
 def test_nvidia_provider_falls_back_when_onnx_missing(monkeypatch, tmp_path):
-    import stereo_runtime.depth_trt_provider as provider_module
+    import stereo_runtime.providers.nvidia.tensorrt_ort as provider_module
 
     monkeypatch.setattr(provider_module, "DistillAnyDepthBase518", FakeTorchProvider)
     rgb = torch.zeros(1, 3, 8, 8)
@@ -159,7 +159,7 @@ def test_generic_provider_predict_profile_with_fake_transformers_model(monkeypat
 
 
 def test_create_depth_provider_supports_native_tensorrt(tmp_path):
-    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
 
     engine_path = tmp_path / "model.trt"
     provider = create_depth_provider(
@@ -179,7 +179,7 @@ def test_create_depth_provider_supports_native_tensorrt(tmp_path):
 
 
 def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
-    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
 
     model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
     onnx_path = model_dir / "model_fp16_294x518.onnx"
@@ -195,7 +195,7 @@ def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
 
 
 def test_native_tensorrt_keeps_explicit_metadata(tmp_path):
-    from stereo_runtime.depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
 
     model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
     provider = DistillAnyDepthBaseNativeTensorRt(

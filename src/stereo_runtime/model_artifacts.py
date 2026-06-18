@@ -172,7 +172,7 @@ def ensure_tensorrt_engine(
     if not build_if_missing and not force_rebuild:
         raise FileNotFoundError(f"TensorRT engine not found for {model_spec.model_id}: {engine_path}")
 
-    from .depth_trt_native_provider import build_native_tensorrt_engine
+    from .providers.nvidia.tensorrt_native import build_native_tensorrt_engine
 
     return build_native_tensorrt_engine(
         onnx_path,

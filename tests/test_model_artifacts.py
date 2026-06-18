@@ -63,7 +63,7 @@ def test_prepare_model_artifacts_builds_trt_from_existing_onnx(monkeypatch, tmp_
         Path(engine_path).write_bytes(b"trt")
         return Path(engine_path)
 
-    import stereo_runtime.depth_trt_native_provider as native_provider
+    import stereo_runtime.providers.nvidia.tensorrt_native as native_provider
 
     monkeypatch.setattr(native_provider, "build_native_tensorrt_engine", fake_build)
     paths = artifact_paths_for_model("Distill-Any-Depth-Base", cache_dir=tmp_path)

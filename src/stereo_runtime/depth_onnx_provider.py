@@ -224,7 +224,7 @@ def estimate_distill_any_depth_base_518_nvidia(
     local_files_only: bool = False,
     force_download: bool = False,
 ) -> tuple[torch.Tensor, DepthProviderInfo]:
-    from .depth_trt_provider import estimate_distill_any_depth_base_518_nvidia as estimate_with_nvidia_chain
+    from .providers.nvidia.tensorrt_ort import estimate_distill_any_depth_base_518_nvidia as estimate_with_nvidia_chain
 
     return estimate_with_nvidia_chain(
         rgb,

@@ -1,5 +1,9 @@
+from pathlib import Path
+
 from stereo_runtime import DepthRuntimeConfig, ModelRegistry, resolve_model_dir
 from stereo_runtime.adapter import depth_provider_config_from_runtime
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_default_registry_contains_d2s_models():
@@ -41,3 +45,20 @@ def test_depth_runtime_config_passes_trt_build_options():
     assert provider_config.build_engine is True
     assert provider_config.force_rebuild is True
     assert provider_config.use_cuda_graph is True
+
+
+def test_model_registry_is_d2s_model_mapping_source():
+    names = set(ModelRegistry.default().names())
+
+    assert "Distill-Any-Depth-Base" in names
+    assert "Depth-Anything-V2-Large" in names
+    assert "DA3-LARGE" in names
+    assert "DepthPro-Large" in names
+
+
+def test_utils_model_mapping_delegates_to_runtime_registry():
+    utils_source = (ROOT / "src" / "utils.py").read_text(encoding="utf-8")
+
+    assert "from stereo_runtime.model_registry import ModelRegistry" in utils_source
+    assert "spec.name: spec.model_id" in utils_source
+    assert '"Depth-Anything-V2-Small":' not in utils_source

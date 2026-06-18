@@ -524,90 +524,13 @@ if OS_NAME == "Windows":
         if hwnd:
             win32gui.SetWindowPos(hwnd, win32con.HWND_BOTTOM, 0, 0, 0, 0, win32con.SWP_NOMOVE | win32con.SWP_NOSIZE | win32con.SWP_NOACTIVATE)
     
-# Model Mapping Dict
+# Model Mapping Dict. Keep the Desktop2Stereo settings shape, but make
+# stereo_runtime.model_registry the single source of truth for model names.
+from stereo_runtime.model_registry import ModelRegistry
+
 MODEL_MAPPING = {
-    # Depth-Anything V2
-    "Depth-Anything-V2-Small": "depth-anything/Depth-Anything-V2-Small-hf",
-    "Depth-Anything-V2-Base": "depth-anything/Depth-Anything-V2-Base-hf",
-    "Depth-Anything-V2-Large": "depth-anything/Depth-Anything-V2-Large-hf",
-
-    # InfiniDepth
-    "InfiniDepth-Small": "lc700x/InfiniDepth-Small",
-    "InfiniDepth-SmallPlus": "lc700x/InfiniDepth-SmallPlus",
-    "InfiniDepth-Base": "lc700x/InfiniDepth-Base",
-    "InfiniDepth-Large": "lc700x/InfiniDepth-Large",
-    
-    # Video-Depth-Anything
-    "Video-Depth-Anything-Small": "depth-anything/Video-Depth-Anything-Small",
-    "Video-Depth-Anything-Base": "depth-anything/Video-Depth-Anything-Base",
-    "Video-Depth-Anything-Large": "depth-anything/Video-Depth-Anything-Large",
-    
-    # DA3
-    "DA3-SMALL": "depth-anything/DA3-SMALL",
-    "DA3-BASE": "depth-anything/DA3-BASE",
-    # "DA3-LARGE": "depth-anything/DA3-LARGE",
-    # "DA3-GIANT": "depth-anything/DA3-GIANT",
-    "DA3-LARGE": "depth-anything/DA3-LARGE-1.1",
-    "DA3-GIANT": "depth-anything/DA3-GIANT-1.1",
-    "DA3METRIC-LARGE": "depth-anything/DA3METRIC-LARGE",
-    # "DA3NESTED-GIANT-LARGE": "depth-anything/DA3NESTED-GIANT-LARGE",
-    "DA3NESTED-GIANT-LARGE": "depth-anything/DA3NESTED-GIANT-LARGE-1.1",
-    "DA3MONO-LARGE": "depth-anything/DA3MONO-LARGE",
-    
-    # Depth-Anything-V2 Metric Outdoor
-    "Depth-Anything-V2-Metric-Outdoor-Small": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Small-hf",
-    "Depth-Anything-V2-Metric-Outdoor-Base": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Base-hf",
-    "Depth-Anything-V2-Metric-Outdoor-Large": "depth-anything/Depth-Anything-V2-Metric-Outdoor-Large-hf",
-    
-    # Depth-Anything-V2 Metric Indoor
-    "Depth-Anything-V2-Metric-Indoor-Small": "depth-anything/Depth-Anything-V2-Metric-Indoor-Small-hf",
-    "Depth-Anything-V2-Metric-Indoor-Base": "depth-anything/Depth-Anything-V2-Metric-Indoor-Base-hf",
-    "Depth-Anything-V2-Metric-Indoor-Large": "depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf",
-    
-    # Metric-Video-Depth-Anything
-    "Metric-Video-Depth-Anything-Small": "depth-anything/Metric-Video-Depth-Anything-Small",
-    "Metric-Video-Depth-Anything-Base": "depth-anything/Metric-Video-Depth-Anything-Base",
-    "Metric-Video-Depth-Anything-Large": "depth-anything/Metric-Video-Depth-Anything-Large",
-    
-    # LiheYoung/depth-anything
-    "depth-anything-small": "LiheYoung/depth-anything-small-hf",
-    "depth-anything-base": "LiheYoung/depth-anything-base-hf",
-    "depth-anything-large": "LiheYoung/depth-anything-large-hf",
-    
-    # Distill-Any-Depth
-    "Distill-Any-Depth-Small": "xingyang1/Distill-Any-Depth-Small-hf",
-    "Distill-Any-Depth-Base": "lc700x/Distill-Any-Depth-Base-hf",
-    "Distill-Any-Depth-Large": "xingyang1/Distill-Any-Depth-Large-hf",
-    
-    # DPT-DINOv2 KITTI
-    "dpt-dinov2-small-kitti": "facebook/dpt-dinov2-small-kitti",
-    "dpt-dinov2-base-kitti": "lc700x/dpt-dinov2-base-kitti-hf",
-    "dpt-dinov2-large-kitti": "lc700x/dpt-dinov2-large-kitti-hf",
-    "dpt-dinov2-giant-kitti": "lc700x/dpt-dinov2-giant-kitti-hf",
-    
-    # DPT-DINOv2 NYU
-    "dpt-dinov2-small-nyu": "lc700x/dpt-dinov2-small-nyu-hf",
-    "dpt-dinov2-base-nyu": "lc700x/dpt-dinov2-base-nyu-hf",
-    "dpt-dinov2-large-nyu": "lc700x/dpt-dinov2-large-nyu-hf",
-    "dpt-dinov2-giant-nyu": "facebook/dpt-dinov2-giant-nyu",
-    
-    # Other
-    "depth-ai": "lc700x/depth-ai-hf",
-    "dpt-hybrid-midas": "lc700x/dpt-hybrid-midas-hf",
-    
-    # Intel/DPT
-    "dpt-beit-base-384": "Intel/dpt-beit-base-384",
-    "dpt-beit-large-512": "Intel/dpt-beit-large-512",
-    "dpt-large": "Intel/dpt-large",
-    "dpt-large-redesign": "lc700x/dpt-large-redesign-hf",
-    
-    # Intel/ZoeDepth
-    "zoedepth-nyu-kitti": "Intel/zoedepth-nyu-kitti",
-    "zoedepth-nyu": "Intel/zoedepth-nyu",
-    "zoedepth-kitti": "Intel/zoedepth-kitti",
-
-    # Apple/DepthPro
-    "DepthPro-Large": "apple/DepthPro-hf"
+    spec.name: spec.model_id
+    for spec in ModelRegistry.default().list()
 }
 
 # Streamer Settings

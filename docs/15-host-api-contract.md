@@ -204,6 +204,12 @@ Host 只需要保证：
 | `TemporalState` | 每条输入流一个 | 源切换或场景重置时可 reset |
 | OpenXR session/swapchain | Host runtime 管理 | 本仓库不创建完整 runtime |
 
+模型列表来源：
+
+- `stereo_runtime.model_registry.ModelRegistry` 是模型名和 Hugging Face ID 的单一来源；
+- D2S 兼容的 `utils.MODEL_MAPPING` 由 `ModelRegistry.default()` 生成；
+- GUI 可以继续保存 `Model List` 和 `Depth Model` 到 settings，但不应维护另一份硬编码模型表。
+
 禁止行为：
 
 - 不要每帧创建 `StereoRuntime`。

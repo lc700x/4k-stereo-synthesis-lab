@@ -418,7 +418,7 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
     if backend in {"tensorrt_native", "native_tensorrt", "tensorrt_native_graph"} or (
         backend in {"distill_base_nvidia", "nvidia_chain"} and cfg.prefer_native_tensorrt
     ):
-        from .depth_trt_native_provider import DistillAnyDepthBaseNativeTensorRt
+        from .providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
 
         return DistillAnyDepthBaseNativeTensorRt(
             device=device,
@@ -433,7 +433,7 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
         )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
-        from .depth_trt_provider import DistillAnyDepthBaseTensorRtOrt
+        from .providers.nvidia.tensorrt_ort import DistillAnyDepthBaseTensorRtOrt
 
         return DistillAnyDepthBaseTensorRtOrt(
             device=device,

@@ -89,6 +89,10 @@ class GenericAutoDepthMpsProvider(_MpsInfoMixin, GenericAutoDepthProvider):
         self.info = self._mark_mps_info(self.info)
 
 
+TorchMpsDepthProvider = DistillAnyDepthBaseMps
+GenericTorchMpsDepthProvider = GenericAutoDepthMpsProvider
+
+
 def create_pytorch_mps_provider(
     *,
     model_id: str = DISTILL_ANY_DEPTH_BASE_MODEL_ID,
@@ -126,6 +130,8 @@ def create_pytorch_mps_provider(
 
 
 __all__ = [
+    "TorchMpsDepthProvider",
+    "GenericTorchMpsDepthProvider",
     "DistillAnyDepthBaseMps",
     "GenericAutoDepthMpsProvider",
     "create_pytorch_mps_provider",

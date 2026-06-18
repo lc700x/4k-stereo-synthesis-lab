@@ -101,6 +101,10 @@ class GenericAutoDepthXpuProvider(_XpuInfoMixin, GenericAutoDepthProvider):
         self.info = self._mark_xpu_info(self.info)
 
 
+TorchXpuDepthProvider = DistillAnyDepthBaseXpu
+GenericTorchXpuDepthProvider = GenericAutoDepthXpuProvider
+
+
 def create_pytorch_xpu_provider(
     *,
     model_id: str = DISTILL_ANY_DEPTH_BASE_MODEL_ID,
@@ -138,6 +142,8 @@ def create_pytorch_xpu_provider(
 
 
 __all__ = [
+    "TorchXpuDepthProvider",
+    "GenericTorchXpuDepthProvider",
     "DistillAnyDepthBaseXpu",
     "GenericAutoDepthXpuProvider",
     "create_pytorch_xpu_provider",

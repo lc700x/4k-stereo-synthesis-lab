@@ -95,6 +95,10 @@ class GenericAutoDepthRocmProvider(_RocmInfoMixin, GenericAutoDepthProvider):
         self.info = self._mark_rocm_info(self.info)
 
 
+TorchRocmDepthProvider = DistillAnyDepthBaseRocm
+GenericTorchRocmDepthProvider = GenericAutoDepthRocmProvider
+
+
 def create_pytorch_rocm_provider(
     *,
     model_id: str = DISTILL_ANY_DEPTH_BASE_MODEL_ID,
@@ -132,6 +136,8 @@ def create_pytorch_rocm_provider(
 
 
 __all__ = [
+    "TorchRocmDepthProvider",
+    "GenericTorchRocmDepthProvider",
     "DistillAnyDepthBaseRocm",
     "GenericAutoDepthRocmProvider",
     "create_pytorch_rocm_provider",

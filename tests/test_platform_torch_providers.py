@@ -1,6 +1,6 @@
 from stereo_runtime.depth_provider import DepthProviderConfig, create_depth_provider
-from stereo_runtime.providers.apple import DistillAnyDepthBaseMps, GenericAutoDepthMpsProvider
-from stereo_runtime.providers.intel import DistillAnyDepthBaseXpu, GenericAutoDepthXpuProvider
+from stereo_runtime.providers.apple import GenericTorchMpsDepthProvider, TorchMpsDepthProvider
+from stereo_runtime.providers.intel import GenericTorchXpuDepthProvider, TorchXpuDepthProvider
 
 
 def test_create_pytorch_xpu_provider_marks_backend():
@@ -14,7 +14,7 @@ def test_create_pytorch_xpu_provider_marks_backend():
         )
     )
 
-    assert isinstance(provider, DistillAnyDepthBaseXpu)
+    assert isinstance(provider, TorchXpuDepthProvider)
     assert provider.info.depth_backend == "pytorch_xpu"
     assert provider.info.runtime == "transformers-xpu"
     assert provider.info.execution_provider == "Intel XPU PyTorch"
@@ -34,7 +34,7 @@ def test_create_pytorch_xpu_provider_supports_generic_models():
         )
     )
 
-    assert isinstance(provider, GenericAutoDepthXpuProvider)
+    assert isinstance(provider, GenericTorchXpuDepthProvider)
     assert provider.info.model_id == "apple/DepthPro-hf"
     assert provider.info.model_name == "DepthPro-Large"
     assert provider.info.depth_backend == "pytorch_xpu"
@@ -51,7 +51,7 @@ def test_create_pytorch_mps_provider_marks_backend():
         )
     )
 
-    assert isinstance(provider, DistillAnyDepthBaseMps)
+    assert isinstance(provider, TorchMpsDepthProvider)
     assert provider.info.depth_backend == "pytorch_mps"
     assert provider.info.runtime == "transformers-mps"
     assert provider.info.execution_provider == "Apple MPS PyTorch"
@@ -71,7 +71,7 @@ def test_create_pytorch_mps_provider_supports_generic_models():
         )
     )
 
-    assert isinstance(provider, GenericAutoDepthMpsProvider)
+    assert isinstance(provider, GenericTorchMpsDepthProvider)
     assert provider.info.model_id == "apple/DepthPro-hf"
     assert provider.info.model_name == "DepthPro-Large"
     assert provider.info.depth_backend == "pytorch_mps"

@@ -1,5 +1,3 @@
-import threading
-
 from streaming.audio import STEREO_MIX_NAMES
 from streaming.config import DEFAULT_PORT
 
@@ -14,12 +12,6 @@ from stereo_runtime.model_capabilities import (
     TRT_FIX_KEYWORDS,
 )
 
-# Global shutdown event
-shutdown_event = threading.Event()
-
-from viewer.assets import crop_icon, get_font_type
-
-
 from .app_info import DEBUG, OS_NAME, VERSION
 from .bootstrap import bootstrap_settings
 from .display import (
@@ -29,10 +21,13 @@ from .display import (
 from .device_runtime import resolve_device_runtime
 from .network import get_local_ip
 from .runtime_exports import resolve_runtime_exports
+from .runtime_state import shutdown_event
 from .settings import read_yaml
 
 settings = bootstrap_settings("settings.yaml", os_name=OS_NAME)
 from viewer import (
+    crop_icon,
+    get_font_type,
     hide_window_from_capture,
     send_ctrl_cmd_f,
     set_window_to_bottom,

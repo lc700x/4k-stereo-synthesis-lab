@@ -21,28 +21,22 @@ from viewer.assets import crop_icon, get_font_type
 
 
 from .app_info import DEBUG, OS_NAME, VERSION
+from .bootstrap import bootstrap_settings
 from .display import (
     _get_device_name_from_mss_monitor,
     get_monitor_size,
 )
-from .network import configure_huggingface_endpoint, get_local_ip
-from .platform_env import configure_platform_environment
+from .network import get_local_ip
 from .runtime_exports import resolve_runtime_exports
-from .settings import load_settings, read_yaml
+from .settings import read_yaml
 
-# load customized settings
-settings = load_settings("settings.yaml")
-
-configure_platform_environment(OS_NAME)
+settings = bootstrap_settings("settings.yaml", os_name=OS_NAME)
 from viewer.window_control import (
     hide_window_from_capture,
     send_ctrl_cmd_f,
     set_window_to_bottom,
     show_window_in_capture,
 )
-        
-# Set Hugging Face environment variable
-configure_huggingface_endpoint()
 
 _RUNTIME_EXPORTS = resolve_runtime_exports(settings, os_name=OS_NAME)
 MODEL_MAPPING = _RUNTIME_EXPORTS.model_mapping

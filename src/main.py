@@ -11,7 +11,7 @@ from collections import deque
 
 from utils import OS_NAME, OUTPUT_RESOLUTION, DISPLAY_MODE, CAPTURE_MODE, CAPTURE_TOOL, MONITOR_INDEX, SHOW_FPS, FPS, WINDOW_TITLE, IPD, DEPTH_STRENGTH, CONVERGENCE, RUN_MODE, STREAM_MODE, STREAM_PORT, STREAM_QUALITY, STEREOMIX_DEVICE, STREAM_KEY, AUDIO_DELAY, CRF, LOSSLESS_SCALING_SUPPORT, USE_3D_MONITOR, FILL_16_9, LOCAL_VSYNC, UPSCALER, UPSCALER_SHARPNESS, FIX_VIEWER_ASPECT, CAPTURE_MODE, STEREO_DISPLAY_SELECTION, STEREO_DISPLAY_INDEX, shutdown_event, DEVICE_ID, DEVICE_INFO, DEVICE, CONTROLLER_MODEL, ENVIRONMENT_MODEL, XR_PREVIEW_WINDOW, CACHE_PATH, settings
 from capture import CaptureConfig, capture_frame_to_rgb, create_capture_runner, prepare_rgb_for_depth_runtime
-from stereo_runtime import StereoRuntime, runtime_config_from_d2s_settings
+from stereo_runtime import OpenXRRenderConfig, StereoRuntime, runtime_config_from_d2s_settings
 
 if "CUDA" in DEVICE_INFO and "ZLUDA" not in DEVICE_INFO:
     USE_CUDART = True
@@ -45,6 +45,13 @@ openxr_render_active = threading.Event()
 openxr_source_active = threading.Event()
 openxr_wait_idle_active = threading.Event()
 openxr_bootstrap_done = threading.Event()
+openxr_runtime_config_lock = threading.Lock()
+openxr_runtime_config_state = {
+    "ipd": float(IPD),
+    "depth_ratio": float(DEPTH_STRENGTH),
+    "convergence": float(CONVERGENCE),
+    "screen_roll": 0.0,
+}
 _openxr_source_pause_notice_lock = threading.Lock()
 _openxr_source_pause_noticed = None
 _openxr_wait_idle_notice_lock = threading.Lock()
@@ -273,6 +280,29 @@ def _queue_clear_nonblocking(q):
             return
 
 
+def _update_openxr_runtime_config(*, ipd=None, depth_ratio=None, convergence=None, screen_roll=None):
+    with openxr_runtime_config_lock:
+        if ipd is not None:
+            openxr_runtime_config_state["ipd"] = float(ipd)
+        if depth_ratio is not None:
+            openxr_runtime_config_state["depth_ratio"] = float(depth_ratio)
+        if convergence is not None:
+            openxr_runtime_config_state["convergence"] = float(convergence)
+        if screen_roll is not None:
+            openxr_runtime_config_state["screen_roll"] = float(screen_roll)
+
+
+def _current_openxr_render_config():
+    with openxr_runtime_config_lock:
+        state = dict(openxr_runtime_config_state)
+    return OpenXRRenderConfig(
+        ipd=state["ipd"],
+        depth_strength=0.1 * state["depth_ratio"],
+        convergence=state["convergence"],
+        screen_roll=state["screen_roll"],
+    )
+
+
 def _runtime_output_to_numpy(frame):
     import numpy as np
     import torch
@@ -432,7 +462,13 @@ def process_depth_loop():
             # Runtime inference + stereo synthesis
             depth_start_time = time.perf_counter()
             runtime_rgb = prepare_rgb_for_depth_runtime(frame_rgb, device=DEVICE)
-            runtime_result = stereo_runtime.process_rgb_frame(runtime_rgb)
+            if RUN_MODE == "OpenXR":
+                runtime_result = stereo_runtime.process_openxr_frame(
+                    runtime_rgb,
+                    _current_openxr_render_config(),
+                )
+            else:
+                runtime_result = stereo_runtime.process_rgb_frame(runtime_rgb)
             if runtime_result.depth is None:
                 _queue_clear_nonblocking(depth_q)
                 _source_stat_inc("depth_none")
@@ -1448,11 +1484,14 @@ def main(mode="Viewer"):
                 raise ImportError("pyopenxr not installed — run: pip install pyopenxr")
             runtime_result, capture_start_time = depth_q.get()
             import torch
-            rgb, depth = runtime_result.left_eye, runtime_result.depth
-            if isinstance(rgb, torch.Tensor):
-                w, h = rgb.shape[2], rgb.shape[1]
+            first_eye = runtime_result.left_eye
+            if isinstance(first_eye, torch.Tensor):
+                if first_eye.ndim == 4:
+                    w, h = first_eye.shape[3], first_eye.shape[2]
+                else:
+                    w, h = first_eye.shape[2], first_eye.shape[1]
             else:
-                w, h = rgb.shape[1], rgb.shape[0]
+                w, h = first_eye.shape[1], first_eye.shape[0]
             try:
                 viewer = OpenXRViewer(
                     ipd=IPD,
@@ -1471,12 +1510,13 @@ def main(mode="Viewer"):
                     render_active_event=openxr_render_active,
                     source_active_event=openxr_source_active,
                     idle_active_event=openxr_wait_idle_active,
+                    runtime_config_callback=_update_openxr_runtime_config,
                 )
                 openxr_source_active.set()
                 openxr_render_active.clear()
                 openxr_wait_idle_active.clear()
                 openxr_bootstrap_done.set()
-                viewer.run(first_rgb=rgb, first_depth=depth)
+                viewer.run(first_runtime_result=runtime_result, first_frame_ts=capture_start_time)
             except Exception as e:
                 print(f"[Main] OpenXR Link error: {e}")
 

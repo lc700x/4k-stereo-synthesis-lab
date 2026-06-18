@@ -2467,6 +2467,11 @@ class OpenXRViewerCore:
         self.fps = fps
         self.depth_q = depth_q
         self.show_fps = show_fps
+        self._runtime_config_callback = kwargs.get('runtime_config_callback')
+        self._runtime_direct_source = False
+        self._runtime_eye_textures = [None, None]
+        self._runtime_depth_texture = None
+        self._runtime_eye_texture_size = None
 
         self._screen_grab_local_l = None
         self._screen_grab_local_r = None
@@ -3922,10 +3927,14 @@ class OpenXRViewerCore:
         if self._pending_source_frame is None:
             return False
 
-        rgb, depth, frame_ts = self._pending_source_frame
+        source_frame, frame_ts = self._normalize_source_frame(self._pending_source_frame)
         self._pending_source_frame = None
 
-        self._update_frame(rgb, depth)
+        if self._is_runtime_result(source_frame):
+            self._update_runtime_frame(source_frame)
+        else:
+            rgb, depth = source_frame
+            self._update_frame(rgb, depth)
         if frame_ts is not None:
             self.total_latency = (time.perf_counter() - frame_ts) * 1000.0
         sbs_now = time.perf_counter()
@@ -3936,6 +3945,43 @@ class OpenXRViewerCore:
             if sbs_span > 0:
                 self.sbs_fps = (m - 1) / sbs_span
         return True
+
+    def _normalize_source_frame(self, item):
+        if self._is_runtime_result(item):
+            return item, None
+        if isinstance(item, tuple):
+            if len(item) == 2 and self._is_runtime_result(item[0]):
+                return item[0], item[1]
+            if len(item) == 3:
+                rgb, depth, frame_ts = item
+                return (rgb, depth), frame_ts
+        raise RuntimeError(f"Unsupported OpenXR source frame: {type(item).__name__}")
+
+    def _is_runtime_result(self, item):
+        return (
+            hasattr(item, "left_eye")
+            and hasattr(item, "right_eye")
+            and hasattr(item, "depth")
+        )
+
+    def _publish_runtime_config(self):
+        callback = self._runtime_config_callback
+        if not callable(callback):
+            return
+        try:
+            callback(
+                ipd=self.ipd_uv,
+                depth_ratio=self.depth_ratio,
+                convergence=self.convergence,
+                screen_roll=self.screen_roll,
+            )
+        except Exception:
+            pass
+
+    def _has_renderable_source_frame(self):
+        if self._runtime_direct_source:
+            return all(self._runtime_eye_textures) and self._runtime_depth_texture is not None
+        return self.color_tex is not None and self.depth_tex is not None
 
     def _reset_controller_actions(self):
         self._xr_actions_sync_info = None
@@ -5207,6 +5253,7 @@ class OpenXRViewerCore:
         """Upload RGB and depth to GL textures -GPU path when available, CPU fallback."""
         import torch
 
+        self._runtime_direct_source = False
         is_tensor = hasattr(rgb, 'data_ptr')
 
         # Resolve depth shape and GPU tensor
@@ -5294,6 +5341,86 @@ class OpenXRViewerCore:
             self.depth_tex.write(depth_np.tobytes())
             # No glGenerateMipmap for depth: keep DIBR sampling at full-res
             # to match viewer.py FullSBS numerics.
+
+
+    def _runtime_eye_to_numpy(self, frame):
+        import torch
+
+        if hasattr(frame, "detach"):
+            tensor = frame.detach()
+            if tensor.ndim == 4:
+                tensor = tensor[0]
+            if tensor.ndim == 3 and tensor.shape[0] in (3, 4):
+                tensor = tensor[:3].permute(1, 2, 0)
+            elif tensor.ndim == 3 and tensor.shape[-1] >= 3:
+                tensor = tensor[..., :3]
+            else:
+                raise RuntimeError(f"Unsupported OpenXR runtime eye shape: {tuple(tensor.shape)}")
+            if tensor.is_floating_point():
+                tensor = tensor.clamp(0.0, 1.0).mul(255.0)
+            return tensor.contiguous().to(torch.uint8).cpu().numpy()
+
+        arr = np.asarray(frame)
+        if arr.ndim == 4:
+            arr = arr[0]
+        if arr.ndim == 3 and arr.shape[0] in (3, 4):
+            arr = np.transpose(arr[:3], (1, 2, 0))
+        elif arr.ndim == 3 and arr.shape[-1] >= 3:
+            arr = arr[..., :3]
+        else:
+            raise RuntimeError(f"Unsupported OpenXR runtime eye shape: {tuple(arr.shape)}")
+        if np.issubdtype(arr.dtype, np.floating):
+            arr = np.clip(arr, 0.0, 1.0) * 255.0
+        return arr.astype(np.uint8, copy=False)
+
+    def _release_runtime_eye_textures(self):
+        for idx, tex in enumerate(self._runtime_eye_textures):
+            if tex is not None:
+                try:
+                    tex.release()
+                except Exception:
+                    pass
+                self._runtime_eye_textures[idx] = None
+        if self._runtime_depth_texture is not None:
+            try:
+                self._runtime_depth_texture.release()
+            except Exception:
+                pass
+            self._runtime_depth_texture = None
+        self._runtime_eye_texture_size = None
+
+    def _ensure_runtime_eye_textures(self, w, h):
+        if (
+            self._runtime_eye_texture_size == (w, h)
+            and all(self._runtime_eye_textures)
+            and self._runtime_depth_texture is not None
+        ):
+            return
+        self._release_runtime_eye_textures()
+        for idx in range(2):
+            tex = self.ctx.texture((w, h), 3, dtype='f1')
+            tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+            self._runtime_eye_textures[idx] = tex
+        self._runtime_depth_texture = self.ctx.texture((w, h), 1, dtype='f4')
+        self._runtime_depth_texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        self._runtime_depth_texture.write(np.zeros((h, w), dtype=np.float32).tobytes())
+        self._runtime_eye_texture_size = (w, h)
+
+    def _update_runtime_frame(self, runtime_result):
+        left = self._runtime_eye_to_numpy(runtime_result.left_eye)
+        right = self._runtime_eye_to_numpy(runtime_result.right_eye)
+        if left.shape[:2] != right.shape[:2]:
+            raise RuntimeError(f"OpenXR runtime eye size mismatch: left={left.shape} right={right.shape}")
+        h, w = left.shape[:2]
+        self._ensure_runtime_eye_textures(w, h)
+        self._runtime_eye_textures[0].write(np.ascontiguousarray(left[:, :, :3]).tobytes())
+        self._runtime_eye_textures[1].write(np.ascontiguousarray(right[:, :, :3]).tobytes())
+        self._runtime_direct_source = True
+        self._texture_size = (w, h)
+        self.frame_size = (w, h)
+        self.screen_height = None
+        if self._d3d11_native_renderer is not None:
+            self._d3d11_native_renderer.has_frame = False
 
 
     def _build_model_mat4(self):
@@ -6875,7 +7002,11 @@ class OpenXRViewerCore:
             self.ctx.screen.use()
             return
 
-        if self.color_tex is None or self.depth_tex is None:
+        if self._runtime_direct_source:
+            if self._runtime_eye_textures[eye_index] is None:
+                self.ctx.screen.use()
+                return
+        elif self.color_tex is None or self.depth_tex is None:
             self.ctx.screen.use()
             return
 
@@ -6893,16 +7024,20 @@ class OpenXRViewerCore:
 
         # Main screen
         mgl_fbo.use()
-        self.color_tex.use(location=0)
-        self.depth_tex.use(location=1)
+        if self._runtime_direct_source:
+            self._runtime_eye_textures[eye_index].use(location=0)
+            self._runtime_depth_texture.use(location=1)
+        else:
+            self.color_tex.use(location=0)
+            self.depth_tex.use(location=1)
 
         eye_sign = -1.0 if eye_index == 0 else 1.0
         model = self._build_model_mat4()
         mvp = vp_mat @ model
         self.prog['u_mvp'].write(mvp.T.tobytes())
-        self.prog['u_roll'].value = self.screen_roll
-        self.prog['u_eye_offset'].value = eye_sign * self.ipd_uv / 2.0
-        self.prog['u_depth_strength'].value = self.depth_strength * self.depth_ratio
+        self.prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
+        self.prog['u_eye_offset'].value = 0.0 if self._runtime_direct_source else eye_sign * self.ipd_uv / 2.0
+        self.prog['u_depth_strength'].value = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
         self.prog['u_convergence'].value = float(self.convergence)
         self.prog['u_corner_radius'].value = self._corner_radius
         self.quad_vao.render(moderngl.TRIANGLE_STRIP)
@@ -8510,7 +8645,7 @@ class OpenXRViewerCore:
         self._handle_triggers()
 
     # Main blocking loop
-    def run(self, first_rgb=None, first_depth=None):
+    def run(self, first_rgb=None, first_depth=None, first_runtime_result=None, first_frame_ts=None):
         """
         Blocking render loop. Exits when the OpenXR session ends, the GLFW
         window is closed, or shutdown_event is set.
@@ -8556,7 +8691,12 @@ class OpenXRViewerCore:
             _U32.SystemParametersInfoW(0x0020, 1200, None, 0)  # SPI_SETDOUBLECLICKTIME
 
         # Upload the first frame supplied by main.py
-        if first_rgb is not None and first_depth is not None:
+        if first_runtime_result is not None:
+            self._mark_source_frame_received()
+            self._update_runtime_frame(first_runtime_result)
+            if first_frame_ts is not None:
+                self.total_latency = (time.perf_counter() - first_frame_ts) * 1000.0
+        elif first_rgb is not None and first_depth is not None:
             self._mark_source_frame_received()
             self._update_frame(first_rgb, first_depth)
 
@@ -8580,6 +8720,7 @@ class OpenXRViewerCore:
             last_input_t = now
             self._last_frame_dt = dt
             self._frame_count += 1
+            self._publish_runtime_config()
 
             glfw.poll_events()
             if self._preview_only_mode:
@@ -8683,7 +8824,7 @@ class OpenXRViewerCore:
 
             if not self._has_fresh_source_frame(now):
                 self._pause_xr_output_for_source_stall()
-                if self.color_tex is None or self.depth_tex is None:
+                if not self._has_renderable_source_frame():
                     xr.end_frame(
                         self._xr_session,
                         xr.FrameEndInfo(
@@ -9120,6 +9261,7 @@ class OpenXRViewerCore:
             except Exception:
                 pass
         self._pbo_color = self._pbo_depth = None
+        self._release_runtime_eye_textures()
 
         for tex in (self._overlay_tex, self._brand_osd_tex, self.color_tex, self.depth_tex):
             if tex:

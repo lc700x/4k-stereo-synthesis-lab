@@ -37,6 +37,7 @@ from .display import (
     get_monitor_size,
 )
 from .network import configure_huggingface_endpoint, get_local_ip
+from .run_mode import resolve_run_mode
 from .settings import load_settings, read_yaml
 
 # load customized settings
@@ -71,13 +72,16 @@ STREAM_PORT = settings["Streamer Port"]
 LOCAL_IP = get_local_ip()
 
 # Get settings
-RUN_MODE = settings["Run Mode"]
-# Add for 3D monitor
-USE_3D_MONITOR = False
-STREAM_MODE = None
-
-# Add for FrameGen
-LOSSLESS_SCALING_SUPPORT = False
+_RUN_MODE_CONFIG = resolve_run_mode(
+    settings["Run Mode"],
+    os_name=OS_NAME,
+    fix_viewer_aspect=settings["Fix Viewer Aspect"],
+    lossless_scaling_support=settings["Lossless Scaling Support"],
+)
+RUN_MODE = _RUN_MODE_CONFIG.run_mode
+STREAM_MODE = _RUN_MODE_CONFIG.stream_mode
+USE_3D_MONITOR = _RUN_MODE_CONFIG.use_3d_monitor
+LOSSLESS_SCALING_SUPPORT = _RUN_MODE_CONFIG.lossless_scaling_support
 MODEL = settings["Depth Model"]
 MODEL_ID = MODEL_MAPPING[MODEL]
 ALL_MODELS = settings["Model List"]
@@ -144,7 +148,7 @@ try:
 except (TypeError, ValueError):
     UPSCALER_SHARPNESS = 0.35
 UPSCALER_SHARPNESS = max(0.0, min(1.0, UPSCALER_SHARPNESS))
-FIX_VIEWER_ASPECT = True if RUN_MODE == "RTMP Streamer" else settings["Fix Viewer Aspect"] # Keep Viewer Aspect for RTMP with LOSSLESS_SCALING_SUPPORT
+FIX_VIEWER_ASPECT = _RUN_MODE_CONFIG.fix_viewer_aspect
 STEREOMIX_DEVICE = settings["Stereo Mix"] # RTMP StereoMix Device
 STREAM_KEY = settings["Stream Key"]
 AUDIO_DELAY = settings["Audio Delay"]
@@ -154,26 +158,6 @@ LANG = settings["Language"]
 from viewer.controller_help import get_controller_help_rows
 
 ROWS, ENV_ROWS = get_controller_help_rows(LANG)
-
-# Determin the run mode and stream mode
-if RUN_MODE == "Local Viewer":
-    RUN_MODE = "Viewer"
-elif RUN_MODE == "3D Monitor" and OS_NAME == "Windows":
-    RUN_MODE = "Viewer"
-    USE_3D_MONITOR = True
-elif RUN_MODE == "MJPEG Streamer":
-    RUN_MODE = "Viewer"
-    STREAM_MODE = "MJPEG" 
-elif RUN_MODE == "RTMP Streamer":
-    RUN_MODE = "Viewer"
-    STREAM_MODE = "RTMP"
-    if OS_NAME == "Windows":
-        # Frame Generation Settings for RTMP, Local Viewer not requried
-        LOSSLESS_SCALING_SUPPORT = settings["Lossless Scaling Support"]
-elif RUN_MODE == "OpenXR Link":
-    RUN_MODE = "OpenXR"
-else:
-    RUN_MODE = "Streamer"
 
 # Specify the Stereo Display for output
 CONTROLLER_MODEL = settings["Controller Model"]

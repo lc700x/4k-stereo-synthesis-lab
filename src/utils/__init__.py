@@ -11,6 +11,7 @@ VERSION = "2.5.0Beta"
 # Get OS name
 OS_NAME = platform.system()
 from streaming.audio import STEREO_MIX_NAMES
+from streaming.config import DEFAULT_PORT, resolve_streaming_config
 
 from stereo_runtime.model_capabilities import (
     COMPILE_FIX_KEYWORDS,
@@ -67,10 +68,10 @@ configure_huggingface_endpoint()
 MODEL_MAPPING = model_name_mapping()
 
 # Streamer Settings
-DEFAULT_PORT = 1122
-STREAM_QUALITY = settings["Stream Quality"]
-STREAM_PORT = settings["Streamer Port"]
-LOCAL_IP = get_local_ip()
+_STREAMING_CONFIG = resolve_streaming_config(settings)
+STREAM_QUALITY = _STREAMING_CONFIG.stream_quality
+STREAM_PORT = _STREAMING_CONFIG.stream_port
+LOCAL_IP = _STREAMING_CONFIG.local_ip
 
 # Get settings
 _RUN_MODE_CONFIG = resolve_run_mode(
@@ -140,10 +141,10 @@ LOCAL_VSYNC = settings.get("Local VSync", True)
 UPSCALER = normalize_upscaler(settings.get("Upscaler", "Off"))
 UPSCALER_SHARPNESS = normalize_upscaler_sharpness(settings.get("Upscaler Sharpness", 0.35))
 FIX_VIEWER_ASPECT = _RUN_MODE_CONFIG.fix_viewer_aspect
-STEREOMIX_DEVICE = settings["Stereo Mix"] # RTMP StereoMix Device
-STREAM_KEY = settings["Stream Key"]
-AUDIO_DELAY = settings["Audio Delay"]
-CRF = settings["CRF"]
+STEREOMIX_DEVICE = _STREAMING_CONFIG.stereo_mix_device
+STREAM_KEY = _STREAMING_CONFIG.stream_key
+AUDIO_DELAY = _STREAMING_CONFIG.audio_delay
+CRF = _STREAMING_CONFIG.crf
 LANG = settings["Language"]
 
 from viewer.controller_help import get_controller_help_rows

@@ -1,7 +1,7 @@
 import threading
 
 from streaming.audio import STEREO_MIX_NAMES
-from streaming.config import DEFAULT_PORT, resolve_streaming_config
+from streaming.config import DEFAULT_PORT
 
 from stereo_runtime.model_capabilities import (
     COMPILE_FIX_KEYWORDS,
@@ -12,9 +12,7 @@ from stereo_runtime.model_capabilities import (
     DISABLE_TRT_KEYWORDS,
     FORCE_FP32_KEYWORDS,
     TRT_FIX_KEYWORDS,
-    model_name_mapping,
 )
-from stereo_runtime.depth_settings import resolve_depth_settings
 
 # Global shutdown event
 shutdown_event = threading.Event()
@@ -23,16 +21,14 @@ from viewer.assets import crop_icon, get_font_type
 
 
 from .app_info import DEBUG, OS_NAME, VERSION
-from .capture_tool import resolve_capture_tool
 from .display import (
     _get_device_name_from_mss_monitor,
     get_monitor_size,
 )
 from .network import configure_huggingface_endpoint, get_local_ip
 from .platform_env import configure_platform_environment
-from .run_mode import resolve_run_mode
+from .runtime_exports import resolve_runtime_exports
 from .settings import load_settings, read_yaml
-from viewer.settings import resolve_viewer_settings
 
 # load customized settings
 settings = load_settings("settings.yaml")
@@ -48,78 +44,60 @@ from viewer.window_control import (
 # Set Hugging Face environment variable
 configure_huggingface_endpoint()
 
-# Model Mapping Dict. Keep the Desktop2Stereo settings shape, but make
-# stereo_runtime.model_registry the single source of truth for model names.
-MODEL_MAPPING = model_name_mapping()
-
-# Streamer Settings
-_STREAMING_CONFIG = resolve_streaming_config(settings)
-STREAM_QUALITY = _STREAMING_CONFIG.stream_quality
-STREAM_PORT = _STREAMING_CONFIG.stream_port
-LOCAL_IP = _STREAMING_CONFIG.local_ip
-
-# Get settings
-_RUN_MODE_CONFIG = resolve_run_mode(
-    settings["Run Mode"],
-    os_name=OS_NAME,
-    fix_viewer_aspect=settings["Fix Viewer Aspect"],
-    lossless_scaling_support=settings["Lossless Scaling Support"],
-)
-RUN_MODE = _RUN_MODE_CONFIG.run_mode
-STREAM_MODE = _RUN_MODE_CONFIG.stream_mode
-USE_3D_MONITOR = _RUN_MODE_CONFIG.use_3d_monitor
-LOSSLESS_SCALING_SUPPORT = _RUN_MODE_CONFIG.lossless_scaling_support
-_DEPTH_SETTINGS = resolve_depth_settings(settings)
-MODEL = _DEPTH_SETTINGS.model
-MODEL_ID = _DEPTH_SETTINGS.model_id
-ALL_MODELS = _DEPTH_SETTINGS.all_models
-CACHE_PATH = _DEPTH_SETTINGS.cache_path
-DEPTH_RESOLUTION = _DEPTH_SETTINGS.depth_resolution
-DEVICE_ID = _DEPTH_SETTINGS.device_id
-FP16 = _DEPTH_SETTINGS.fp16
-_VIEWER_SETTINGS = resolve_viewer_settings(settings)
-MONITOR_INDEX = _VIEWER_SETTINGS.monitor_index
-DISPLAY_MODE = _VIEWER_SETTINGS.display_mode
-STEREO_DISPLAY_INDEX = _VIEWER_SETTINGS.stereo_display_index
-STEREO_DISPLAY_SELECTION = _VIEWER_SETTINGS.stereo_display_selection
-OUTPUT_RESOLUTION = _VIEWER_SETTINGS.output_resolution
-SHOW_FPS = _VIEWER_SETTINGS.show_fps
-DEPTH_STRENGTH = _VIEWER_SETTINGS.depth_strength
-IPD = _VIEWER_SETTINGS.ipd
-CONVERGENCE = _VIEWER_SETTINGS.convergence
-CAPTURE_MODE = _VIEWER_SETTINGS.capture_mode
-WINDOW_TITLE = _VIEWER_SETTINGS.window_title
-TARGET_FPS = _VIEWER_SETTINGS.target_fps
-FPS = _VIEWER_SETTINGS.fps
-
-FOREGROUND_SCALE = _DEPTH_SETTINGS.foreground_scale
-AA_STRENGTH = _DEPTH_SETTINGS.aa_strength
-USE_TORCH_COMPILE = _DEPTH_SETTINGS.use_torch_compile
-USE_TENSORRT = _DEPTH_SETTINGS.use_tensorrt
-RECOMPILE_TRT = _DEPTH_SETTINGS.recompile_trt
-USE_COREML = _DEPTH_SETTINGS.use_coreml
-RECOMPILE_COREML = _DEPTH_SETTINGS.recompile_coreml
-USE_OPENVINO = _DEPTH_SETTINGS.use_openvino
-RECOMPILE_OPENVINO = _DEPTH_SETTINGS.recompile_openvino
-
-CAPTURE_TOOL = resolve_capture_tool(settings["Capture Tool"])
-FILL_16_9 = _VIEWER_SETTINGS.fill_16_9
-LOCAL_VSYNC = _VIEWER_SETTINGS.local_vsync
-UPSCALER = _VIEWER_SETTINGS.upscaler
-UPSCALER_SHARPNESS = _VIEWER_SETTINGS.upscaler_sharpness
-FIX_VIEWER_ASPECT = _RUN_MODE_CONFIG.fix_viewer_aspect
-STEREOMIX_DEVICE = _STREAMING_CONFIG.stereo_mix_device
-STREAM_KEY = _STREAMING_CONFIG.stream_key
-AUDIO_DELAY = _STREAMING_CONFIG.audio_delay
-CRF = _STREAMING_CONFIG.crf
-LANG = _VIEWER_SETTINGS.language
-ROWS = _VIEWER_SETTINGS.controller_help_rows
-ENV_ROWS = _VIEWER_SETTINGS.environment_help_rows
-
-# Specify the Stereo Display for output
-CONTROLLER_MODEL = _VIEWER_SETTINGS.controller_model
-ENVIRONMENT_MODEL = _VIEWER_SETTINGS.environment_model
-XR_PREVIEW_WINDOW = _VIEWER_SETTINGS.xr_preview_window
+_RUNTIME_EXPORTS = resolve_runtime_exports(settings, os_name=OS_NAME)
+MODEL_MAPPING = _RUNTIME_EXPORTS.model_mapping
+STREAM_QUALITY = _RUNTIME_EXPORTS.stream_quality
+STREAM_PORT = _RUNTIME_EXPORTS.stream_port
+LOCAL_IP = _RUNTIME_EXPORTS.local_ip
+RUN_MODE = _RUNTIME_EXPORTS.run_mode
+STREAM_MODE = _RUNTIME_EXPORTS.stream_mode
+USE_3D_MONITOR = _RUNTIME_EXPORTS.use_3d_monitor
+LOSSLESS_SCALING_SUPPORT = _RUNTIME_EXPORTS.lossless_scaling_support
+MODEL = _RUNTIME_EXPORTS.model
+MODEL_ID = _RUNTIME_EXPORTS.model_id
+ALL_MODELS = _RUNTIME_EXPORTS.all_models
+CACHE_PATH = _RUNTIME_EXPORTS.cache_path
+DEPTH_RESOLUTION = _RUNTIME_EXPORTS.depth_resolution
+DEVICE_ID = _RUNTIME_EXPORTS.device_id
+FP16 = _RUNTIME_EXPORTS.fp16
+MONITOR_INDEX = _RUNTIME_EXPORTS.monitor_index
+DISPLAY_MODE = _RUNTIME_EXPORTS.display_mode
+STEREO_DISPLAY_INDEX = _RUNTIME_EXPORTS.stereo_display_index
+STEREO_DISPLAY_SELECTION = _RUNTIME_EXPORTS.stereo_display_selection
+OUTPUT_RESOLUTION = _RUNTIME_EXPORTS.output_resolution
+SHOW_FPS = _RUNTIME_EXPORTS.show_fps
+DEPTH_STRENGTH = _RUNTIME_EXPORTS.depth_strength
+IPD = _RUNTIME_EXPORTS.ipd
+CONVERGENCE = _RUNTIME_EXPORTS.convergence
+CAPTURE_MODE = _RUNTIME_EXPORTS.capture_mode
+WINDOW_TITLE = _RUNTIME_EXPORTS.window_title
+TARGET_FPS = _RUNTIME_EXPORTS.target_fps
+FPS = _RUNTIME_EXPORTS.fps
+FOREGROUND_SCALE = _RUNTIME_EXPORTS.foreground_scale
+AA_STRENGTH = _RUNTIME_EXPORTS.aa_strength
+USE_TORCH_COMPILE = _RUNTIME_EXPORTS.use_torch_compile
+USE_TENSORRT = _RUNTIME_EXPORTS.use_tensorrt
+RECOMPILE_TRT = _RUNTIME_EXPORTS.recompile_trt
+USE_COREML = _RUNTIME_EXPORTS.use_coreml
+RECOMPILE_COREML = _RUNTIME_EXPORTS.recompile_coreml
+USE_OPENVINO = _RUNTIME_EXPORTS.use_openvino
+RECOMPILE_OPENVINO = _RUNTIME_EXPORTS.recompile_openvino
+CAPTURE_TOOL = _RUNTIME_EXPORTS.capture_tool
+FILL_16_9 = _RUNTIME_EXPORTS.fill_16_9
+LOCAL_VSYNC = _RUNTIME_EXPORTS.local_vsync
+UPSCALER = _RUNTIME_EXPORTS.upscaler
+UPSCALER_SHARPNESS = _RUNTIME_EXPORTS.upscaler_sharpness
+FIX_VIEWER_ASPECT = _RUNTIME_EXPORTS.fix_viewer_aspect
+STEREOMIX_DEVICE = _RUNTIME_EXPORTS.stereo_mix_device
+STREAM_KEY = _RUNTIME_EXPORTS.stream_key
+AUDIO_DELAY = _RUNTIME_EXPORTS.audio_delay
+CRF = _RUNTIME_EXPORTS.crf
+LANG = _RUNTIME_EXPORTS.language
+ROWS = _RUNTIME_EXPORTS.controller_help_rows
+ENV_ROWS = _RUNTIME_EXPORTS.environment_help_rows
+CONTROLLER_MODEL = _RUNTIME_EXPORTS.controller_model
+ENVIRONMENT_MODEL = _RUNTIME_EXPORTS.environment_model
+XR_PREVIEW_WINDOW = _RUNTIME_EXPORTS.xr_preview_window
 
 # Initialize Device
 from .device import get_device

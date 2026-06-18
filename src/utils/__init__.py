@@ -34,13 +34,12 @@ from viewer.assets import crop_icon, get_font_type
 
 from .display import (
     _get_device_name_from_mss_monitor,
-    compute_output_resolution,
-    get_fps,
     get_monitor_size,
 )
 from .network import configure_huggingface_endpoint, get_local_ip
 from .run_mode import resolve_run_mode
 from .settings import load_settings, read_yaml
+from .viewer_settings import resolve_viewer_settings
 
 # load customized settings
 settings = load_settings("settings.yaml")
@@ -59,7 +58,6 @@ from viewer.window_control import (
     set_window_to_bottom,
     show_window_in_capture,
 )
-from viewer.upscaler import normalize_upscaler, normalize_upscaler_sharpness
         
 # Set Hugging Face environment variable
 configure_huggingface_endpoint()
@@ -93,22 +91,20 @@ CACHE_PATH = _DEPTH_SETTINGS.cache_path
 DEPTH_RESOLUTION = _DEPTH_SETTINGS.depth_resolution
 DEVICE_ID = _DEPTH_SETTINGS.device_id
 FP16 = _DEPTH_SETTINGS.fp16
-MONITOR_INDEX,  DISPLAY_MODE = settings["Monitor Index"], settings["Display Mode"]
-STEREO_DISPLAY_INDEX = settings.get("Stereo Output")
-STEREO_DISPLAY_SELECTION = False if not STEREO_DISPLAY_INDEX else True
-OUTPUT_RESOLUTION = compute_output_resolution(
-    settings.get("Processing Resolution", "Auto"),
-    DISPLAY_MODE,
-    MONITOR_INDEX,
-    STEREO_DISPLAY_INDEX,
-)
-SHOW_FPS, DEPTH_STRENGTH = settings["Show FPS"], settings["Depth Strength"]
-IPD = settings["IPD"]
-CONVERGENCE = settings["Convergence"]
-CAPTURE_MODE = settings["Capture Mode"]
-WINDOW_TITLE = settings["Window Title"] if CAPTURE_MODE == "Window" else None
-TARGET_FPS = int(settings.get("Target FPS", 0) or 0)
-FPS = TARGET_FPS if 1 <= TARGET_FPS <= 240 else get_fps(WINDOW_TITLE, MONITOR_INDEX)
+_VIEWER_SETTINGS = resolve_viewer_settings(settings)
+MONITOR_INDEX = _VIEWER_SETTINGS.monitor_index
+DISPLAY_MODE = _VIEWER_SETTINGS.display_mode
+STEREO_DISPLAY_INDEX = _VIEWER_SETTINGS.stereo_display_index
+STEREO_DISPLAY_SELECTION = _VIEWER_SETTINGS.stereo_display_selection
+OUTPUT_RESOLUTION = _VIEWER_SETTINGS.output_resolution
+SHOW_FPS = _VIEWER_SETTINGS.show_fps
+DEPTH_STRENGTH = _VIEWER_SETTINGS.depth_strength
+IPD = _VIEWER_SETTINGS.ipd
+CONVERGENCE = _VIEWER_SETTINGS.convergence
+CAPTURE_MODE = _VIEWER_SETTINGS.capture_mode
+WINDOW_TITLE = _VIEWER_SETTINGS.window_title
+TARGET_FPS = _VIEWER_SETTINGS.target_fps
+FPS = _VIEWER_SETTINGS.fps
 
 FOREGROUND_SCALE = _DEPTH_SETTINGS.foreground_scale
 AA_STRENGTH = _DEPTH_SETTINGS.aa_strength
@@ -133,10 +129,10 @@ def _load_capture_select():
 _resolve_capture_tool = _load_capture_select().resolve_capture_tool
 
 CAPTURE_TOOL = _resolve_capture_tool(settings["Capture Tool"])
-FILL_16_9 = settings["Fill 16:9"]
-LOCAL_VSYNC = settings.get("Local VSync", True)
-UPSCALER = normalize_upscaler(settings.get("Upscaler", "Off"))
-UPSCALER_SHARPNESS = normalize_upscaler_sharpness(settings.get("Upscaler Sharpness", 0.35))
+FILL_16_9 = _VIEWER_SETTINGS.fill_16_9
+LOCAL_VSYNC = _VIEWER_SETTINGS.local_vsync
+UPSCALER = _VIEWER_SETTINGS.upscaler
+UPSCALER_SHARPNESS = _VIEWER_SETTINGS.upscaler_sharpness
 FIX_VIEWER_ASPECT = _RUN_MODE_CONFIG.fix_viewer_aspect
 STEREOMIX_DEVICE = _STREAMING_CONFIG.stereo_mix_device
 STREAM_KEY = _STREAMING_CONFIG.stream_key
@@ -149,9 +145,9 @@ from viewer.controller_help import get_controller_help_rows
 ROWS, ENV_ROWS = get_controller_help_rows(LANG)
 
 # Specify the Stereo Display for output
-CONTROLLER_MODEL = settings["Controller Model"]
-ENVIRONMENT_MODEL = settings.get("Environment Model", "Default")
-XR_PREVIEW_WINDOW = settings.get("XR Preview Window", True)
+CONTROLLER_MODEL = _VIEWER_SETTINGS.controller_model
+ENVIRONMENT_MODEL = _VIEWER_SETTINGS.environment_model
+XR_PREVIEW_WINDOW = _VIEWER_SETTINGS.xr_preview_window
 
 # Initialize Device
 from .device import get_device

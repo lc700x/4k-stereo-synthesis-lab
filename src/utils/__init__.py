@@ -24,6 +24,7 @@ from stereo_runtime.model_capabilities import (
     TRT_FIX_KEYWORDS,
     model_name_mapping,
 )
+from stereo_runtime.depth_settings import resolve_depth_settings
 
 # Global shutdown event
 shutdown_event = threading.Event()
@@ -84,13 +85,14 @@ RUN_MODE = _RUN_MODE_CONFIG.run_mode
 STREAM_MODE = _RUN_MODE_CONFIG.stream_mode
 USE_3D_MONITOR = _RUN_MODE_CONFIG.use_3d_monitor
 LOSSLESS_SCALING_SUPPORT = _RUN_MODE_CONFIG.lossless_scaling_support
-MODEL = settings["Depth Model"]
-MODEL_ID = MODEL_MAPPING[MODEL]
-ALL_MODELS = settings["Model List"]
-CACHE_PATH = "./models"
-DEPTH_RESOLUTION = settings["Depth Resolution"]
-DEVICE_ID = settings["Computing Device"]
-FP16 = settings["FP16"]
+_DEPTH_SETTINGS = resolve_depth_settings(settings)
+MODEL = _DEPTH_SETTINGS.model
+MODEL_ID = _DEPTH_SETTINGS.model_id
+ALL_MODELS = _DEPTH_SETTINGS.all_models
+CACHE_PATH = _DEPTH_SETTINGS.cache_path
+DEPTH_RESOLUTION = _DEPTH_SETTINGS.depth_resolution
+DEVICE_ID = _DEPTH_SETTINGS.device_id
+FP16 = _DEPTH_SETTINGS.fp16
 MONITOR_INDEX,  DISPLAY_MODE = settings["Monitor Index"], settings["Display Mode"]
 STEREO_DISPLAY_INDEX = settings.get("Stereo Output")
 STEREO_DISPLAY_SELECTION = False if not STEREO_DISPLAY_INDEX else True
@@ -108,20 +110,15 @@ WINDOW_TITLE = settings["Window Title"] if CAPTURE_MODE == "Window" else None
 TARGET_FPS = int(settings.get("Target FPS", 0) or 0)
 FPS = TARGET_FPS if 1 <= TARGET_FPS <= 240 else get_fps(WINDOW_TITLE, MONITOR_INDEX)
 
-# Image Processing Parameters
-FOREGROUND_SCALE = settings["Foreground Scale"] / 10 # 0-10
-AA_STRENGTH = settings["Anti-aliasing"] * 2
-
-# Experimental Settings
-USE_TORCH_COMPILE = settings["torch.compile"]
-USE_TENSORRT = settings["TensorRT"] # use TensorRT for CUDA
-RECOMPILE_TRT = settings["Recompile TensorRT"] # recompile TensorRT engine
-
-USE_COREML = settings["CoreML"] # use CoreML for MacOS
-RECOMPILE_COREML = settings["Recompile CoreML"] # recompile CoreML mlpackage
-
-USE_OPENVINO = settings["OpenVINO"]  # use OpenVINO for Intel
-RECOMPILE_OPENVINO = settings["Recompile OpenVINO"] # recompile OpenVINO IR
+FOREGROUND_SCALE = _DEPTH_SETTINGS.foreground_scale
+AA_STRENGTH = _DEPTH_SETTINGS.aa_strength
+USE_TORCH_COMPILE = _DEPTH_SETTINGS.use_torch_compile
+USE_TENSORRT = _DEPTH_SETTINGS.use_tensorrt
+RECOMPILE_TRT = _DEPTH_SETTINGS.recompile_trt
+USE_COREML = _DEPTH_SETTINGS.use_coreml
+RECOMPILE_COREML = _DEPTH_SETTINGS.recompile_coreml
+USE_OPENVINO = _DEPTH_SETTINGS.use_openvino
+RECOMPILE_OPENVINO = _DEPTH_SETTINGS.recompile_openvino
 
 def _load_capture_select():
     # Load the selector without importing capture.__init__, which still depends

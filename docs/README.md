@@ -18,6 +18,8 @@
 | [11-visual-regression-guide.md](11-visual-regression-guide.md) | 视觉回归输出图片含义、检查方法和固定样例说明 |
 | [12-openxr-stereo-runtime-plan.md](12-openxr-stereo-runtime-plan.md) | OpenXR per-eye core 与未来 runtime 集成计划 |
 | [13-realtime-stereo-parameter-guide.md](13-realtime-stereo-parameter-guide.md) | 实时立体参数、Auto Mode、电影/游戏/图片模式策略 |
+| [17-multiplatform-provider-layout.md](17-multiplatform-provider-layout.md) | 多平台 depth provider 目录分层和 artifact 规划 |
+| [18-host-bootstrap-device-flow.md](18-host-bootstrap-device-flow.md) | Host/GUI/capture bootstrap 设备检测与 runtime 参数传递流程 |
 
 ## Benchmark 与优化记录
 

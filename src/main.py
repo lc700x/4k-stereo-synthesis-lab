@@ -1391,7 +1391,7 @@ def main(mode="Viewer"):
                 rtmp_thread.start()
                 print(f"[Main] RTMP Streamer Started (auto-restart on resize)")
             elif STREAM_MODE == "MJPEG":
-                from viewer.streamer import MJPEGStreamer
+                from streaming.mjpeg_streamer import MJPEGStreamer
                 streamer = MJPEGStreamer(port=STREAM_PORT, fps=FPS, quality=STREAM_QUALITY)
                 streamer.start()
                 print(f"[Main] MJPEG Streamer Started")
@@ -1578,8 +1578,8 @@ def main(mode="Viewer"):
                 print(f"[Main] OpenXR Link error: {e}")
 
         else:
-            from legacy_sbs import make_sbs, DEVICE_INFO
-            from viewer.streamer import MJPEGStreamer
+            from streaming.legacy_sbs import make_sbs, DEVICE_INFO
+            from streaming.mjpeg_streamer import MJPEGStreamer
 
             streamer = MJPEGStreamer(port=STREAM_PORT, fps=FPS, quality=STREAM_QUALITY)
             streamer.start()

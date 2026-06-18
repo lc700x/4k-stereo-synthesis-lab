@@ -7,7 +7,7 @@ import torch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from legacy_sbs import make_sbs
+from streaming.legacy_sbs import make_sbs
 
 
 def test_legacy_make_sbs_half_sbs_keeps_source_size():

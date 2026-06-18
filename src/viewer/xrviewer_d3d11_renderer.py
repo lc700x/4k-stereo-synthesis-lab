@@ -426,6 +426,11 @@ class D3D11NativeRenderer:
         self.depth_srv = ctypes.c_void_p()
         self.color_cuda = ctypes.c_void_p()
         self.depth_cuda = ctypes.c_void_p()
+        self.runtime_eye_tex = [ctypes.c_void_p(), ctypes.c_void_p()]
+        self.runtime_eye_srv = [ctypes.c_void_p(), ctypes.c_void_p()]
+        self.runtime_eye_cuda = [ctypes.c_void_p(), ctypes.c_void_p()]
+        self.runtime_eye_size = None
+        self.runtime_eye_cuda_logged = False
         self.cuda = None
         self.cuda_failed = False
         self.cuda_active_logged = False
@@ -704,6 +709,118 @@ class D3D11NativeRenderer:
             self.depth_cuda = self.cuda.register_texture(self.depth_tex)
         return True
 
+    def _ensure_runtime_eye_textures(self, width, height):
+        if self.runtime_eye_size == (width, height):
+            return
+        self._release_runtime_eye_textures()
+        for idx in range(2):
+            self.runtime_eye_tex[idx], self.runtime_eye_srv[idx] = self._create_texture_srv(
+                width, height, DXGI_FORMAT_R8G8B8A8_UNORM
+            )
+        self.runtime_eye_size = (width, height)
+
+    def _release_runtime_eye_textures(self):
+        if self.cuda is not None:
+            for resource in self.runtime_eye_cuda:
+                try:
+                    self.cuda.unregister_resource(resource)
+                except Exception:
+                    pass
+        self.runtime_eye_cuda = [ctypes.c_void_p(), ctypes.c_void_p()]
+        for ptr in (*self.runtime_eye_srv, *self.runtime_eye_tex):
+            _release(ptr)
+        self.runtime_eye_tex = [ctypes.c_void_p(), ctypes.c_void_p()]
+        self.runtime_eye_srv = [ctypes.c_void_p(), ctypes.c_void_p()]
+        self.runtime_eye_size = None
+
+    def _ensure_runtime_eye_cuda_resources(self, torch_module, device_id):
+        if self.cuda_failed:
+            return False
+        if self.cuda is None:
+            self.cuda = CUDART_D3D11(torch_module, self.device, device_id)
+        for idx in range(2):
+            if not self.runtime_eye_cuda[idx]:
+                self.runtime_eye_cuda[idx] = self.cuda.register_texture(self.runtime_eye_tex[idx])
+        return True
+
+    def _runtime_eye_tensor_rgba(self, torch_module, frame):
+        tensor = frame.detach()
+        if tensor.ndim == 4:
+            if tensor.shape[0] != 1:
+                raise RuntimeError(f"Unsupported OpenXR runtime eye batch for D3D11: {tuple(tensor.shape)}")
+            tensor = tensor[0]
+        if tensor.ndim == 3 and tensor.shape[0] in (3, 4):
+            tensor = tensor[:3].permute(1, 2, 0)
+        elif tensor.ndim == 3 and tensor.shape[-1] >= 3:
+            tensor = tensor[..., :3]
+        else:
+            raise RuntimeError(f"Unsupported OpenXR runtime eye shape for D3D11: {tuple(tensor.shape)}")
+        if tensor.is_floating_point():
+            max_value = float(tensor.detach().amax().item()) if tensor.numel() else 0.0
+            if max_value <= 1.0:
+                tensor = tensor * 255.0
+        tensor = tensor.contiguous().clamp(0, 255).to(torch_module.uint8)
+        h, w = tensor.shape[:2]
+        rgba = torch_module.empty((h, w, 4), device=tensor.device, dtype=torch_module.uint8)
+        rgba[..., :3] = tensor
+        rgba[..., 3] = 255
+        return rgba
+
+    def _update_runtime_eyes_cuda(self, torch_module, left, right):
+        if not (
+            hasattr(left, "is_cuda") and left.is_cuda and
+            hasattr(right, "is_cuda") and right.is_cuda
+        ):
+            return False
+        left_rgba = self._runtime_eye_tensor_rgba(torch_module, left)
+        right_rgba = self._runtime_eye_tensor_rgba(torch_module, right)
+        if left_rgba.shape[:2] != right_rgba.shape[:2]:
+            raise RuntimeError(f"Runtime eye size mismatch for D3D11: left={tuple(left_rgba.shape)} right={tuple(right_rgba.shape)}")
+        h, w = left_rgba.shape[:2]
+        device = left_rgba.device
+        device_id = 0 if device.index is None else int(device.index)
+        if right_rgba.device != device:
+            right_rgba = right_rgba.to(device, non_blocking=True)
+        self._ensure_runtime_eye_textures(w, h)
+        self._ensure_runtime_eye_cuda_resources(torch_module, device_id)
+        stream = torch_module.cuda.current_stream(device_id)
+        stream_ptr = stream.cuda_stream
+        self.cuda.copy_tensor_to_texture(self.runtime_eye_cuda[0], left_rgba.data_ptr(), w * 4, w * 4, h, stream_ptr)
+        self.cuda.copy_tensor_to_texture(self.runtime_eye_cuda[1], right_rgba.data_ptr(), w * 4, w * 4, h, stream_ptr)
+        stream.synchronize()
+        if not self.runtime_eye_cuda_logged:
+            print("[OpenXRViewer] D3D11 runtime eye CUDA upload active (device-to-D3D11 texture)")
+            self.runtime_eye_cuda_logged = True
+        self.has_frame = True
+        return w, h
+
+    def update_runtime_eyes(self, left, right):
+        try:
+            import torch
+        except Exception:
+            torch = None
+        if torch is None:
+            return False
+        if self.cuda_failed:
+            return False
+        try:
+            result = self._update_runtime_eyes_cuda(torch, left, right)
+            if result:
+                return result
+        except Exception as e:
+            self.cuda_failed = True
+            if self.cuda is not None:
+                try:
+                    self.cuda.clear_last_error()
+                except Exception:
+                    pass
+            try:
+                self._release_runtime_eye_textures()
+            except Exception:
+                pass
+            print(f"[OpenXRViewer] D3D11 runtime eye CUDA upload unavailable: {e}")
+        return False
+
     def _update_frame_cuda(self, torch_module, rgb, depth):
         if not (
             hasattr(rgb, "is_cuda") and rgb.is_cuda and
@@ -829,6 +946,22 @@ class D3D11NativeRenderer:
             print(f"[OpenXRViewer] D3D11 world MVP debug failed: {e}")
 
     def render_eye(self, swapchain_texture, width, height, eye_index, ipd, depth_strength, convergence, mvp):
+        return self._render_eye_with_srv(
+            swapchain_texture, width, height, eye_index,
+            self.color_srv, ipd, depth_strength, convergence, mvp,
+            depth_srv=self.depth_srv,
+        )
+
+    def render_runtime_eye(self, swapchain_texture, width, height, eye_index, mvp):
+        if self.runtime_eye_size is None or not self.runtime_eye_srv[eye_index]:
+            raise RuntimeError("D3D11 runtime eye textures are not ready")
+        return self._render_eye_with_srv(
+            swapchain_texture, width, height, eye_index,
+            self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp,
+            depth_srv=None,
+        )
+
+    def _render_eye_with_srv(self, swapchain_texture, width, height, eye_index, color_srv, ipd, depth_strength, convergence, mvp, *, depth_srv=None):
         rtv = self._get_or_create_swapchain_rtv(swapchain_texture)
         try:
             clear = self._context_call(50, None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_float))
@@ -862,7 +995,7 @@ class D3D11NativeRenderer:
             self._context_call(7, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
             self._context_call(16, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
 
-            srv_arr = (ctypes.c_void_p * 2)(_ptr_value(self.color_srv), _ptr_value(self.depth_srv))
+            srv_arr = (ctypes.c_void_p * 2)(_ptr_value(color_srv), _ptr_value(depth_srv or color_srv))
             self._context_call(8, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 2, srv_arr)
             sampler_arr = (ctypes.c_void_p * 1)(_ptr_value(self.sampler))
             self._context_call(10, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, sampler_arr)
@@ -887,6 +1020,7 @@ class D3D11NativeRenderer:
             _release(rtv)
         self.swapchain_rtvs.clear()
         self._release_frame_textures()
+        self._release_runtime_eye_textures()
         for attr in (
             "sampler", "pixel_shader", "vertex_shader", "input_layout",
             "rasterizer", "constant_buffer", "vertex_buffer", "render_rtv", "render_tex",

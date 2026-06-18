@@ -69,6 +69,10 @@ if "NVIDIA" in DEVICE_INFO:
                 ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint, ctypes.c_uint
             ]
             self.lib.cudaGraphicsGLRegisterBuffer.restype = ctypes.c_int
+            self.lib.cudaGraphicsGLRegisterImage.argtypes = [
+                ctypes.POINTER(ctypes.c_void_p), ctypes.c_uint, ctypes.c_uint, ctypes.c_uint
+            ]
+            self.lib.cudaGraphicsGLRegisterImage.restype = ctypes.c_int
             self.lib.cudaGraphicsUnregisterResource.argtypes = [ctypes.c_void_p]
             self.lib.cudaGraphicsUnregisterResource.restype = ctypes.c_int
             self.lib.cudaGraphicsMapResources.argtypes = [
@@ -83,10 +87,19 @@ if "NVIDIA" in DEVICE_INFO:
                 ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_size_t), ctypes.c_void_p
             ]
             self.lib.cudaGraphicsResourceGetMappedPointer.restype = ctypes.c_int
+            self.lib.cudaGraphicsSubResourceGetMappedArray.argtypes = [
+                ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint
+            ]
+            self.lib.cudaGraphicsSubResourceGetMappedArray.restype = ctypes.c_int
             self.lib.cudaMemcpy.argtypes = [
                 ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int
             ]
             self.lib.cudaMemcpy.restype = ctypes.c_int
+            self.lib.cudaMemcpy2DToArray.argtypes = [
+                ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t,
+                ctypes.c_void_p, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_size_t, ctypes.c_int
+            ]
+            self.lib.cudaMemcpy2DToArray.restype = ctypes.c_int
             # Async variant (used with the PyTorch stream to avoid a full device sync)
             self.lib.cudaMemcpyAsync.argtypes = [
                 ctypes.c_void_p, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_int, ctypes.c_void_p
@@ -106,6 +119,16 @@ if "NVIDIA" in DEVICE_INFO:
                 raise RuntimeError(f"cudaGraphicsGLRegisterBuffer failed: {res}")
             return resource
 
+        def register_image(self, texture_id, target):
+            resource = ctypes.c_void_p()
+            res = self.lib.cudaGraphicsGLRegisterImage(
+                ctypes.byref(resource), texture_id, target,
+                self.CUDA_GRAPHICS_REGISTER_FLAGS_WRITE_DISCARD
+            )
+            if res != 0:
+                raise RuntimeError(f"cudaGraphicsGLRegisterImage failed: {res}")
+            return resource
+
         def unregister_resource(self, resource):
             self.lib.cudaGraphicsUnregisterResource(resource)
 
@@ -122,6 +145,15 @@ if "NVIDIA" in DEVICE_INFO:
                 raise RuntimeError(f"cudaGraphicsResourceGetMappedPointer failed: {res}")
             return ptr.value
 
+        def mapped_array(self, resource, array_index=0, mip_level=0):
+            array = ctypes.c_void_p()
+            res = self.lib.cudaGraphicsSubResourceGetMappedArray(
+                ctypes.byref(array), resource, array_index, mip_level
+            )
+            if res != 0:
+                raise RuntimeError(f"cudaGraphicsSubResourceGetMappedArray failed: {res}")
+            return array.value
+
         def unmap_resource(self, resource, stream=None):
             stream_ptr = ctypes.c_void_p(stream) if stream else None
             self.lib.cudaGraphicsUnmapResources(1, ctypes.byref(resource), stream_ptr)
@@ -137,6 +169,14 @@ if "NVIDIA" in DEVICE_INFO:
             res = self.lib.cudaMemcpy(dst_ptr, src_ptr, size, self.CUDA_MEMCPY_HOST_TO_DEVICE)
             if res != 0:
                 raise RuntimeError(f"cudaMemcpy (H2D) failed: {res}")
+
+        def memcpy_2d_to_array(self, dst_array, src_ptr, src_pitch, width_bytes, height):
+            res = self.lib.cudaMemcpy2DToArray(
+                dst_array, 0, 0, src_ptr, src_pitch, width_bytes, height,
+                self.CUDA_MEMCPY_DEVICE_TO_DEVICE
+            )
+            if res != 0:
+                raise RuntimeError(f"cudaMemcpy2DToArray failed: {res}")
 
 
 elif "AMD" in DEVICE_INFO:

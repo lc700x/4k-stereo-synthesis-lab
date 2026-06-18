@@ -10,7 +10,7 @@ import os
 from collections import deque
 
 from utils import OS_NAME, OUTPUT_RESOLUTION, DISPLAY_MODE, CAPTURE_MODE, CAPTURE_TOOL, MONITOR_INDEX, SHOW_FPS, FPS, WINDOW_TITLE, IPD, DEPTH_STRENGTH, CONVERGENCE, RUN_MODE, STREAM_MODE, STREAM_PORT, STREAM_QUALITY, STEREOMIX_DEVICE, STREAM_KEY, AUDIO_DELAY, CRF, LOSSLESS_SCALING_SUPPORT, USE_3D_MONITOR, FILL_16_9, LOCAL_VSYNC, UPSCALER, UPSCALER_SHARPNESS, FIX_VIEWER_ASPECT, CAPTURE_MODE, STEREO_DISPLAY_SELECTION, STEREO_DISPLAY_INDEX, shutdown_event, DEVICE_ID, DEVICE_INFO, DEVICE, CONTROLLER_MODEL, ENVIRONMENT_MODEL, XR_PREVIEW_WINDOW, CACHE_PATH, settings
-from capture import CaptureConfig, capture_frame_to_rgb, create_capture_runner, prepare_rgb_for_depth_runtime
+from capture import CaptureConfig, capture_frame_to_rgb, create_capture_runner, prepare_rgb_for_stereo_runtime
 from stereo_runtime import OpenXRRenderConfig, StereoRuntime, runtime_config_from_d2s_settings
 
 if "CUDA" in DEVICE_INFO and "ZLUDA" not in DEVICE_INFO:
@@ -32,7 +32,7 @@ TIME_SLEEP = 1.0 / FPS
 
 # Queues with size=1 (latest-frame-only logic)
 raw_q = queue.Queue(maxsize=1)
-depth_q = queue.Queue(maxsize=1)
+runtime_q = queue.Queue(maxsize=1)
 stereo_runtime = StereoRuntime(
     runtime_config_from_d2s_settings(
         settings,
@@ -52,6 +52,9 @@ openxr_runtime_config_state = {
     "convergence": float(CONVERGENCE),
     "screen_roll": 0.0,
 }
+OPENXR_RUNTIME_DIRECT = str(
+    os.environ.get("D2S_OPENXR_RUNTIME_DIRECT", "1") or "1"
+).strip().lower() not in ("0", "false", "no", "off")
 _openxr_source_pause_notice_lock = threading.Lock()
 _openxr_source_pause_noticed = None
 _openxr_wait_idle_notice_lock = threading.Lock()
@@ -66,15 +69,15 @@ _source_stats = {
     "raw_put": 0,
     "raw_get": 0,
     "raw_queue_empty": 0,
-    "depth_frames": 0,
-    "depth_none": 0,
-    "depth_errors": 0,
-    "depth_dropped_paused": 0,
+    "runtime_frames": 0,
+    "runtime_none": 0,
+    "runtime_errors": 0,
+    "runtime_dropped_paused": 0,
     "last_capture_ts": 0.0,
     "last_raw_get_ts": 0.0,
-    "last_depth_ts": 0.0,
+    "last_runtime_ts": 0.0,
     "last_process_latency": 0.0,
-    "last_depth_latency": 0.0,
+    "last_runtime_latency": 0.0,
     "last_error": "",
 }
 _last_source_health_log = 0.0
@@ -88,7 +91,7 @@ _breakdown_lock = threading.Lock()
 _breakdown_stats = {
     "capture": 0,
     "raw_get": 0,
-    "depth": 0,
+    "runtime": 0,
     "viewer_get": 0,
     "loops": 0,
     "update_ms": 0.0,
@@ -143,7 +146,7 @@ def _log_fps_breakdown(now=None):
         "[FPSBreakdown] "
         f"target={FPS}Hz "
         f"cap={rate('capture'):.1f} raw={rate('raw_get'):.1f} "
-        f"depth={rate('depth'):.1f} viewer_get={rate('viewer_get'):.1f} "
+        f"runtime={rate('runtime'):.1f} viewer_get={rate('viewer_get'):.1f} "
         f"loop={rate('loops'):.1f} "
         f"update={avg_ms('update'):.2f}ms "
         f"render={avg_ms('render'):.2f}ms "
@@ -192,20 +195,20 @@ def _log_source_health(now=None, force=False):
         stats = dict(_source_stats)
 
     last_capture = stats.get("last_capture_ts", 0.0)
-    last_depth = stats.get("last_depth_ts", 0.0)
+    last_runtime = stats.get("last_runtime_ts", 0.0)
     raw_age = now - last_capture if last_capture > 0.0 else -1.0
-    depth_age = now - last_depth if last_depth > 0.0 else -1.0
+    runtime_age = now - last_runtime if last_runtime > 0.0 else -1.0
     last_error = stats.get("last_error") or "none"
     print(
         "[Main] Source health: "
         f"cap={stats.get('capture_frames', 0)} raw_put={stats.get('raw_put', 0)} "
-        f"raw_get={stats.get('raw_get', 0)} depth={stats.get('depth_frames', 0)} "
-        f"empty={stats.get('raw_queue_empty', 0)} none={stats.get('depth_none', 0)} "
-        f"cap_err={stats.get('capture_errors', 0)} depth_err={stats.get('depth_errors', 0)} "
-        f"raw_age={_format_age(raw_age)} depth_age={_format_age(depth_age)} "
-        f"raw_q={_safe_qsize(raw_q)} depth_q={_safe_qsize(depth_q)} "
+        f"raw_get={stats.get('raw_get', 0)} runtime={stats.get('runtime_frames', 0)} "
+        f"empty={stats.get('raw_queue_empty', 0)} none={stats.get('runtime_none', 0)} "
+        f"cap_err={stats.get('capture_errors', 0)} runtime_err={stats.get('runtime_errors', 0)} "
+        f"raw_age={_format_age(raw_age)} runtime_age={_format_age(runtime_age)} "
+        f"raw_q={_safe_qsize(raw_q)} runtime_q={_safe_qsize(runtime_q)} "
         f"resize_ms={stats.get('last_process_latency', 0.0) * 1000.0:.1f} "
-        f"depth_ms={stats.get('last_depth_latency', 0.0) * 1000.0:.1f} "
+        f"runtime_ms={stats.get('last_runtime_latency', 0.0) * 1000.0:.1f} "
         f"source={openxr_source_active.is_set()} render={openxr_render_active.is_set()} "
         f"idle={openxr_wait_idle_active.is_set()} err={last_error}",
         flush=True,
@@ -251,7 +254,7 @@ def _openxr_hard_idle_active():
             _openxr_wait_idle_noticed = idle
             if idle:
                 _queue_clear_nonblocking(raw_q)
-                _queue_clear_nonblocking(depth_q)
+                _queue_clear_nonblocking(runtime_q)
                 _stop_active_capture_session()
                 print("[Main] OpenXR hard idle entered")
             else:
@@ -338,7 +341,7 @@ def _runtime_output_to_numpy(frame):
 thread_latencies = {
     'capture': 0.0,
     'resize': 0.0,
-    'depth': 0.0,
+    'runtime': 0.0,
     'render': 0.0,
     'total': 0.0
 }
@@ -403,8 +406,8 @@ def capture_loop():
         on_tick=_log_source_health,
     )
 
-# Combined processing + depth thread (replaces process_loop and depth_loop)
-def process_depth_loop():
+# Combined capture-to-runtime processing thread (replaces process_loop and runtime_loop)
+def process_runtime_loop():
     target_time = time.perf_counter()
     while not shutdown_event.is_set():
         _log_source_health()
@@ -414,13 +417,13 @@ def process_depth_loop():
                 break
             if _openxr_hard_idle_active():
                 _queue_clear_nonblocking(raw_q)
-                _queue_clear_nonblocking(depth_q)
+                _queue_clear_nonblocking(runtime_q)
                 time.sleep(0.1)
                 continue
             if _openxr_source_paused():
                 _queue_clear_nonblocking(raw_q)
-                _queue_clear_nonblocking(depth_q)
-                _source_stat_inc("depth_dropped_paused")
+                _queue_clear_nonblocking(runtime_q)
+                _source_stat_inc("runtime_dropped_paused")
                 sleep = target_time - time.perf_counter()
                 if sleep > 0:
                     time.sleep(min(sleep, 0.05))
@@ -432,7 +435,7 @@ def process_depth_loop():
             _breakdown_inc("raw_get")
 
             if _openxr_source_paused():
-                _source_stat_inc("depth_dropped_paused")
+                _source_stat_inc("runtime_dropped_paused")
                 sleep = target_time - time.perf_counter()
                 if sleep > 0:
                     time.sleep(min(sleep, 0.05))
@@ -452,17 +455,17 @@ def process_depth_loop():
 
             if _openxr_source_paused():
                 _queue_clear_nonblocking(raw_q)
-                _queue_clear_nonblocking(depth_q)
-                _source_stat_inc("depth_dropped_paused")
+                _queue_clear_nonblocking(runtime_q)
+                _source_stat_inc("runtime_dropped_paused")
                 sleep = target_time - time.perf_counter()
                 if sleep > 0:
                     time.sleep(min(sleep, 0.05))
                 continue
             
             # Runtime inference + stereo synthesis
-            depth_start_time = time.perf_counter()
-            runtime_rgb = prepare_rgb_for_depth_runtime(frame_rgb, device=DEVICE)
-            if RUN_MODE == "OpenXR":
+            runtime_start_time = time.perf_counter()
+            runtime_rgb = prepare_rgb_for_stereo_runtime(frame_rgb, device=DEVICE)
+            if RUN_MODE == "OpenXR" and OPENXR_RUNTIME_DIRECT:
                 runtime_result = stereo_runtime.process_openxr_frame(
                     runtime_rgb,
                     _current_openxr_render_config(),
@@ -470,25 +473,31 @@ def process_depth_loop():
             else:
                 runtime_result = stereo_runtime.process_rgb_frame(runtime_rgb)
             if runtime_result.depth is None:
-                _queue_clear_nonblocking(depth_q)
-                _source_stat_inc("depth_none")
+                _queue_clear_nonblocking(runtime_q)
+                _source_stat_inc("runtime_none")
                 sleep = target_time - time.perf_counter()
                 if sleep > 0:
                     time.sleep(min(sleep, 0.05))
                 continue
-            depth_latency = time.perf_counter() - depth_start_time
+            runtime_latency = time.perf_counter() - runtime_start_time
             thread_latencies['resize'] = process_latency   # resize latency
-            thread_latencies['depth'] = depth_latency      # depth latency
+            thread_latencies['runtime'] = runtime_latency    # runtime latency
             
             # Send to render queue
-            _queue_put_latest(depth_q, (runtime_result, capture_start_time))
+            if RUN_MODE == "OpenXR" and not OPENXR_RUNTIME_DIRECT:
+                fallback_depth = runtime_result.depth
+                if hasattr(fallback_depth, "detach") and fallback_depth.ndim == 4:
+                    fallback_depth = fallback_depth[0, 0]
+                _queue_put_latest(runtime_q, ((frame_rgb, fallback_depth), capture_start_time))
+            else:
+                _queue_put_latest(runtime_q, (runtime_result, capture_start_time))
             _source_stat_inc(
-                "depth_frames",
-                last_depth_ts=time.perf_counter(),
+                "runtime_frames",
+                last_runtime_ts=time.perf_counter(),
                 last_process_latency=process_latency,
-                last_depth_latency=depth_latency,
+                last_runtime_latency=runtime_latency,
             )
-            _breakdown_inc("depth")
+            _breakdown_inc("runtime")
 
             sleep = target_time - time.perf_counter()
             if sleep > 0:
@@ -499,10 +508,10 @@ def process_depth_loop():
             continue
         except Exception as e:
             _source_stat_inc(
-                "depth_errors",
-                last_error=f"process_depth_loop {type(e).__name__}: {e}",
+                "runtime_errors",
+                last_error=f"process_runtime_loop {type(e).__name__}: {e}",
             )
-            print(f"[process_depth_loop] Error: {type(e).__name__}: {e}", flush=True)
+            print(f"[process_runtime_loop] Error: {type(e).__name__}: {e}", flush=True)
             time.sleep(0.05)
             continue
 
@@ -545,7 +554,7 @@ def cleanup_all_resources():
         print(f"[Cleanup] Error stopping streamer: {e}")
     
     # Clear all queues to unblock threads
-    queues = [raw_q, depth_q]
+    queues = [raw_q, runtime_q]
     
     for q in queues:
         while not q.empty():
@@ -788,7 +797,7 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
             # Alternatively: full window including borders/title bar
             # window_left, window_top, window_right, window_bottom = win32gui.GetWindowRect(hwnd)
 
-            print(f"✅ Stereo Viewer window found on monitor {monitor_idx}")
+            print(f"[OK]Stereo Viewer window found on monitor {monitor_idx}")
             print(f"Monitor bounds: X={monitor['left']} Y={monitor['top']} W={monitor['width']} H={monitor['height']}")
             print(f"Window client area: X={window_left} Y={window_top} -> {window_right}x{window_bottom}")
 
@@ -1249,7 +1258,7 @@ def main(mode="Viewer"):
     # Start capture and processing threads
     threading.Thread(target=capture_loop, daemon=True).start()
     # Replace separate process_loop and depth_loop with combined thread
-    threading.Thread(target=process_depth_loop, daemon=True).start()
+    threading.Thread(target=process_runtime_loop, daemon=True).start()
     
     # FPS tracking variables
     frame_count = 0
@@ -1280,7 +1289,7 @@ def main(mode="Viewer"):
         if mode == "Viewer":
             from viewer.viewer import StereoWindow
             # Get initial frame to determine window size (block until first frame arrives)
-            runtime_result, capture_start_time = depth_q.get()
+            runtime_result, capture_start_time = runtime_q.get()
             import torch
             output_frame = runtime_result.sbs
             if isinstance(output_frame, torch.Tensor):
@@ -1354,7 +1363,7 @@ def main(mode="Viewer"):
 
                 try:
                     # Get next frame (already processed + depth)
-                    runtime_result, capture_start_time = depth_q.get(timeout=0.001)
+                    runtime_result, capture_start_time = runtime_q.get(timeout=0.001)
                     _breakdown_inc("viewer_get")
                     
                     # Calculate total latency for this frame
@@ -1416,7 +1425,7 @@ def main(mode="Viewer"):
                                 f"Avg Latency: {avg_total_latency*1000:.0f}ms "
                                 f"(Capture:{thread_latencies['capture']*1000:.0f}ms "
                                 f"Resize:{thread_latencies['resize']*1000:.0f}ms "
-                                f"Depth:{thread_latencies['depth']*1000:.0f}ms "
+                                f"Runtime:{thread_latencies['runtime']*1000:.0f}ms "
                                 f"Render:{render_latency*1000:.0f}ms)"
                             )
                         else:
@@ -1481,8 +1490,8 @@ def main(mode="Viewer"):
             else:
                 from viewer.xrviewer_base import OpenXRViewer, OPENXR_AVAILABLE
             if not OPENXR_AVAILABLE:
-                raise ImportError("pyopenxr not installed — run: pip install pyopenxr")
-            runtime_result, capture_start_time = depth_q.get()
+                raise ImportError("pyopenxr not installed -run: pip install pyopenxr")
+            runtime_result, capture_start_time = runtime_q.get()
             import torch
             first_eye = runtime_result.left_eye
             if isinstance(first_eye, torch.Tensor):
@@ -1499,7 +1508,7 @@ def main(mode="Viewer"):
                     convergence=CONVERGENCE,
                     frame_size=(w, h),
                     fps=FPS,
-                    depth_q=depth_q,
+                    depth_q=runtime_q,
                     show_fps=SHOW_FPS,
                     controller_model=CONTROLLER_MODEL,
                     environment_model=ENVIRONMENT_MODEL,
@@ -1538,7 +1547,7 @@ def main(mode="Viewer"):
             while not shutdown_event.is_set():
                 try:
                     # Fix for unstable dml runtime error
-                    runtime_result, _ = depth_q.get(timeout=TIME_SLEEP)
+                    runtime_result, _ = runtime_q.get(timeout=TIME_SLEEP)
                     streamer.set_frame(_runtime_output_to_numpy(runtime_result.sbs))
                     
                     # Calculate FPS

@@ -5,9 +5,9 @@ import numpy as np
 
 def capture_frame_to_rgb(frame_raw, target_height, *, device=None, use_torch=None, output="auto"):
     """
-    Convert a raw capture frame to the RGB frame consumed by depth inference.
+    Convert a raw capture frame to the RGB frame consumed by stereo_runtime.
 
-    This keeps capture-side responsibilities out of depth/runtime code:
+    This keeps capture-side responsibilities out of stereo runtime code:
     raw BGRA/BGR frame -> RGB frame, plus the existing processing-resolution
     resize used by the Desktop2Stereo pipeline.
     """
@@ -18,8 +18,8 @@ def capture_frame_to_rgb(frame_raw, target_height, *, device=None, use_torch=Non
     return _capture_frame_to_rgb_numpy(frame_raw, target_height)
 
 
-def prepare_rgb_for_depth_runtime(frame_rgb, *, device=None):
-    """Prepare capture-owned RGB frame for stereo_runtime's strict depth input contract."""
+def prepare_rgb_for_stereo_runtime(frame_rgb, *, device=None):
+    """Prepare capture-owned RGB frame for stereo_runtime's strict RGB input contract."""
     import torch
 
     if device is None:
@@ -39,7 +39,7 @@ def prepare_rgb_for_depth_runtime(frame_rgb, *, device=None):
     elif frame_rgb.ndim == 4 and frame_rgb.shape[1] == 3:
         tensor = frame_rgb
     else:
-        raise ValueError(f"frame_rgb must be RGB CHW/BCHW for depth runtime, got shape {tuple(frame_rgb.shape)}")
+        raise ValueError(f"frame_rgb must be RGB CHW/BCHW for stereo_runtime, got shape {tuple(frame_rgb.shape)}")
 
     tensor = tensor.to(device=device, dtype=torch.float32)
     if tensor.numel() > 0 and float(tensor.detach().amax().cpu()) > 1.5:
@@ -107,3 +107,7 @@ def _capture_frame_to_rgb_numpy(frame_raw, target_height):
 
     interpolation = cv2.INTER_AREA if new_height < h0 else cv2.INTER_CUBIC
     return cv2.resize(frame_rgb, (new_width, new_height), interpolation=interpolation)
+
+def prepare_rgb_for_depth_runtime(frame_rgb, *, device=None):
+    """Compatibility alias for older host code."""
+    return prepare_rgb_for_stereo_runtime(frame_rgb, device=device)

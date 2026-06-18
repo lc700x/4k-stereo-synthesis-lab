@@ -2472,6 +2472,22 @@ class OpenXRViewerCore:
         self._runtime_eye_textures = [None, None]
         self._runtime_depth_texture = None
         self._runtime_eye_texture_size = None
+        self._runtime_direct_enabled = str(
+            kwargs.get('openxr_runtime_direct', os.environ.get('D2S_OPENXR_RUNTIME_DIRECT', '1')) or '1'
+        ).strip().lower() not in ('0', 'false', 'no', 'off')
+        self._runtime_eye_gpu_enabled = str(
+            kwargs.get('openxr_runtime_eye_gpu_upload', os.environ.get('D2S_OPENXR_RUNTIME_EYE_GPU_UPLOAD', '1')) or '1'
+        ).strip().lower() not in ('0', 'false', 'no', 'off')
+        self._runtime_eye_gpu_logged = False
+        self._runtime_eye_texture_logged = False
+        self._runtime_eye_cpu_logged = False
+        self._runtime_eye_gpu_disabled_reason = None
+        self._runtime_eye_texture_resources = [None, None]
+        self._runtime_eye_texture_resource_size = None
+        self._runtime_eye_pbos = [None, None]
+        self._runtime_eye_cuda_resources = [None, None]
+        self._runtime_eye_pbo_size = None
+        self._runtime_eye_pbo_nbytes = 0
 
         self._screen_grab_local_l = None
         self._screen_grab_local_r = None
@@ -3730,6 +3746,7 @@ class OpenXRViewerCore:
             pass
 
     def _release_idle_gpu_resources(self):
+        self._release_runtime_eye_pbos()
         if self._pbo_color is not None and self._cuda_gl:
             try:
                 self._cuda_gl.unregister_resource(self._cuda_res_color)
@@ -5374,6 +5391,7 @@ class OpenXRViewerCore:
         return arr.astype(np.uint8, copy=False)
 
     def _release_runtime_eye_textures(self):
+        self._release_runtime_eye_texture_resources()
         for idx, tex in enumerate(self._runtime_eye_textures):
             if tex is not None:
                 try:
@@ -5388,6 +5406,78 @@ class OpenXRViewerCore:
                 pass
             self._runtime_depth_texture = None
         self._runtime_eye_texture_size = None
+
+    def _release_runtime_eye_texture_resources(self):
+        if any(self._runtime_eye_texture_resources) and self._cuda_gl:
+            for resource in self._runtime_eye_texture_resources:
+                if resource is None:
+                    continue
+                try:
+                    self._cuda_gl.unregister_resource(resource)
+                except Exception:
+                    pass
+        self._runtime_eye_texture_resources = [None, None]
+        self._runtime_eye_texture_resource_size = None
+
+    def _ensure_runtime_eye_texture_resources(self, w, h):
+        if not self._cuda_gl or BACKEND != "CUDA":
+            return False
+        if not hasattr(self._cuda_gl, "register_image"):
+            return False
+        if self._runtime_eye_texture_resource_size == (w, h) and all(self._runtime_eye_texture_resources):
+            return True
+        self._release_runtime_eye_texture_resources()
+        self._runtime_eye_texture_resources = [
+            self._cuda_gl.register_image(self._runtime_eye_textures[0].glo, GL_TEXTURE_2D),
+            self._cuda_gl.register_image(self._runtime_eye_textures[1].glo, GL_TEXTURE_2D),
+        ]
+        self._runtime_eye_texture_resource_size = (w, h)
+        if self._openxr_debug:
+            print(f"[OpenXRViewer] runtime eye CUDA/GL texture resources registered {w}x{h}")
+        return True
+
+    def _release_runtime_eye_pbos(self):
+        if any(self._runtime_eye_cuda_resources) and self._cuda_gl:
+            for resource in self._runtime_eye_cuda_resources:
+                if resource is None:
+                    continue
+                try:
+                    self._cuda_gl.unregister_resource(resource)
+                except Exception:
+                    pass
+        ids = [int(pbo) for pbo in self._runtime_eye_pbos if pbo is not None]
+        if ids:
+            try:
+                glDeleteBuffers(len(ids), ids)
+            except Exception:
+                pass
+        self._runtime_eye_pbos = [None, None]
+        self._runtime_eye_cuda_resources = [None, None]
+        self._runtime_eye_pbo_size = None
+        self._runtime_eye_pbo_nbytes = 0
+
+    def _ensure_runtime_eye_pbos(self, w, h):
+        if not self._cuda_gl or BACKEND not in ("CUDA", "HIP"):
+            return False
+        nbytes = int(w) * int(h) * 3
+        if self._runtime_eye_pbo_size == (w, h) and all(self._runtime_eye_pbos):
+            return True
+        self._release_runtime_eye_pbos()
+        ids = glGenBuffers(2)
+        self._runtime_eye_pbos = [int(ids[0]), int(ids[1])]
+        for pbo_id in self._runtime_eye_pbos:
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_id)
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, nbytes, None, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+        self._runtime_eye_cuda_resources = [
+            self._cuda_gl.register_buffer(self._runtime_eye_pbos[0]),
+            self._cuda_gl.register_buffer(self._runtime_eye_pbos[1]),
+        ]
+        self._runtime_eye_pbo_size = (w, h)
+        self._runtime_eye_pbo_nbytes = nbytes
+        if self._openxr_debug:
+            print(f"[OpenXRViewer] runtime eye GPU PBOs created ({BACKEND}) {w}x{h}")
+        return True
 
     def _ensure_runtime_eye_textures(self, w, h):
         if (
@@ -5406,15 +5496,153 @@ class OpenXRViewerCore:
         self._runtime_depth_texture.write(np.zeros((h, w), dtype=np.float32).tobytes())
         self._runtime_eye_texture_size = (w, h)
 
+    def _runtime_eye_tensor_hwc_u8(self, torch_module, frame):
+        tensor = frame.detach()
+        if tensor.ndim == 4:
+            if tensor.shape[0] != 1:
+                raise RuntimeError(f"Unsupported OpenXR runtime eye batch: {tuple(tensor.shape)}")
+            tensor = tensor[0]
+        if tensor.ndim == 3 and tensor.shape[0] in (3, 4):
+            tensor = tensor[:3].permute(1, 2, 0)
+        elif tensor.ndim == 3 and tensor.shape[-1] >= 3:
+            tensor = tensor[..., :3]
+        else:
+            raise RuntimeError(f"Unsupported OpenXR runtime eye shape: {tuple(tensor.shape)}")
+        if tensor.is_floating_point():
+            max_value = float(tensor.detach().amax().item()) if tensor.numel() else 0.0
+            if max_value <= 1.0:
+                tensor = tensor * 255.0
+        return tensor.contiguous().clamp(0, 255).to(torch_module.uint8)
+
+    def _runtime_eye_shape_hw(self, frame):
+        shape = tuple(frame.shape) if hasattr(frame, 'shape') else tuple(np.asarray(frame).shape)
+        if len(shape) == 4:
+            if shape[0] != 1:
+                raise RuntimeError(f"Unsupported OpenXR runtime eye batch: {shape}")
+            shape = shape[1:]
+        if len(shape) == 3 and shape[0] in (3, 4):
+            return int(shape[1]), int(shape[2])
+        if len(shape) == 3 and shape[-1] >= 3:
+            return int(shape[0]), int(shape[1])
+        raise RuntimeError(f"Unsupported OpenXR runtime eye shape: {shape}")
+
+    def _try_update_runtime_frame_gpu(self, runtime_result, w, h):
+        if not self._runtime_eye_gpu_enabled:
+            return False
+        if self._cuda_gl is False or CUDART_GL is None or BACKEND not in ("CUDA", "HIP"):
+            return False
+        left_src = runtime_result.left_eye
+        right_src = runtime_result.right_eye
+        if not (
+            hasattr(left_src, 'is_cuda') and left_src.is_cuda and
+            hasattr(right_src, 'is_cuda') and right_src.is_cuda
+        ):
+            return False
+        try:
+            import torch
+            if self._cuda_gl is None:
+                self._cuda_gl = CUDART_GL()
+            left = self._runtime_eye_tensor_hwc_u8(torch, left_src)
+            right = self._runtime_eye_tensor_hwc_u8(torch, right_src)
+            if left.shape[:2] != (h, w) or right.shape[:2] != (h, w):
+                raise RuntimeError(f"Runtime eye tensor size changed during upload: left={tuple(left.shape)} right={tuple(right.shape)}")
+            device_index = left.device.index if left.device.index is not None else 0
+            torch.cuda.current_stream(device_index).synchronize()
+            if self._try_update_runtime_frame_texture_gpu((left, right), w, h):
+                return True
+            return self._update_runtime_frame_pbo_gpu((left, right), w, h)
+        except Exception as e:
+            self._runtime_eye_gpu_enabled = False
+            self._runtime_eye_gpu_disabled_reason = str(e)
+            try:
+                self._release_runtime_eye_texture_resources()
+                self._release_runtime_eye_pbos()
+            except Exception:
+                pass
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+            print(f"[OpenXRViewer] runtime OpenGL GPU upload unavailable: {e}; falling back to CPU GL upload")
+            return False
+
+    def _try_update_runtime_frame_texture_gpu(self, eyes, w, h):
+        if BACKEND != "CUDA" or not hasattr(self._cuda_gl, "register_image"):
+            return False
+        try:
+            self._ensure_runtime_eye_texture_resources(w, h)
+            for idx, eye in enumerate(eyes):
+                resource = self._runtime_eye_texture_resources[idx]
+                self._cuda_gl.map_resource(resource)
+                try:
+                    array = self._cuda_gl.mapped_array(resource)
+                    self._cuda_gl.memcpy_2d_to_array(array, eye.data_ptr(), w * 3, w * 3, h)
+                finally:
+                    self._cuda_gl.unmap_resource(resource)
+            if not self._runtime_eye_texture_logged:
+                print(f"[OpenXRViewer] runtime_direct_opengl_texture active (CUDA/GL image) {w}x{h}")
+                self._runtime_eye_texture_logged = True
+            return True
+        except Exception as e:
+            self._release_runtime_eye_texture_resources()
+            self._runtime_eye_gpu_disabled_reason = str(e)
+            print(f"[OpenXRViewer] runtime_direct_opengl_texture unavailable: {e}; trying PBO fallback")
+            return False
+
+    def _update_runtime_frame_pbo_gpu(self, eyes, w, h):
+        self._ensure_runtime_eye_pbos(w, h)
+        for idx, eye in enumerate(eyes):
+            ptr = self._cuda_gl.map_resource(self._runtime_eye_cuda_resources[idx])
+            try:
+                self._cuda_gl.memcpy_d2d(ptr, eye.data_ptr(), eye.nbytes)
+            finally:
+                self._cuda_gl.unmap_resource(self._runtime_eye_cuda_resources[idx])
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._runtime_eye_pbos[idx])
+            glBindTexture(GL_TEXTURE_2D, self._runtime_eye_textures[idx].glo)
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+            glBindTexture(GL_TEXTURE_2D, 0)
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+        if not self._runtime_eye_gpu_logged:
+            print(f"[OpenXRViewer] runtime_direct_opengl_pbo active ({BACKEND}) {w}x{h}")
+            self._runtime_eye_gpu_logged = True
+        return True
+
     def _update_runtime_frame(self, runtime_result):
-        left = self._runtime_eye_to_numpy(runtime_result.left_eye)
-        right = self._runtime_eye_to_numpy(runtime_result.right_eye)
-        if left.shape[:2] != right.shape[:2]:
-            raise RuntimeError(f"OpenXR runtime eye size mismatch: left={left.shape} right={right.shape}")
-        h, w = left.shape[:2]
+        if not self._runtime_direct_enabled:
+            self._runtime_direct_source = False
+            return
+        left_hw = self._runtime_eye_shape_hw(runtime_result.left_eye)
+        right_hw = self._runtime_eye_shape_hw(runtime_result.right_eye)
+        if left_hw != right_hw:
+            raise RuntimeError(f"OpenXR runtime eye size mismatch: left={left_hw} right={right_hw}")
+        h, w = left_hw
+        if self._use_d3d11 and self._d3d11_native_renderer is not None:
+            try:
+                result = self._d3d11_native_renderer.update_runtime_eyes(
+                    runtime_result.left_eye,
+                    runtime_result.right_eye,
+                )
+                if result:
+                    self._runtime_direct_source = True
+                    self._texture_size = (w, h)
+                    self.frame_size = (w, h)
+                    self.screen_height = None
+                    return
+            except Exception as e:
+                print(f"[OpenXRViewer] D3D11 runtime eye upload failed: {e}")
+            try:
+                self._d3d11_native_renderer.cleanup()
+            except Exception:
+                pass
+            self._d3d11_native_renderer = None
+            self._texture_size = None
         self._ensure_runtime_eye_textures(w, h)
-        self._runtime_eye_textures[0].write(np.ascontiguousarray(left[:, :, :3]).tobytes())
-        self._runtime_eye_textures[1].write(np.ascontiguousarray(right[:, :, :3]).tobytes())
+        gpu_uploaded = self._try_update_runtime_frame_gpu(runtime_result, w, h)
+        if not gpu_uploaded:
+            left = self._runtime_eye_to_numpy(runtime_result.left_eye)
+            right = self._runtime_eye_to_numpy(runtime_result.right_eye)
+            self._runtime_eye_textures[0].write(np.ascontiguousarray(left[:, :, :3]).tobytes())
+            self._runtime_eye_textures[1].write(np.ascontiguousarray(right[:, :, :3]).tobytes())
+            if not self._runtime_eye_cpu_logged:
+                print(f"[OpenXRViewer] runtime_direct_cpu_gl active {w}x{h}")
+                self._runtime_eye_cpu_logged = True
         self._runtime_direct_source = True
         self._texture_size = (w, h)
         self.frame_size = (w, h)
@@ -8932,16 +9160,25 @@ class OpenXRViewerCore:
                                 view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
                                 proj_mat = _fov_to_proj_mat4_d3d(view.fov) if view else _default_proj_d3d
                                 mvp = proj_mat @ view_mat @ self._build_model_mat4()
-                                self._d3d11_native_renderer.render_eye(
-                                    sc_image.texture,
-                                    sc_w,
-                                    sc_h,
-                                    eye_index,
-                                    self.ipd_uv,
-                                    self.depth_strength * self.depth_ratio,
-                                    float(self.convergence),
-                                    mvp,
-                                )
+                                if self._runtime_direct_source:
+                                    self._d3d11_native_renderer.render_runtime_eye(
+                                        sc_image.texture,
+                                        sc_w,
+                                        sc_h,
+                                        eye_index,
+                                        mvp,
+                                    )
+                                else:
+                                    self._d3d11_native_renderer.render_eye(
+                                        sc_image.texture,
+                                        sc_w,
+                                        sc_h,
+                                        eye_index,
+                                        self.ipd_uv,
+                                        self.depth_strength * self.depth_ratio,
+                                        float(self.convergence),
+                                        mvp,
+                                    )
                                 xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
                                 released = True
                                 eye_layer_views.append(xr.CompositionLayerProjectionView(
@@ -9261,6 +9498,7 @@ class OpenXRViewerCore:
             except Exception:
                 pass
         self._pbo_color = self._pbo_depth = None
+        self._release_runtime_eye_pbos()
         self._release_runtime_eye_textures()
 
         for tex in (self._overlay_tex, self._brand_osd_tex, self.color_tex, self.depth_tex):

@@ -10,15 +10,15 @@ sys.path.insert(0, str(ROOT / "src"))
 def test_nvidia_provider_compat_imports():
     from stereo_runtime.depth_onnx_provider import DistillAnyDepthBaseOnnxCuda as OldOnnx
     from stereo_runtime.depth_provider import DistillAnyDepthBase518 as OldPyTorch
-    from stereo_runtime.providers.nvidia.onnx_cuda import DistillAnyDepthBaseOnnxCuda
+    from stereo_runtime.providers.nvidia.onnx_cuda import OnnxCudaDepthProvider
     from stereo_runtime.providers.nvidia.pytorch_cuda import DistillAnyDepthBase518
-    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
-    from stereo_runtime.providers.nvidia.tensorrt_ort import DistillAnyDepthBaseTensorRtOrt
+    from stereo_runtime.providers.nvidia.tensorrt_native import NativeTensorRtDepthProvider
+    from stereo_runtime.providers.nvidia.tensorrt_ort import TensorRtOrtDepthProvider
 
     assert DistillAnyDepthBase518 is OldPyTorch
-    assert DistillAnyDepthBaseOnnxCuda is OldOnnx
-    assert DistillAnyDepthBaseNativeTensorRt.__name__ == "DistillAnyDepthBaseNativeTensorRt"
-    assert DistillAnyDepthBaseTensorRtOrt.__name__ == "DistillAnyDepthBaseTensorRtOrt"
+    assert OnnxCudaDepthProvider is OldOnnx
+    assert NativeTensorRtDepthProvider.__name__ == "DistillAnyDepthBaseNativeTensorRt"
+    assert TensorRtOrtDepthProvider.__name__ == "DistillAnyDepthBaseTensorRtOrt"
 
 
 def test_legacy_tensorrt_provider_shims_are_removed():

@@ -332,3 +332,6 @@ class DistillAnyDepthBaseNativeTensorRt:
         sync()
         postprocess_ms = (time.perf_counter() - start) * 1000.0
         return DepthProfileResult(depth, preprocess_ms, model_ms, postprocess_ms)
+
+
+NativeTensorRtDepthProvider = DistillAnyDepthBaseNativeTensorRt

@@ -8,7 +8,6 @@ import sys
 import torch
 
 from ...depth_onnx_provider import (
-    DistillAnyDepthBaseOnnxCuda,
     DistillPreprocessor,
     default_distill_base_onnx_path,
 )
@@ -24,6 +23,7 @@ from ...depth_provider import (
 )
 from ...depth_upsample import DepthUpsampleMode, upsample_depth
 from ...output import ensure_b1hw, ensure_bchw, match_depth
+from .onnx_cuda import OnnxCudaDepthProvider
 
 
 def default_distill_base_trt_cache_dir(cache_dir: str | Path | None = None) -> Path:
@@ -201,6 +201,9 @@ class DistillAnyDepthBaseTensorRtOrt:
         return DepthProfileResult(depth, preprocess_ms, model_ms, postprocess_ms)
 
 
+TensorRtOrtDepthProvider = DistillAnyDepthBaseTensorRtOrt
+
+
 def estimate_distill_any_depth_base_518_nvidia(
     rgb: torch.Tensor,
     *,
@@ -233,7 +236,7 @@ def estimate_distill_any_depth_base_518_nvidia(
 
     if prefer_onnx:
         try:
-            provider = DistillAnyDepthBaseOnnxCuda(
+            provider = OnnxCudaDepthProvider(
                 device=device,
                 cache_dir=cache_dir,
                 onnx_path=onnx_path,

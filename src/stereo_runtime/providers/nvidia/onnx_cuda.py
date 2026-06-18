@@ -1,4 +1,5 @@
 from stereo_runtime.depth_onnx_provider import DistillAnyDepthBaseOnnxCuda
 
-__all__ = ["DistillAnyDepthBaseOnnxCuda"]
+OnnxCudaDepthProvider = DistillAnyDepthBaseOnnxCuda
 
+__all__ = ["OnnxCudaDepthProvider", "DistillAnyDepthBaseOnnxCuda"]

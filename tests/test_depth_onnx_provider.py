@@ -159,7 +159,7 @@ def test_generic_provider_predict_profile_with_fake_transformers_model(monkeypat
 
 
 def test_create_depth_provider_supports_native_tensorrt(tmp_path):
-    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.providers.nvidia.tensorrt_native import NativeTensorRtDepthProvider
 
     engine_path = tmp_path / "model.trt"
     provider = create_depth_provider(
@@ -172,19 +172,19 @@ def test_create_depth_provider_supports_native_tensorrt(tmp_path):
         )
     )
 
-    assert isinstance(provider, DistillAnyDepthBaseNativeTensorRt)
+    assert isinstance(provider, NativeTensorRtDepthProvider)
     assert provider.info.depth_backend == "tensorrt_native"
     assert provider.engine_path == engine_path
     assert provider.build_engine is True
 
 
 def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
-    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.providers.nvidia.tensorrt_native import NativeTensorRtDepthProvider
 
     model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
     onnx_path = model_dir / "model_fp16_294x518.onnx"
     engine_path = model_dir / "model_fp16_294x518.trt"
-    provider = DistillAnyDepthBaseNativeTensorRt(
+    provider = NativeTensorRtDepthProvider(
         device="cuda",
         onnx_path=onnx_path,
         engine_path=engine_path,
@@ -195,10 +195,10 @@ def test_native_tensorrt_infers_large_metadata_from_model_path(tmp_path):
 
 
 def test_native_tensorrt_keeps_explicit_metadata(tmp_path):
-    from stereo_runtime.providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
+    from stereo_runtime.providers.nvidia.tensorrt_native import NativeTensorRtDepthProvider
 
     model_dir = tmp_path / "models--xingyang1--Distill-Any-Depth-Large-hf"
-    provider = DistillAnyDepthBaseNativeTensorRt(
+    provider = NativeTensorRtDepthProvider(
         device="cuda",
         onnx_path=model_dir / "model_fp16_294x518.onnx",
         engine_path=model_dir / "model_fp16_294x518.trt",

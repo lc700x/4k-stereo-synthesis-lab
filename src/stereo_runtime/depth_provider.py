@@ -450,9 +450,9 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
     if backend in {"tensorrt_native", "native_tensorrt", "tensorrt_native_graph"} or (
         backend in {"distill_base_nvidia", "nvidia_chain"} and cfg.prefer_native_tensorrt
     ):
-        from .providers.nvidia.tensorrt_native import DistillAnyDepthBaseNativeTensorRt
+        from .providers.nvidia.tensorrt_native import NativeTensorRtDepthProvider
 
-        return DistillAnyDepthBaseNativeTensorRt(
+        return NativeTensorRtDepthProvider(
             device=device,
             cache_dir=cfg.cache_dir,
             onnx_path=cfg.onnx_path,
@@ -465,9 +465,9 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
         )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
-        from .providers.nvidia.tensorrt_ort import DistillAnyDepthBaseTensorRtOrt
+        from .providers.nvidia.tensorrt_ort import TensorRtOrtDepthProvider
 
-        return DistillAnyDepthBaseTensorRtOrt(
+        return TensorRtOrtDepthProvider(
             device=device,
             cache_dir=cfg.cache_dir,
             onnx_path=cfg.onnx_path,
@@ -477,9 +477,9 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
         )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "onnx_cuda", "onnx_cuda_iobinding"} and cfg.prefer_onnx:
-        from .depth_onnx_provider import DistillAnyDepthBaseOnnxCuda
+        from .providers.nvidia.onnx_cuda import OnnxCudaDepthProvider
 
-        return DistillAnyDepthBaseOnnxCuda(
+        return OnnxCudaDepthProvider(
             device=device,
             cache_dir=cfg.cache_dir,
             onnx_path=cfg.onnx_path,

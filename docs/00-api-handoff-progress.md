@@ -101,6 +101,87 @@ Capture/runtime host integration: runtime-direct GPU paths integrated, real-devi
 
 ## Current Status
 
+
+### 2026-06-19 GUI Runtime Parameter Layout + Streaming Asset Move
+
+This session focused on making the existing Flet host GUI usable with the expanded realtime stereo/runtime parameter set, while keeping the runtime/core API boundary unchanged.
+
+GUI updates in `src/gui.py`:
+
+- Added simplified user-facing stereo controls:
+  - `Depth Quick` fixed presets: Soft / Standard / Enhanced (`柔和` / `标准` / `增强`).
+  - `Stereo Preset` default remains forced to `auto` on every GUI startup and save.
+  - `Stereo Quality` is displayed in Chinese as `立体质量`.
+- Added `Advanced Stereo` folding behavior:
+  - advanced stereo controls are hidden by default,
+  - `Convergence` and numeric `Depth Strength` are advanced-only,
+  - `Convergence` + `Depth Strength` share one advanced row directly below `Stereo Mode` / `Stereo Quality`,
+  - `Depth Resolution` + `Depth Quick` share one basic row,
+  - `Temporal` and `Auto Scene Reset` standalone checkboxes were removed from the GUI; they are now inferred from numeric values:
+    - `Temporal Strength == 0` disables temporal stabilization,
+    - `Temporal Strength > 0` enables temporal stabilization,
+    - `Scene Reset Threshold == 0` disables auto scene reset,
+    - `Scene Reset Threshold > 0` enables auto scene reset.
+- Added `Advanced Device Options` folding behavior:
+  - Chinese label: `高级选项`,
+  - controls visibility for `Capture FPS`, `Local VSync`, `Upscaler`, and `Upscaler Sharpness`,
+  - `Capture FPS` now localizes `Auto` as `自动` in Chinese and still saves as `Target FPS: 0`.
+- Moved acceleration toggles into advanced stereo controls:
+  - `FP16` defaults to unchecked,
+  - `FP16` is not persisted as a long-lived preference; after launch, saved settings are reset to default `False`,
+  - `torch.compile`, `TensorRT`, and `Recompile TensorRT` share one acceleration row.
+- Reworked layout density and automatic sizing:
+  - footer/status spacing was reduced,
+  - window width/height estimation was tuned several times to reduce extra blank space while keeping scroll fallback for expanded advanced sections,
+  - bottom button and refresh button horizontal offsets were manually tuned per user visual checks.
+- Updated room/environment model lookup to use only:
+
+```text
+src/xr_viewer/environments
+```
+
+There is no compatibility fallback to the old `src/environment` path.
+
+Host/streaming asset update:
+
+- The old `src/rtmp/` asset folder was moved to:
+
+```text
+src/streaming/rtmp/
+```
+
+- `src/main.py` now defines:
+
+```python
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RTMP_DIR = os.path.join(BASE_DIR, "streaming", "rtmp")
+```
+
+and RTMP/ffmpeg/mediamtx executable paths now resolve from `RTMP_DIR` instead of hard-coded `./rtmp/...` paths.
+
+- Root `update_windows.bat` was updated to clean platform-specific RTMP folders under `src\streaming\rtmp\...`. Note: in the current worktree this root `update_windows.bat` is untracked because related batch files were previously moved/deleted outside this session.
+
+Current GUI/host verification performed during this session:
+
+```powershell
+.\src\python3\python.exe -B -m py_compile src\gui.py
+.\src\python3\python.exe -B -m py_compile src\main.py src\gui.py
+.\src\python3\python.exe -B -m py_compile src\main.py
+```
+
+Additional checks used repeatedly:
+
+```powershell
+git diff --check -- src/gui.py
+git diff --check -- src/main.py update_windows.bat src/gui.py
+```
+
+Known caveats:
+
+- The GUI layout has been tuned visually through user screenshots, but it has not yet been validated with an automated Flet screenshot regression.
+- The current worktree includes unrelated deleted/moved assets and scripts that were not created by this GUI cleanup. Do not revert them without explicit user approval.
+- `src/settings.yaml` may be modified by local GUI runs and should be reviewed before committing.
+
 ### 2026-06-19 Capture Split + Runtime Output Handoff
 
 Latest pushed commits:

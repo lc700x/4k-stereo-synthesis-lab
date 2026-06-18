@@ -11,7 +11,10 @@ from collections import deque
 
 from utils import OS_NAME, OUTPUT_RESOLUTION, DISPLAY_MODE, CAPTURE_MODE, CAPTURE_TOOL, MONITOR_INDEX, SHOW_FPS, FPS, WINDOW_TITLE, IPD, DEPTH_STRENGTH, CONVERGENCE, RUN_MODE, STREAM_MODE, STREAM_PORT, STREAM_QUALITY, STEREOMIX_DEVICE, STREAM_KEY, AUDIO_DELAY, CRF, LOSSLESS_SCALING_SUPPORT, USE_3D_MONITOR, FILL_16_9, LOCAL_VSYNC, UPSCALER, UPSCALER_SHARPNESS, FIX_VIEWER_ASPECT, CAPTURE_MODE, STEREO_DISPLAY_SELECTION, STEREO_DISPLAY_INDEX, shutdown_event, DEVICE_ID, DEVICE_INFO, DEVICE, CONTROLLER_MODEL, ENVIRONMENT_MODEL, XR_PREVIEW_WINDOW, CACHE_PATH, settings
 from capture import CaptureConfig, capture_frame_to_rgb, create_capture_runner, prepare_rgb_for_stereo_runtime
-from stereo_runtime import OpenXRRenderConfig, StereoRuntime, runtime_config_from_d2s_settings
+from stereo_runtime import AutoModeRuntime, AutoModeSignals, OpenXRRenderConfig, StereoRuntime, runtime_config_from_d2s_settings, stereo_config_for_preset
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+RTMP_DIR = os.path.join(BASE_DIR, "streaming", "rtmp")
 
 if "CUDA" in DEVICE_INFO and "ZLUDA" not in DEVICE_INFO:
     USE_CUDART = True
@@ -33,14 +36,31 @@ TIME_SLEEP = 1.0 / FPS
 # Queues with size=1 (latest-frame-only logic)
 raw_q = queue.Queue(maxsize=1)
 runtime_q = queue.Queue(maxsize=1)
-stereo_runtime = StereoRuntime(
-    runtime_config_from_d2s_settings(
-        settings,
-        cache_dir=CACHE_PATH,
-        device=str(DEVICE),
-        depth_only=False,
-    )
+runtime_config = runtime_config_from_d2s_settings(
+    settings,
+    cache_dir=CACHE_PATH,
+    device=str(DEVICE),
+    depth_only=False,
 )
+stereo_runtime = StereoRuntime(runtime_config)
+stereo_auto_runtime = AutoModeRuntime()
+stereo_auto_enabled = runtime_config.mode == "auto"
+stereo_active_preset = runtime_config.stereo_preset or ("auto" if stereo_auto_enabled else None)
+stereo_last_motion_frame = None
+stereo_still_duration_s = 0.0
+stereo_last_auto_ts = time.perf_counter()
+stereo_signal_lock = threading.Lock()
+stereo_signal_state = {
+    "gpu_3d_util": 0.0,
+    "gpu_video_decode_util": 0.0,
+    "input_activity": 0.0,
+    "idle_seconds": 0.0,
+    "audio_active": False,
+    "maximized": False,
+    "foreground_process": "",
+    "fullscreen": False,
+}
+stereo_signal_thread_started = False
 openxr_render_active = threading.Event()
 openxr_source_active = threading.Event()
 openxr_wait_idle_active = threading.Event()
@@ -302,8 +322,249 @@ def _current_openxr_render_config():
         ipd=state["ipd"],
         depth_strength=0.1 * state["depth_ratio"],
         convergence=state["convergence"],
+        max_shift_ratio=stereo_runtime.stereo_config.max_shift_ratio,
         screen_roll=state["screen_roll"],
     )
+
+
+def _runtime_stereo_overrides():
+    config = stereo_runtime.config
+    return {
+        "depth_strength": config.depth_strength,
+        "convergence": config.convergence,
+        "ipd": config.ipd,
+        "max_shift_ratio": config.max_shift_ratio,
+        "foreground_scale": config.foreground_scale,
+        "depth_antialias_strength": config.depth_antialias_strength,
+        "edge_threshold": config.edge_threshold,
+        "edge_dilation": config.edge_dilation,
+        "screen_edge_mask_suppression": config.screen_edge_mask_suppression,
+        "cross_eyed": config.cross_eyed,
+        "anaglyph_method": config.anaglyph_method,
+        "fused": config.fused,
+    }
+
+
+def _clamp01(value):
+    try:
+        return max(0.0, min(1.0, float(value)))
+    except Exception:
+        return 0.0
+
+
+def _sample_runtime_motion(rgb_frame):
+    global stereo_last_motion_frame
+    try:
+        import torch
+
+        frame = rgb_frame.detach()
+        if frame.ndim == 4:
+            frame = frame[0]
+        if frame.ndim != 3:
+            return 0.0
+        if frame.shape[0] in (3, 4):
+            frame = frame[:3]
+        else:
+            frame = frame[..., :3].permute(2, 0, 1)
+        frame = torch.nn.functional.interpolate(
+            frame.unsqueeze(0).float(),
+            size=(32, 32),
+            mode="bilinear",
+            align_corners=False,
+        )[0]
+        if stereo_last_motion_frame is None:
+            stereo_last_motion_frame = frame.detach()
+            return 0.0
+        motion = float((frame - stereo_last_motion_frame).abs().mean().item())
+        stereo_last_motion_frame = frame.detach()
+        return _clamp01(motion * 4.0)
+    except Exception:
+        return 0.0
+
+
+def _query_process_name(pid):
+    if OS_NAME != "Windows" or not pid:
+        return ""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(pid))
+        if not handle:
+            return ""
+        try:
+            size = wintypes.DWORD(32768)
+            buffer = ctypes.create_unicode_buffer(size.value)
+            if kernel32.QueryFullProcessImageNameW(handle, 0, buffer, ctypes.byref(size)):
+                return os.path.basename(buffer.value)
+        finally:
+            kernel32.CloseHandle(handle)
+    except Exception:
+        return ""
+    return ""
+
+
+def _sample_window_input_context():
+    result = {
+        "input_activity": 0.0,
+        "idle_seconds": 0.0,
+        "maximized": False,
+        "foreground_process": "",
+        "fullscreen": False,
+    }
+    if OS_NAME != "Windows":
+        return result
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class LASTINPUTINFO(ctypes.Structure):
+            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+        info = LASTINPUTINFO()
+        info.cbSize = ctypes.sizeof(info)
+        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+            tick = ctypes.windll.kernel32.GetTickCount()
+            idle_s = max(0.0, float((tick - info.dwTime) & 0xFFFFFFFF) / 1000.0)
+            result["idle_seconds"] = idle_s
+            if idle_s < 0.25:
+                result["input_activity"] = 1.0
+            elif idle_s < 1.0:
+                result["input_activity"] = 0.7
+            elif idle_s < 3.0:
+                result["input_activity"] = 0.35
+
+        try:
+            import win32api
+            import win32gui
+            import win32process
+
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                result["foreground_process"] = _query_process_name(pid)
+                result["maximized"] = bool(win32gui.IsZoomed(hwnd))
+                rect = win32gui.GetWindowRect(hwnd)
+                monitor = win32api.MonitorFromWindow(hwnd, 2)
+                monitor_info = win32api.GetMonitorInfo(monitor)
+                mx1, my1, mx2, my2 = monitor_info.get("Monitor", monitor_info.get("Work"))
+                result["fullscreen"] = (
+                    rect[0] <= mx1 + 2
+                    and rect[1] <= my1 + 2
+                    and rect[2] >= mx2 - 2
+                    and rect[3] >= my2 - 2
+                )
+        except Exception:
+            pass
+    except Exception:
+        pass
+    return result
+
+
+def _sample_gpu_engine_utilization():
+    if OS_NAME != "Windows":
+        return {"gpu_3d_util": 0.0, "gpu_video_decode_util": 0.0}
+    command = (
+        "$samples=(Get-Counter '\\GPU Engine(*)\\Utilization Percentage' -ErrorAction Stop).CounterSamples; "
+        "$samples | Select-Object Path,CookedValue | ConvertTo-Json -Compress"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=3.0,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return {"gpu_3d_util": 0.0, "gpu_video_decode_util": 0.0}
+        import json
+
+        rows = json.loads(proc.stdout)
+        if isinstance(rows, dict):
+            rows = [rows]
+        gpu_3d = 0.0
+        video_decode = 0.0
+        for row in rows:
+            path = str(row.get("Path", "")).lower()
+            value = float(row.get("CookedValue", 0.0)) / 100.0
+            if "engtype_3d" in path:
+                gpu_3d += value
+            elif "engtype_videodecode" in path or "engtype_video decode" in path:
+                video_decode += value
+        return {
+            "gpu_3d_util": _clamp01(gpu_3d),
+            "gpu_video_decode_util": _clamp01(video_decode),
+        }
+    except Exception:
+        return {"gpu_3d_util": 0.0, "gpu_video_decode_util": 0.0}
+
+
+def _auto_signal_sampler_loop():
+    while not shutdown_event.is_set():
+        samples = {}
+        samples.update(_sample_gpu_engine_utilization())
+        samples.update(_sample_window_input_context())
+        process = samples.get("foreground_process", "").lower()
+        samples["audio_active"] = bool(samples.get("gpu_video_decode_util", 0.0) > 0.05 or any(
+            token in process for token in ("vlc", "mpv", "potplayer", "player", "chrome", "edge", "firefox")
+        ))
+        with stereo_signal_lock:
+            stereo_signal_state.update(samples)
+        time.sleep(2.0)
+
+
+def _ensure_auto_signal_sampler():
+    global stereo_signal_thread_started
+    if not stereo_auto_enabled or stereo_signal_thread_started:
+        return
+    stereo_signal_thread_started = True
+    threading.Thread(target=_auto_signal_sampler_loop, daemon=True, name="StereoAutoSignalSampler").start()
+
+
+def _update_auto_stereo_mode(rgb_frame):
+    global stereo_active_preset, stereo_still_duration_s, stereo_last_auto_ts
+    if not stereo_auto_enabled:
+        return
+    now = time.perf_counter()
+    dt_s = max(0.0, now - stereo_last_auto_ts)
+    stereo_last_auto_ts = now
+    motion = _sample_runtime_motion(rgb_frame)
+    stereo_still_duration_s = stereo_still_duration_s + dt_s if motion < 0.03 else 0.0
+    with stereo_signal_lock:
+        samples = dict(stereo_signal_state)
+    decision = stereo_auto_runtime.update(
+        AutoModeSignals(
+            frame_motion_score=motion,
+            still_duration_s=stereo_still_duration_s,
+            gpu_3d_util=samples.get("gpu_3d_util", 0.0),
+            gpu_video_decode_util=samples.get("gpu_video_decode_util", 0.0),
+            input_activity=samples.get("input_activity", 0.0),
+            idle_seconds=samples.get("idle_seconds", 0.0),
+            audio_active=bool(samples.get("audio_active", False)),
+            maximized=bool(samples.get("maximized", False)),
+            foreground_process=str(samples.get("foreground_process", "")),
+            fullscreen=bool(samples.get("fullscreen", False) or RUN_MODE in {"OpenXR", "3D Monitor"}),
+            openxr_active=RUN_MODE == "OpenXR",
+            latency_pressure=1.0 if FPS >= 90 else 0.0,
+            target_fps=float(FPS),
+        ),
+        dt_s=dt_s,
+    )
+    if decision.preset == stereo_active_preset:
+        return
+    stereo_active_preset = decision.preset
+    stereo_runtime.configure_stereo(
+        stereo_config_for_preset(
+            decision.preset,
+            output_format=stereo_runtime.config.output_format,
+            overrides=_runtime_stereo_overrides(),
+        ),
+        reset_temporal=True,
+    )
+    if SOURCE_HEALTH_LOG:
+        print(f"[Main] Auto stereo preset -> {decision.preset}: {decision.reason}", flush=True)
 
 
 def _runtime_output_to_numpy(frame):
@@ -465,6 +726,8 @@ def process_runtime_loop():
             # Runtime inference + stereo synthesis
             runtime_start_time = time.perf_counter()
             runtime_rgb = prepare_rgb_for_stereo_runtime(frame_rgb, device=DEVICE)
+            _ensure_auto_signal_sampler()
+            _update_auto_stereo_mode(runtime_rgb)
             if RUN_MODE == "OpenXR" and OPENXR_RUNTIME_DIRECT:
                 runtime_result = stereo_runtime.process_openxr_frame(
                     runtime_rgb,
@@ -706,10 +969,10 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
         get_rtmp_cmd()
         
     if os_name == "Windows":
-        server_cmd = ['./rtmp/mediamtx/mediamtx.exe', './rtmp/mediamtx/mediamtx.yml']
+        server_cmd = [os.path.join(RTMP_DIR, "mediamtx", "mediamtx.exe"), os.path.join(RTMP_DIR, "mediamtx", "mediamtx.yml")]
         if not LOSSLESS_SCALING_SUPPORT: 
             ffmpeg_cmd = [
-                './rtmp/ffmpeg/bin/ffmpeg.exe',
+                os.path.join(RTMP_DIR, "ffmpeg", "bin", "ffmpeg.exe"),
                 '-fflags', 'nobuffer',
                 '-flags', 'low_delay',
                 '-probesize', '64',
@@ -823,7 +1086,7 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
             gfxcapture_options = f"monitor_idx={monitor_idx}:crop_left={crop_left}:crop_top={crop_top}:crop_right={crop_right}:crop_bottom={crop_bottom}"
 
             ffmpeg_cmd = [
-                './rtmp/ffmpeg/bin/ffmpeg.exe',
+                os.path.join(RTMP_DIR, "ffmpeg", "bin", "ffmpeg.exe"),
                 '-fflags', 'nobuffer',
                 '-flags', 'low_delay',
                 '-probesize', '64',
@@ -877,7 +1140,7 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
             return 0
         import re
         def get_device_index(target_name, device_type="video"):
-            cmd = ["./rtmp/mac/ffmpeg", "-f", "avfoundation", "-list_devices", "true", "-i", ""]
+            cmd = [os.path.join(RTMP_DIR, "mac", "ffmpeg"), "-f", "avfoundation", "-list_devices", "true", "-i", ""]
             result = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
             output = result.stderr
 
@@ -911,9 +1174,9 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
         width = int(width * scale_factor)
         height = int(height * scale_factor)
         
-        server_cmd = ['./rtmp/mac/mediamtx', './rtmp/mac/mediamtx.yml']
+        server_cmd = [os.path.join(RTMP_DIR, "mac", "mediamtx"), os.path.join(RTMP_DIR, "mac", "mediamtx.yml")]
         ffmpeg_cmd = [
-            "./rtmp/mac/ffmpeg",
+            os.path.join(RTMP_DIR, "mac", "ffmpeg"),
             "-fflags", "nobuffer",
             "-flags", "low_delay",
             "-probesize", "1024",
@@ -1062,7 +1325,7 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
             """
             # AUDIO: try PulseAudio device listing via ffmpeg
             if device_type == "audio":
-                # Use the ffmpeg binary in your rtmp/linux folder if present; otherwise fallback to system 
+                # Use the bundled or system ffmpeg binary; fallback to system
                 cmd = ["ffmpeg", "-f", "pulse", "-list_devices", "true", "-i", ""]  # PulseAudio list (printed to stderr)
                 try:
                     result = subprocess.run(cmd, stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
@@ -1139,7 +1402,7 @@ def get_rtmp_cmd(os_name=OS_NAME, window=None):
         drag_window_offscreen(window_id)
 
         # audio_index = get_device_index(STEREOMIX_DEVICE, "audio")
-        server_cmd = ["./rtmp/linux/mediamtx", "./rtmp/linux/mediamtx.yml"]
+        server_cmd = [os.path.join(RTMP_DIR, "linux", "mediamtx"), os.path.join(RTMP_DIR, "linux", "mediamtx.yml")]
 
         ffmpeg_cmd = [
             "ffmpeg",

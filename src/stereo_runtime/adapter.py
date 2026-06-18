@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     from .depth_provider import DepthProviderConfig
     from .synthesis import StereoConfig
 
-RuntimeMode = Literal["auto", "movie", "game", "image"]
+RuntimeMode = Literal["auto", "movie", "game", "image", "debug"]
 StereoQuality = Literal["fast", "quality_4k", "hq_4k"]
 DepthBackend = Literal["auto", "tensorrt_native", "onnx_cuda", "pytorch_cuda"]
 OnnxDtypeMode = Literal["auto", "fp16", "fp32"]
@@ -33,6 +33,7 @@ class StereoRuntimeConfig:
     model_dir: str | Path | None = None
     cache_dir: str | Path = "./models"
     mode: RuntimeMode = "movie"
+    stereo_preset: str | None = None
     stereo_quality: StereoQuality = "quality_4k"
     output_format: OutputFormat = "half_sbs"
     depth_backend: DepthBackend = "auto"
@@ -57,9 +58,16 @@ class StereoRuntimeConfig:
     temporal: bool = True
     temporal_strength: float = 0.75
     auto_reset_temporal: bool = True
+    scene_reset_threshold: float = 0.22
+    reset_cooldown_frames: int = 3
+    foreground_scale: float = 0.0
+    depth_antialias_strength: float = 0.0
     edge_threshold: float = 0.04
     edge_dilation: int = 2
     screen_edge_mask_suppression: int = 0
+    cross_eyed: bool = False
+    anaglyph_method: str = "red_cyan"
+    debug_output: bool = False
     fused: bool = True
     depth_safety: bool | None = None
 
@@ -160,14 +168,18 @@ def runtime_config_from_d2s_settings(
         depth_backend = "pytorch_cuda"
 
     onnx_dtype: OnnxDtypeMode = "auto"
-    mode = _normalize_runtime_mode(settings.get("Stereo Runtime Mode", settings.get("Run Mode", "movie")))
+    preset_value = settings.get("Stereo Preset", settings.get("Stereo Mode Preset"))
+    mode_source = preset_value if preset_value is not None else settings.get("Stereo Runtime Mode", settings.get("Run Mode", "movie"))
+    mode = _normalize_runtime_mode(mode_source)
     output_format = _normalize_output_format(settings.get("Display Mode", "half_sbs"))
+    stereo_quality = _normalize_stereo_quality(settings.get("Stereo Quality", settings.get("Synthetic View", "fast" if depth_only else "quality_4k")))
 
     return StereoRuntimeConfig(
         model_id=str(model_name),
         cache_dir=cache_dir,
         mode=mode,
-        stereo_quality="fast" if depth_only else "quality_4k",
+        stereo_preset=str(preset_value) if preset_value is not None else None,
+        stereo_quality=stereo_quality,
         output_format=output_format,
         depth_backend=depth_backend,
         device=device,
@@ -177,6 +189,21 @@ def runtime_config_from_d2s_settings(
         depth_strength=float(settings.get("Depth Strength", 2.0)),
         convergence=float(settings.get("Convergence", 0.0)),
         ipd=float(settings.get("IPD", 0.064)),
+        max_shift_ratio=float(settings.get("Max Shift Ratio", 0.05)),
+        temporal=_to_bool(settings.get("Temporal", True)),
+        temporal_strength=float(settings.get("Temporal Strength", 0.75)),
+        auto_reset_temporal=_to_bool(settings.get("Auto Scene Reset", settings.get("Auto Reset Temporal", True))),
+        scene_reset_threshold=float(settings.get("Scene Reset Threshold", 0.22)),
+        reset_cooldown_frames=int(settings.get("Reset Cooldown Frames", 3)),
+        foreground_scale=float(settings.get("Foreground Scale", 0.0)),
+        depth_antialias_strength=float(settings.get("Depth Antialias Strength", settings.get("Anti-aliasing", 0.0))),
+        edge_threshold=float(settings.get("Edge Threshold", 0.04)),
+        edge_dilation=int(settings.get("Edge Dilation", 2)),
+        screen_edge_mask_suppression=int(settings.get("Screen Edge Mask Suppression", 0)),
+        cross_eyed=_to_bool(settings.get("Cross Eyed", False)),
+        anaglyph_method=str(settings.get("Anaglyph Method", "red_cyan")),
+        debug_output=_to_bool(settings.get("Debug Stereo Output", False)),
+        depth_safety=_normalize_optional_bool(settings.get("Depth Safety")),
     )
 
 
@@ -200,14 +227,28 @@ def _normalize_depth_backend(value: Any) -> DepthBackend:
 
 
 def _normalize_runtime_mode(value: Any) -> RuntimeMode:
-    key = str(value).strip().lower().replace("-", "_")
+    key = "_".join(part for part in str(value).strip().lower().replace("-", "_").replace("/", "_").replace(" ", "_").split("_") if part)
     if key in {"auto"}:
         return "auto"
     if key in {"game", "game_low_latency"}:
         return "game"
     if key in {"image", "still", "still_image", "still_image_hq"}:
         return "image"
+    if key in {"debug", "debug_export"}:
+        return "debug"
     return "movie"
+
+
+def _normalize_stereo_quality(value: Any) -> StereoQuality:
+    key = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    mapping: dict[str, StereoQuality] = {
+        "fast": "fast",
+        "quality": "quality_4k",
+        "quality_4k": "quality_4k",
+        "hq": "hq_4k",
+        "hq_4k": "hq_4k",
+    }
+    return mapping.get(key, "quality_4k")
 
 
 def _normalize_output_format(value: Any) -> OutputFormat:
@@ -241,6 +282,8 @@ def preset_for_runtime_mode(mode: str) -> str:
         "still": "still_image_hq",
         "still_image": "still_image_hq",
         "still_image_hq": "still_image_hq",
+        "debug": "debug_export",
+        "debug_export": "debug_export",
     }
     try:
         return mapping[key]
@@ -284,7 +327,7 @@ def depth_provider_config_from_runtime(config: StereoRuntimeConfig) -> "DepthPro
 def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
     from .presets import normalize_preset, stereo_config_for_preset
 
-    preset = normalize_preset(preset_for_runtime_mode(config.mode))
+    preset = normalize_preset(config.stereo_preset or preset_for_runtime_mode(config.mode))
     layers = config.layers
     if config.stereo_quality == "hq_4k" and layers < 3:
         layers = 3
@@ -305,9 +348,16 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
             "max_shift_ratio": config.max_shift_ratio,
             "temporal_strength": config.temporal_strength,
             "auto_reset_temporal": config.auto_reset_temporal,
+            "scene_reset_threshold": config.scene_reset_threshold,
+            "reset_cooldown_frames": config.reset_cooldown_frames,
+            "foreground_scale": config.foreground_scale,
+            "depth_antialias_strength": config.depth_antialias_strength,
             "edge_threshold": config.edge_threshold,
             "edge_dilation": config.edge_dilation,
             "screen_edge_mask_suppression": config.screen_edge_mask_suppression,
+            "cross_eyed": config.cross_eyed,
+            "anaglyph_method": config.anaglyph_method,
+            "debug_output": config.debug_output,
             "fused": config.fused,
         },
     )
@@ -316,3 +366,21 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
 StereoLabRuntimeConfig = StereoRuntimeConfig
 DepthRuntimeConfig = StereoRuntimeConfig
 StereoLabDepthRuntimeConfig = StereoRuntimeConfig
+
+def _to_bool(value: Any) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _normalize_optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    key = str(value).strip().lower()
+    if key in {"auto", "none", ""}:
+        return None
+    return key in {"1", "true", "yes", "on"}

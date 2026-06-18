@@ -296,6 +296,11 @@ class StereoRuntime:
     def reset_temporal(self) -> None:
         self.temporal_state.reset()
 
+    def configure_stereo(self, stereo_config: Any, *, reset_temporal: bool = False) -> None:
+        self.stereo_config = stereo_config
+        if reset_temporal:
+            self.temporal_state.reset_stereo()
+
     def reset_stats(self) -> None:
         self.stats.reset()
         self.last_timing = {}

@@ -145,3 +145,46 @@ def test_runtime_config_from_d2s_settings_uses_dtype_auto_for_gui_fp16_flag():
     assert config.depth_backend == "pytorch_cuda"
     assert config.onnx_dtype == "auto"
     assert config.build_trt_engine is False
+
+def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Stereo Preset": "Game / Low Latency",
+            "Stereo Quality": "hq_4k",
+            "Display Mode": "Anaglyph",
+            "Max Shift Ratio": 0.08,
+            "Temporal": False,
+            "Temporal Strength": 0.4,
+            "Auto Scene Reset": False,
+            "Scene Reset Threshold": 0.18,
+            "Reset Cooldown Frames": 2,
+            "Foreground Scale": 0.2,
+            "Depth Antialias Strength": 0.6,
+            "Edge Threshold": 0.06,
+            "Edge Dilation": 3,
+            "Cross Eyed": True,
+            "Anaglyph Method": "green_magenta",
+            "Depth Safety": "On",
+        },
+        device="cuda",
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.mode == "game"
+    assert config.stereo_preset == "Game / Low Latency"
+    assert stereo.backend == "hq_4k"
+    assert stereo.output_format == "anaglyph"
+    assert stereo.max_shift_ratio == 0.08
+    assert stereo.temporal is False
+    assert stereo.temporal_strength == 0.4
+    assert stereo.auto_reset_temporal is False
+    assert stereo.scene_reset_threshold == 0.18
+    assert stereo.reset_cooldown_frames == 2
+    assert stereo.foreground_scale == 0.2
+    assert stereo.depth_antialias_strength == 0.6
+    assert stereo.edge_threshold == 0.06
+    assert stereo.edge_dilation == 3
+    assert stereo.cross_eyed is True
+    assert stereo.anaglyph_method == "green_magenta"
+    assert config.depth_safety is True

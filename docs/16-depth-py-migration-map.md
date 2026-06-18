@@ -43,6 +43,7 @@
 | FPS overlay/font | 未完整迁 | viewer/overlay 层 | 不放在 depth runtime |
 | `torch.compile` 管理 | 未迁完 | runtime backend 策略 | 与 TensorRT/ONNX 后端互斥关系清楚 |
 | runtime unload/pause | 部分覆盖 | `DepthRuntime` | OpenXR pause/resume 不加载或占用模型 |
+| D2S depth-only 队列 smoke | 已完成 fake provider smoke | `scripts/smoke/d2s_depth_runtime_smoke.py` | 仍需真实 PyTorch/ONNX/TRT provider smoke |
 
 ## 已有 stereo_runtime 覆盖能力
 
@@ -78,3 +79,25 @@
 - 至少一个非 Distill 模型 PyTorch provider 可用，用于验证通用模型列表不是空壳。
 - 旧 MJPEG stream 如仍保留，改用 `legacy_sbs.py` 或新 viewer 输出路径。
 - 文档说明第一阶段暂不支持或已支持 CoreML/OpenVINO/DirectML。
+
+## 已完成 smoke
+
+```powershell
+.\src\python3\python.exe -B scripts\smoke\d2s_depth_runtime_smoke.py --device cpu --width 64 --height 40 --target-height 32 --out -
+.\src\python3\python.exe -m pytest tests\test_d2s_depth_runtime_smoke.py -q
+```
+
+该 smoke 使用 fake depth provider，不加载真实模型，用来固定 D2S 第一阶段队列合同：
+
+```python
+(frame_rgb, depth, capture_start_time)
+```
+
+验证点：
+
+- raw BGRA 输入由 capture 侧转换成 RGB；
+- viewer 队列里的 `frame_rgb` 保持 RGB 图像帧；
+- runtime 输入由 capture/main 显式准备为 float `0..1` RGB tensor；
+- `DepthRuntime` 常驻 provider 只加载一次；
+- 输出 depth 与 runtime RGB 尺寸一致；
+- `depth_result.timing` 包含 preprocess/model/postprocess/total。

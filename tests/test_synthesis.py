@@ -18,6 +18,10 @@ from stereo_runtime.synthesis import StereoConfig, _try_fused_warp_composite2, s
 from stereo_runtime.temporal import TemporalState
 
 
+def test_triton_occlusion_hot_path_has_no_cpu_scalar_sync():
+    source = (ROOT / "src" / "stereo_runtime" / "occlusion_triton.py").read_text(encoding="utf-8")
+    assert ".item()" not in source
+
 def make_inputs(width=64, height=32):
     y = torch.linspace(0, 1, height)
     x = torch.linspace(0, 1, width)
@@ -38,6 +42,40 @@ def test_convergence_zeroes_shift_at_screen_plane():
     depth = torch.full((1, 1, 2, 2), 0.45)
     shift = compute_shift_px(depth, 3840, ShiftParams(convergence=0.45, ipd_mm=64.0, stereo_scale=0.5))
     assert torch.count_nonzero(shift) == 0
+
+def test_normal_sbs_eye_order_uses_left_then_right_views():
+    rgb, depth = make_inputs(width=64, height=32)
+    config = StereoConfig(
+        backend="fast",
+        output_format="full_sbs",
+        temporal=False,
+        fused=False,
+        depth_strength=2.0,
+        convergence=0.0,
+        ipd_mm=64.0,
+        stereo_scale=0.5,
+        max_shift_ratio=0.05,
+    )
+    result = synthesize_stereo(rgb, depth, config)
+    expected_shift = compute_shift_px(
+        depth,
+        rgb.shape[-1],
+        ShiftParams(
+            depth_strength=config.depth_strength,
+            convergence=config.convergence,
+            ipd=config.ipd,
+            max_shift_ratio=config.max_shift_ratio,
+            ipd_mm=config.ipd_mm,
+            stereo_scale=config.stereo_scale,
+        ),
+    )
+    expected_left = warp_horizontal(rgb, expected_shift, eye_sign=1.0)
+    expected_right = warp_horizontal(rgb, expected_shift, eye_sign=-1.0)
+
+    assert torch.equal(result.left_eye, expected_left)
+    assert torch.equal(result.right_eye, expected_right)
+    assert torch.equal(result.sbs[..., :, :64], expected_left)
+    assert torch.equal(result.sbs[..., :, 64:], expected_right)
 
 def test_half_sbs_shape():
     rgb, depth = make_inputs()
@@ -434,8 +472,8 @@ def test_fused_warp_composite_cuda_matches_torch_path_when_available():
     right_layers = []
     for idx in range(2):
         layer_shift = base_shift * (0.75 + 0.25 * (idx + 1) / 2)
-        left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=-1.0))
-        right_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=1.0))
+        left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=1.0))
+        right_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=-1.0))
     expected_left = composite_layers(left_layers, weights)
     expected_right = composite_layers(right_layers, weights)
     actual = _try_fused_warp_composite2(rgb, depth, base_shift, layers=2, symmetric=True)
@@ -644,4 +682,17 @@ def test_warp_horizontal_matches_cached_grid_formula():
     actual = warp_horizontal(rgb, shift_px, eye_sign=eye_sign)
     assert torch.allclose(actual, expected, atol=1e-6, rtol=1e-6)
 
+def test_negative_foreground_scale_uses_realtime_compression_without_pow():
+    from stereo_runtime.depth_postprocess import apply_foreground_scale
 
+    depth = torch.tensor([[[[0.0, 0.25, 0.5, 0.75, 1.0]]]], dtype=torch.float32)
+    actual = apply_foreground_scale(depth, -0.5)
+    expected = torch.tensor([[[[0.25, 0.375, 0.5, 0.625, 0.75]]]], dtype=torch.float32)
+    assert torch.allclose(actual, expected)
+
+    source = ROOT / "src" / "stereo_runtime" / "depth_postprocess.py"
+    code = source.read_text(encoding="utf-8")
+    negative_branch = code.index("if scale < 0.0:")
+    pow_branch = code.index(".pow(exponent)")
+    assert negative_branch < pow_branch
+    assert "compressed = centered * (1.0 - strength)" in code[negative_branch:pow_branch]

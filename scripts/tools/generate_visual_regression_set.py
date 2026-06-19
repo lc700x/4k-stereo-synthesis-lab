@@ -48,23 +48,12 @@ def main() -> None:
     parser.add_argument("--screen-edge-mask-suppression", type=int, default=0)
     parser.add_argument("--cross-eyed", action="store_true")
     parser.add_argument("--anaglyph-method", choices=["red_cyan", "green_magenta", "amber_blue", "gray"], default="red_cyan")
-    parser.add_argument(
-        "--depth-safety",
-        action="store_true",
-        help="Apply still-image Depth Safety Gate before synthesis.",
-    )
-    parser.add_argument(
-        "--no-depth-safety",
-        action="store_true",
-        help="Disable automatic Depth Safety Gate for still_image_hq preset.",
-    )
     args = parser.parse_args()
 
     print("[1/5] importing torch and stereo_runtime ...", flush=True)
     import torch
 
     from stereo_runtime.auto_depth import estimate_luma_depth
-    from stereo_runtime.depth_safety import apply_depth_safety
     from stereo_runtime.depth_provider import DepthProviderConfig, create_depth_provider
     from stereo_runtime.io import load_depth, load_rgb, save_depth, save_rgb
     from stereo_runtime.output import make_sbs
@@ -106,11 +95,6 @@ def main() -> None:
     else:
         raise SystemExit("missing --depth. Provide a depth image or pass --auto-depth.")
 
-    depth_safety_enabled = args.depth_safety or (args.preset == "still_image_hq" and not args.no_depth_safety)
-    depth_safety_info = None
-    if depth_safety_enabled:
-        depth, depth_safety_decision = apply_depth_safety(rgb, depth)
-        depth_safety_info = depth_safety_decision.to_report()
 
     base_config = {
         "depth_strength": args.depth_strength,
@@ -159,7 +143,6 @@ def main() -> None:
         "rgb": str(args.rgb),
         "depth": str(args.depth or f"auto_{args.depth_backend}"),
         "depth_info": depth_info,
-        "depth_safety": depth_safety_info,
         "device": str(device),
         "input_shape": list(rgb.shape),
         "depth_shape": list(depth.shape),
@@ -183,16 +166,12 @@ def main() -> None:
             "anaglyph_method": args.anaglyph_method,
             "fused": not args.no_fused,
             "preset": args.preset,
-            "depth_safety_enabled": depth_safety_enabled,
         },
         "methods": {},
         "comparisons": {},
     }
 
     print(f"[4/5] synthesizing baseline and {target_key} ...", flush=True)
-    if depth_safety_info is not None and depth_safety_info.get("depth_strength_scale") != 1.0:
-        scale = float(depth_safety_info["depth_strength_scale"])
-        configs = {name: replace(config, depth_strength=config.depth_strength * scale) for name, config in configs.items()}
     results = {}
     timings = {}
     with torch.inference_mode():
@@ -200,8 +179,6 @@ def main() -> None:
             torch.cuda.synchronize()
         save_rgb(rgb.cpu(), out_dir / "input_rgb.png")
         save_depth(depth.cpu(), out_dir / "used_depth.png")
-        if depth_safety_info is not None:
-            write_json(depth_safety_info, out_dir / "depth_safety_report.json")
 
         for name, config in configs.items():
             start = time.perf_counter()

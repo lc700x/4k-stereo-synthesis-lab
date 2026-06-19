@@ -12,6 +12,13 @@ def apply_foreground_scale(depth: torch.Tensor, scale: float, mid: float = 0.5, 
         return depth
     if scale <= -1.0:
         raise ValueError("foreground_scale must be greater than -1.0")
+    if scale < 0.0:
+        strength = min(1.0, max(0.0, -float(scale)))
+        centered = depth - float(mid)
+        # Negative scale is a realtime compression control. Avoid torch.pow here:
+        # high exponents near -1.0 are extremely slow on 4K CUDA tensors.
+        compressed = centered * (1.0 - strength)
+        return (float(mid) + compressed).clamp(0.0, 1.0)
     exponent = 1.0 / (1.0 + float(scale))
     centered = depth - float(mid)
     out = float(mid) + torch.sign(centered) * torch.abs(centered).pow(exponent)

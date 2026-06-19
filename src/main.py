@@ -10,8 +10,9 @@ import os
 from collections import deque
 
 from utils import OS_NAME, OUTPUT_RESOLUTION, DISPLAY_MODE, CAPTURE_MODE, CAPTURE_TOOL, MONITOR_INDEX, SHOW_FPS, FPS, WINDOW_TITLE, IPD, DEPTH_STRENGTH, CONVERGENCE, RUN_MODE, STREAM_MODE, STREAM_PORT, STREAM_QUALITY, STEREOMIX_DEVICE, STREAM_KEY, AUDIO_DELAY, CRF, LOSSLESS_SCALING_SUPPORT, USE_3D_MONITOR, FILL_16_9, LOCAL_VSYNC, UPSCALER, UPSCALER_SHARPNESS, FIX_VIEWER_ASPECT, CAPTURE_MODE, STEREO_DISPLAY_SELECTION, STEREO_DISPLAY_INDEX, shutdown_event, DEVICE_ID, DEVICE_INFO, DEVICE, CONTROLLER_MODEL, ENVIRONMENT_MODEL, XR_PREVIEW_WINDOW, CACHE_PATH, settings
+from utils.settings import read_yaml
 from capture import CaptureConfig, capture_frame_to_rgb, create_capture_runner, prepare_rgb_for_stereo_runtime
-from stereo_runtime import AutoModeRuntime, AutoModeSignals, OpenXRRenderConfig, StereoRuntime, runtime_config_from_d2s_settings, stereo_config_for_preset
+from stereo_runtime import OpenXRRenderConfig, StereoRuntime, runtime_config_from_d2s_settings, stereo_config_for_preset
 from stereo_runtime.adapter import stereo_config_from_runtime
 from stereo_runtime.adapter import preset_for_runtime_mode
 from stereo_runtime.presets import normalize_preset
@@ -51,18 +52,19 @@ def _initial_stereo_preset_state(config):
     raw_preset = config.stereo_preset
     if raw_preset is not None:
         preset = normalize_preset(raw_preset)
-        return preset == "auto", preset
+        return False, "cinema" if preset == "auto" else preset
     if config.mode == "auto":
-        return True, "auto"
+        return False, "cinema"
     return False, preset_for_runtime_mode(config.mode)
 
 stereo_auto_enabled, stereo_active_preset = _initial_stereo_preset_state(runtime_config)
-if not stereo_auto_enabled:
-    stereo_runtime.configure_stereo(stereo_config_from_runtime(runtime_config), reset_temporal=True)
-stereo_auto_runtime = AutoModeRuntime(initial_preset="cinema" if stereo_active_preset == "auto" else stereo_active_preset)
+stereo_runtime.configure_stereo(stereo_config_from_runtime(runtime_config), reset_temporal=True)
 stereo_last_logged_mode_state = None
 stereo_last_logged_fused_state = None
 stereo_last_motion_frame = None
+stereo_pending_motion = None
+stereo_pending_motion_event = None
+stereo_last_motion_score = 0.0
 stereo_still_duration_s = 0.0
 stereo_last_auto_ts = time.perf_counter()
 stereo_signal_lock = threading.Lock()
@@ -77,6 +79,11 @@ stereo_signal_state = {
     "fullscreen": False,
 }
 stereo_signal_thread_started = False
+stereo_settings_path = os.path.join(BASE_DIR, "settings.yaml")
+stereo_hot_reload_interval_s = 0.25
+stereo_hot_reload_last_check = 0.0
+stereo_hot_reload_last_mtime = os.path.getmtime(stereo_settings_path) if os.path.exists(stereo_settings_path) else 0.0
+stereo_hot_reload_last_values = None
 openxr_render_active = threading.Event()
 openxr_source_active = threading.Event()
 openxr_wait_idle_active = threading.Event()
@@ -155,6 +162,39 @@ _breakdown_stats = {
     "wait_count": 0,
 }
 _breakdown_last = time.perf_counter()
+_stereo_warmup_lock = threading.Lock()
+_stereo_warmup_keys = set()
+
+
+def _stereo_warmup_key(rgb_frame):
+    config = stereo_runtime.stereo_config
+    runtime_cfg = stereo_runtime.config
+    shape = tuple(getattr(rgb_frame, "shape", ()))
+    return (
+        shape,
+        str(getattr(rgb_frame, "dtype", "unknown")),
+        str(getattr(rgb_frame, "device", "unknown")),
+        config.backend,
+        runtime_cfg.output_format,
+        config.layers,
+        config.hole_fill,
+        config.edge_dilation,
+    )
+
+
+def _warmup_stereo_once_for_frame(rgb_frame):
+    if RUN_MODE == "OpenXR" and OPENXR_RUNTIME_DIRECT:
+        return
+    key = _stereo_warmup_key(rgb_frame)
+    with _stereo_warmup_lock:
+        if key in _stereo_warmup_keys:
+            return
+        _stereo_warmup_keys.add(key)
+    try:
+        print(f"[Main] Stereo warmup start: key={key}", flush=True)
+        stereo_runtime.warmup_stereo_kernels_for_frame(rgb_frame)
+    except Exception as exc:
+        print(f"[Main] Stereo warmup skipped: {type(exc).__name__}: {exc}", flush=True)
 
 
 def _breakdown_inc(name, amount=1):
@@ -179,7 +219,7 @@ def _breakdown_add_runtime_timing(runtime_result):
     timing = getattr(runtime_result, "timing", None) or {}
     debug = getattr(runtime_result, "debug_info", None) or {}
     with _breakdown_lock:
-        for key in ("depth_total_ms", "depth_model_ms", "synthesis_ms", "total_ms"):
+        for key in ("depth_total_ms", "depth_model_ms", "synthesis_ms", "pack_ms", "total_ms"):
             value = timing.get(key)
             if value is not None:
                 _breakdown_stats[f"rt_{key}"] = float(value)
@@ -445,6 +485,109 @@ def _runtime_stereo_overrides():
     }
 
 
+def _to_bool_hot_reload(value):
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _clamp_foreground_scale_hot_reload(value):
+    return max(-0.9, min(5.0, float(value)))
+
+
+
+
+def _hot_reload_value_snapshot(settings_dict):
+    ipd_raw = settings_dict.get("IPD mm", settings_dict.get("IPD (mm)", settings_dict.get("IPD", stereo_runtime.config.ipd_mm or 64.0)))
+    ipd_mm = float(ipd_raw)
+    if ipd_mm <= 1.0:
+        ipd_mm *= 1000.0
+    return {
+        "depth_strength": float(settings_dict.get("Depth Strength", stereo_runtime.config.depth_strength)),
+        "convergence": float(settings_dict.get("Convergence", stereo_runtime.config.convergence)),
+        "ipd": ipd_mm / 1000.0,
+        "ipd_mm": max(1.0, ipd_mm),
+        "stereo_scale": float(settings_dict.get("Stereo Scale", settings_dict.get("Stereo Strength Scale", stereo_runtime.config.stereo_scale))),
+        "max_shift_ratio": float(settings_dict.get("Max Shift Ratio", stereo_runtime.config.max_shift_ratio)),
+        "temporal": float(settings_dict.get("Temporal Strength", stereo_runtime.config.temporal_strength)) > 0.0,
+        "temporal_strength": float(settings_dict.get("Temporal Strength", stereo_runtime.config.temporal_strength)),
+        "auto_reset_temporal": float(settings_dict.get("Scene Reset Threshold", stereo_runtime.config.scene_reset_threshold)) > 0.0,
+        "scene_reset_threshold": float(settings_dict.get("Scene Reset Threshold", stereo_runtime.config.scene_reset_threshold)),
+        "reset_cooldown_frames": int(settings_dict.get("Reset Cooldown Frames", stereo_runtime.config.reset_cooldown_frames)),
+        "foreground_scale": _clamp_foreground_scale_hot_reload(settings_dict.get("Foreground Scale", stereo_runtime.config.foreground_scale)),
+        "depth_antialias_strength": float(settings_dict.get("Depth Antialias Strength", settings_dict.get("Anti-aliasing", stereo_runtime.config.depth_antialias_strength))),
+        "edge_dilation": int(settings_dict.get("Edge Dilation", stereo_runtime.config.edge_dilation)),
+        "edge_threshold": float(settings_dict.get("Edge Threshold", stereo_runtime.config.edge_threshold)),
+        "anaglyph_method": str(settings_dict.get("Anaglyph Method", stereo_runtime.config.anaglyph_method)),
+        "cross_eyed": _to_bool_hot_reload(settings_dict.get("Cross Eyed", stereo_runtime.config.cross_eyed)),
+    }
+
+
+def _apply_stereo_hot_reload_if_needed():
+    global stereo_hot_reload_last_check, stereo_hot_reload_last_mtime, stereo_hot_reload_last_values
+    now = time.perf_counter()
+    if now - stereo_hot_reload_last_check < stereo_hot_reload_interval_s:
+        return
+    stereo_hot_reload_last_check = now
+    try:
+        mtime = os.path.getmtime(stereo_settings_path)
+    except OSError:
+        return
+    if mtime <= stereo_hot_reload_last_mtime and stereo_hot_reload_last_values is not None:
+        return
+    try:
+        settings_dict = read_yaml(stereo_settings_path)
+        values = _hot_reload_value_snapshot(settings_dict)
+    except Exception as exc:
+        print(f"[Main] Stereo hot reload skipped: {type(exc).__name__}: {exc}", flush=True)
+        stereo_hot_reload_last_mtime = mtime
+        return
+    if values == stereo_hot_reload_last_values:
+        stereo_hot_reload_last_mtime = mtime
+        return
+
+    from dataclasses import replace
+
+    stereo_runtime.config = replace(stereo_runtime.config, **values)
+    current = stereo_runtime.stereo_config
+    stereo_runtime.configure_stereo(
+        stereo_config_for_preset(
+            stereo_active_preset or stereo_runtime.config.stereo_preset or preset_for_runtime_mode(stereo_runtime.config.mode),
+            output_format=current.output_format,
+            overrides=_runtime_stereo_overrides(),
+        ),
+        reset_temporal=False,
+    )
+    _update_openxr_runtime_config(
+        ipd=values["ipd"],
+        depth_ratio=values["depth_strength"],
+        convergence=values["convergence"],
+    )
+    stereo_hot_reload_last_values = values
+    stereo_hot_reload_last_mtime = mtime
+    print(
+        "[Main] Stereo hot reload:"
+        f" ipd_mm={values['ipd_mm']:.1f}"
+        f" stereo_scale={values['stereo_scale']:.3f}"
+        f" depth_strength={values['depth_strength']:.3f}"
+        f" convergence={values['convergence']:.3f}"
+        f" max_shift_ratio={values['max_shift_ratio']:.3f}"
+        f" temporal_strength={values['temporal_strength']:.3f}"
+        f" scene_reset={values['scene_reset_threshold']:.3f}"
+        f" reset_cooldown={values['reset_cooldown_frames']}"
+        f" foreground_scale={values['foreground_scale']:.3f}"
+        f" antialias={values['depth_antialias_strength']:.3f}"
+        f" edge_dilation={values['edge_dilation']}"
+        f" edge_threshold={values['edge_threshold']:.3f}"
+        f" anaglyph={values['anaglyph_method']}"
+        f" cross_eyed={int(values['cross_eyed'])}",
+        flush=True,
+    )
+    _log_stereo_runtime_mode_once("hot-reload")
+
+
 def _clamp01(value):
     try:
         return max(0.0, min(1.0, float(value)))
@@ -453,15 +596,21 @@ def _clamp01(value):
 
 
 def _sample_runtime_motion(rgb_frame):
-    global stereo_last_motion_frame
+    global stereo_last_motion_frame, stereo_pending_motion, stereo_pending_motion_event, stereo_last_motion_score
     try:
         import torch
+
+        if stereo_pending_motion is not None:
+            if stereo_pending_motion_event is None or stereo_pending_motion_event.query():
+                stereo_last_motion_score = _clamp01(float(stereo_pending_motion.item()) * 4.0)
+                stereo_pending_motion = None
+                stereo_pending_motion_event = None
 
         frame = rgb_frame.detach()
         if frame.ndim == 4:
             frame = frame[0]
         if frame.ndim != 3:
-            return 0.0
+            return stereo_last_motion_score
         if frame.shape[0] in (3, 4):
             frame = frame[:3]
         else:
@@ -474,12 +623,22 @@ def _sample_runtime_motion(rgb_frame):
         )[0]
         if stereo_last_motion_frame is None:
             stereo_last_motion_frame = frame.detach()
-            return 0.0
-        motion = float((frame - stereo_last_motion_frame).abs().mean().item())
+            return stereo_last_motion_score
+        motion_tensor = (frame - stereo_last_motion_frame).abs().mean()
         stereo_last_motion_frame = frame.detach()
-        return _clamp01(motion * 4.0)
+        if motion_tensor.is_cuda:
+            if stereo_pending_motion is None:
+                event = torch.cuda.Event()
+                event.record(torch.cuda.current_stream(motion_tensor.device))
+                stereo_pending_motion = motion_tensor.detach()
+                stereo_pending_motion_event = event
+        else:
+            stereo_last_motion_score = _clamp01(float(motion_tensor.item()) * 4.0)
+            stereo_pending_motion = None
+            stereo_pending_motion_event = None
+        return stereo_last_motion_score
     except Exception:
-        return 0.0
+        return stereo_last_motion_score
 
 
 def _query_process_name(pid):
@@ -615,14 +774,6 @@ def _auto_signal_sampler_loop():
         time.sleep(2.0)
 
 
-def _ensure_auto_signal_sampler():
-    global stereo_signal_thread_started
-    if not stereo_auto_enabled or stereo_signal_thread_started:
-        return
-    stereo_signal_thread_started = True
-    threading.Thread(target=_auto_signal_sampler_loop, daemon=True, name="StereoAutoSignalSampler").start()
-
-
 def _log_stereo_runtime_mode(reason, decision=None, samples=None, motion=None):
     config = stereo_runtime.stereo_config
     runtime_cfg = stereo_runtime.config
@@ -635,7 +786,6 @@ def _log_stereo_runtime_mode(reason, decision=None, samples=None, motion=None):
     )
     parts = [
         f"[Main] Stereo mode {reason}:",
-        f"auto={'on' if stereo_auto_enabled else 'off'}",
         f"preset={preset}",
         f"synthetic_view={config.backend}",
         f"quality_setting={runtime_cfg.stereo_quality}",
@@ -702,49 +852,6 @@ def _log_fast_plus_fused_runtime_state(runtime_result):
         f" fast_plus_fused_temporal_bypass={state[6]}",
         flush=True,
     )
-
-
-def _update_auto_stereo_mode(rgb_frame):
-    global stereo_active_preset, stereo_still_duration_s, stereo_last_auto_ts
-    if not stereo_auto_enabled:
-        return
-    now = time.perf_counter()
-    dt_s = max(0.0, now - stereo_last_auto_ts)
-    stereo_last_auto_ts = now
-    motion = _sample_runtime_motion(rgb_frame)
-    stereo_still_duration_s = stereo_still_duration_s + dt_s if motion < 0.03 else 0.0
-    with stereo_signal_lock:
-        samples = dict(stereo_signal_state)
-    decision = stereo_auto_runtime.update(
-        AutoModeSignals(
-            frame_motion_score=motion,
-            still_duration_s=stereo_still_duration_s,
-            gpu_3d_util=samples.get("gpu_3d_util", 0.0),
-            gpu_video_decode_util=samples.get("gpu_video_decode_util", 0.0),
-            input_activity=samples.get("input_activity", 0.0),
-            idle_seconds=samples.get("idle_seconds", 0.0),
-            audio_active=bool(samples.get("audio_active", False)),
-            maximized=bool(samples.get("maximized", False)),
-            foreground_process=str(samples.get("foreground_process", "")),
-            fullscreen=bool(samples.get("fullscreen", False) or RUN_MODE in {"OpenXR", "3D Monitor"}),
-            openxr_active=RUN_MODE == "OpenXR",
-            latency_pressure=1.0 if FPS >= 90 else 0.0,
-            target_fps=float(FPS),
-        ),
-        dt_s=dt_s,
-    )
-    if decision.preset == stereo_active_preset:
-        return
-    stereo_active_preset = decision.preset
-    stereo_runtime.configure_stereo(
-        stereo_config_for_preset(
-            decision.preset,
-            output_format=stereo_runtime.config.output_format,
-            overrides=_runtime_stereo_overrides(),
-        ),
-        reset_temporal=True,
-    )
-    _log_stereo_runtime_mode("auto-switch", decision=decision, samples=samples, motion=motion)
 
 
 def _runtime_output_to_numpy(frame):
@@ -914,9 +1021,9 @@ def process_runtime_loop():
             prepare_start_time = time.perf_counter()
             runtime_rgb = prepare_rgb_for_stereo_runtime(frame_rgb, device=DEVICE)
             _breakdown_add_time("rt_prepare", time.perf_counter() - prepare_start_time)
-            _ensure_auto_signal_sampler()
             _log_stereo_runtime_mode_once()
-            _update_auto_stereo_mode(runtime_rgb)
+            _apply_stereo_hot_reload_if_needed()
+            _warmup_stereo_once_for_frame(runtime_rgb)
             runtime_call_start_time = time.perf_counter()
             if RUN_MODE == "OpenXR" and OPENXR_RUNTIME_DIRECT:
                 runtime_result = stereo_runtime.process_openxr_frame(

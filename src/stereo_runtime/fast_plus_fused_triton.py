@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import torch
 import triton
@@ -178,7 +178,7 @@ def _fast_plus_half_sbs_uint8_kernel(
     src_x_out = tl.where(use_left, x, x - half_width)
     target_x0 = src_x_out * 2
     target_x1 = _clamp_i32(target_x0 + 1, 0, width - 1)
-    eye_sign = tl.where(use_left, -1.0, 1.0)
+    eye_sign = tl.where(use_left, 1.0, -1.0)
 
     v0 = _filled_eye(
         rgb,

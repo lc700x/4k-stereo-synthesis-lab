@@ -77,6 +77,6 @@ def synthesize_baseline(rgb: torch.Tensor, depth: torch.Tensor, params: ShiftPar
     rgb = ensure_bchw(rgb, name="rgb").float()
     depth = match_depth(depth, rgb.shape[-2], rgb.shape[-1])
     shift_px = compute_shift_px(depth, rgb.shape[-1], params)
-    left = warp_horizontal(rgb, shift_px, eye_sign=-1.0)
-    right = warp_horizontal(rgb, shift_px, eye_sign=1.0)
+    left = warp_horizontal(rgb, shift_px, eye_sign=1.0)
+    right = warp_horizontal(rgb, shift_px, eye_sign=-1.0)
     return left, right, shift_px

@@ -72,7 +72,6 @@ class StereoRuntimeConfig:
     anaglyph_method: str = "red_cyan"
     debug_output: bool = False
     fused: bool = True
-    depth_safety: bool | None = None
 
     @property
     def resolved_model_id(self) -> str:
@@ -212,7 +211,6 @@ def runtime_config_from_d2s_settings(
         anaglyph_method=str(settings.get("Anaglyph Method", "red_cyan")),
         debug_output=_to_bool(settings.get("Debug Stereo Output", False)),
         profile_sync=_to_bool(settings.get("Depth Profile Sync", settings.get("Profile Sync", False))),
-        depth_safety=_normalize_optional_bool(settings.get("Depth Safety")),
     )
 
 

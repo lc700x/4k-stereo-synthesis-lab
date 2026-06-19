@@ -169,7 +169,6 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
             "Edge Dilation": 3,
             "Cross Eyed": True,
             "Anaglyph Method": "green_magenta",
-            "Depth Safety": "On",
         },
         device="cuda",
     )
@@ -195,7 +194,6 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
     assert stereo.edge_dilation == 3
     assert stereo.cross_eyed is True
     assert stereo.anaglyph_method == "green_magenta"
-    assert config.depth_safety is True
 
 
 def test_runtime_config_accepts_full_sbs_display_name_variants():

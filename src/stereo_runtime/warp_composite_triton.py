@@ -34,8 +34,8 @@ def _warp_composite2_kernel(
     w1 = w1_raw / wsum
 
     shift = tl.load(base_shift + pixel, mask=active, other=0.0)
-    left_value = _sample_two_layers(rgb, channel, y, x, shift, -0.875, -1.0, width, pixels, active, w0, w1)
-    right_value = _sample_two_layers(rgb, channel, y, x, shift, 0.875, 1.0, width, pixels, active, w0, w1)
+    left_value = _sample_two_layers(rgb, channel, y, x, shift, 0.875, 1.0, width, pixels, active, w0, w1)
+    right_value = _sample_two_layers(rgb, channel, y, x, shift, -0.875, -1.0, width, pixels, active, w0, w1)
     tl.store(left + offsets, left_value, mask=active)
     tl.store(right + offsets, right_value, mask=active)
 

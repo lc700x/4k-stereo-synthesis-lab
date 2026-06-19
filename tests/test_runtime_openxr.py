@@ -32,7 +32,6 @@ def test_process_openxr_frame_returns_per_eye_runtime_result():
         cache_dir="models",
         device="cpu",
         depth_backend="pytorch_cuda",
-        depth_safety=False,
     )
     runtime = StereoRuntime(config, depth_provider=FakeDepthProvider(), collect_memory_stats=False)
     rgb = torch.rand(1, 3, 12, 16)

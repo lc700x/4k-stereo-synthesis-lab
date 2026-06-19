@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import time
 from dataclasses import dataclass, field
 from typing import Literal
 
@@ -59,6 +60,8 @@ class StereoResult:
 
 
 def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+    stage_times: dict[str, float] = {}
+    stage_start = time.perf_counter()
     params = ShiftParams(
         depth_strength=config.depth_strength,
         convergence=config.convergence,
@@ -72,6 +75,8 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         antialias_strength=config.depth_antialias_strength,
     )
     base_shift = compute_shift_px(depth, rgb.shape[-1], params)
+    stage_times["depth_postprocess_shift_ms"] = (time.perf_counter() - stage_start) * 1000.0
+    stage_start = time.perf_counter()
 
     layer_count = max(1, int(config.layers))
     fused = _try_fused_warp_composite2(
@@ -91,12 +96,14 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         right_layers: list[torch.Tensor] = []
         for idx in range(layer_count):
             layer_shift = base_shift * (0.75 + 0.25 * (idx + 1) / layer_count)
-            left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=-1.0))
-            sign = 1.0 if config.symmetric else 0.9
+            left_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=1.0))
+            sign = -1.0 if config.symmetric else -0.9
             right_layers.append(warp_horizontal(rgb, layer_shift, eye_sign=sign))
 
         left = composite_layers(left_layers, weights)
         right = composite_layers(right_layers, weights)
+    stage_times["warp_composite_ms"] = (time.perf_counter() - stage_start) * 1000.0
+    stage_start = time.perf_counter()
     if config.occlusion:
         occlusion_mask_backend = occlusion_backend(
             depth,
@@ -117,6 +124,8 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         occlusion_mask_backend = "none"
         mask = torch.zeros_like(depth)
 
+    stage_times["occlusion_ms"] = (time.perf_counter() - stage_start) * 1000.0
+    stage_start = time.perf_counter()
     hole_fill_backend = "none"
     if config.hole_fill != "none":
         radius = 2 if config.hole_fill == "fast" else 3
@@ -127,8 +136,11 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         eyes = edge_aware_fill(eyes, fill_mask, radius=radius, strength=strength, fused=config.fused)
         left, right = eyes.chunk(2, dim=0)
 
+    stage_times["hole_fill_ms"] = (time.perf_counter() - stage_start) * 1000.0
+    stage_start = time.perf_counter()
     left = refine_local(left, mask, enabled=config.refine)
     right = refine_local(right, mask, enabled=config.refine)
+    stage_times["refine_ms"] = (time.perf_counter() - stage_start) * 1000.0
     return left, right, mask, {
         "layers": layer_count,
         "shift_px": base_shift,
@@ -136,6 +148,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         "warp_composite_backend": warp_composite_backend,
         "occlusion_mask_backend": occlusion_mask_backend,
         "hole_fill_backend": hole_fill_backend,
+        **stage_times,
     }
 
 

@@ -10,7 +10,6 @@ from typing import Any
 import torch
 
 from .adapter import StereoRuntimeConfig, depth_provider_config_from_runtime, stereo_config_from_runtime
-from .depth_safety import apply_depth_safety
 from .depth_provider import DepthProfileResult, create_depth_provider
 from .openxr_render import OpenXRRenderConfig, render_openxr_stereo
 from .synthesis import StereoResult, synthesize_stereo
@@ -302,6 +301,48 @@ class StereoRuntime:
         if reset_temporal:
             self.temporal_state.reset_stereo()
 
+    def warmup_stereo_kernels_for_frame(self, rgb_frame: torch.Tensor) -> None:
+        """Compile stereo synthesis kernels for the actual runtime frame shape."""
+        rgb_frame = _validate_runtime_rgb_frame(rgb_frame)
+        device = rgb_frame.device
+        if device.type != "cuda" or not torch.cuda.is_available():
+            return
+        if str(os.environ.get("D2S_DISABLE_STEREO_WARMUP", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}:
+            return
+        if rgb_frame.ndim == 3:
+            _, height, width = rgb_frame.shape
+        else:
+            _, _, height, width = rgb_frame.shape
+        rgb = torch.zeros((1, 3, int(height), int(width)), device=device, dtype=torch.float32)
+        depth = torch.linspace(0.0, 1.0, int(width), device=device, dtype=torch.float32).view(1, 1, 1, int(width)).expand(1, 1, int(height), int(width)).contiguous()
+        base = self.stereo_config
+        foreground_scales = {round(float(base.foreground_scale), 3), 0.0, -0.7, 0.5}
+        antialias_values = {round(float(base.depth_antialias_strength), 3), 0.0, 2.0}
+        configs = []
+        for scale in sorted(foreground_scales):
+            for antialias in sorted(antialias_values):
+                configs.append(
+                    replace(
+                        base,
+                        temporal=False,
+                        foreground_scale=float(scale),
+                        depth_antialias_strength=float(antialias),
+                    )
+                )
+        start = time.perf_counter()
+        seen = set()
+        for config in configs:
+            key = (config.backend, config.output_format, config.layers, config.hole_fill, config.edge_dilation, round(float(config.foreground_scale), 3), round(float(config.depth_antialias_strength), 3))
+            if key in seen:
+                continue
+            seen.add(key)
+            synthesize_stereo(rgb, depth, config, temporal_state=None)
+        torch.cuda.synchronize(device)
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        print(
+            f"[StereoRuntime] stereo kernel warmup complete: {len(seen)} configs {int(width)}x{int(height)} in {elapsed_ms:.1f}ms",
+            flush=True,
+        )
     def reset_stats(self) -> None:
         self.stats.reset()
         self.last_timing = {}
@@ -337,15 +378,6 @@ class StereoRuntime:
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
         stereo_config = self.stereo_config
-        depth_safety_report: dict[str, Any] | None = None
-        if self._depth_safety_enabled():
-            depth, decision = apply_depth_safety(rgb_frame, depth)
-            depth_safety_report = decision.to_report()
-            if decision.depth_strength_scale != 1.0:
-                stereo_config = replace(
-                    stereo_config,
-                    depth_strength=stereo_config.depth_strength * decision.depth_strength_scale,
-                )
 
         synth_start = time.perf_counter()
         fused_sbs, fused_skip = self._try_fast_plus_fused_sbs(rgb_frame, depth, stereo_config)
@@ -394,10 +426,9 @@ class StereoRuntime:
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         if memory:
             debug.update(memory)
-        if depth_safety_report is not None:
-            debug["depth_safety"] = depth_safety_report
 
         sbs = stereo.sbs
+        pack_start = time.perf_counter()
         if _runtime_output_uint8_enabled() and sbs.is_floating_point():
             fused_uint8 = _try_make_runtime_uint8_sbs(stereo, self.stereo_config.output_format)
             if fused_uint8 is not None:
@@ -413,6 +444,31 @@ class StereoRuntime:
                 debug["runtime_output_dtype"] = "uint8"
             else:
                 debug["runtime_output_dtype"] = str(sbs.dtype).replace("torch.", "")
+        pack_ms = (time.perf_counter() - pack_start) * 1000.0
+        timing["pack_ms"] = float(pack_ms)
+        if total_ms >= float(os.environ.get("D2S_SLOW_RUNTIME_LOG_MS", "200") or "200"):
+            print(
+                "[StereoRuntime] slow frame:"
+                f" total_ms={total_ms:.1f}"
+                f" depth_total_ms={depth_total_ms:.1f}"
+                f" depth_model_ms={float(profile.model_ms):.1f}"
+                f" synthesis_ms={synthesis_ms:.1f}"
+                f" pack_ms={pack_ms:.1f}"
+                f" backend={debug.get('backend', stereo_config.backend)}"
+                f" foreground_scale={stereo_config.foreground_scale:.3f}"
+                f" antialias={stereo_config.depth_antialias_strength:.3f}"
+                f" output_dtype={debug.get('runtime_output_dtype', sbs.dtype)}"
+                f" pack_backend={debug.get('runtime_output_pack_backend', 'n/a')}"
+                f" sbs_backend={debug.get('sbs_backend', 'n/a')}"
+                f" fast_plus_fused={debug.get('fast_plus_fused_backend', 'n/a')}"
+                f" fast_plus_skip={debug.get('fast_plus_fused_skip', 'n/a')}"
+                f" stage_depth_shift={float(debug.get('depth_postprocess_shift_ms', 0.0)):.1f}"
+                f" stage_warp={float(debug.get('warp_composite_ms', 0.0)):.1f}"
+                f" stage_occ={float(debug.get('occlusion_ms', 0.0)):.1f}"
+                f" stage_fill={float(debug.get('hole_fill_ms', 0.0)):.1f}"
+                f" stage_refine={float(debug.get('refine_ms', 0.0)):.1f}",
+                flush=True,
+            )
 
         return StereoRuntimeResult(
             depth=depth,
@@ -438,10 +494,6 @@ class StereoRuntime:
         profile = self._predict_depth_profile(rgb_frame)
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
-        depth_safety_report: dict[str, Any] | None = None
-        if self._depth_safety_enabled():
-            depth, decision = apply_depth_safety(rgb_frame, depth)
-            depth_safety_report = decision.to_report()
 
         render_start = time.perf_counter()
         openxr = render_openxr_stereo(rgb_frame, depth, openxr_config)
@@ -467,8 +519,6 @@ class StereoRuntime:
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         if memory:
             debug.update(memory)
-        if depth_safety_report is not None:
-            debug["depth_safety"] = depth_safety_report
 
         return OpenXRRuntimeResult(
             depth=depth,
@@ -499,10 +549,6 @@ class StereoRuntime:
         elapsed = (time.perf_counter() - start) * 1000.0
         return DepthProfileResult(depth=depth, preprocess_ms=0.0, model_ms=float(elapsed), postprocess_ms=0.0)
 
-    def _depth_safety_enabled(self) -> bool:
-        if self.config.depth_safety is not None:
-            return bool(self.config.depth_safety)
-        return self.config.mode == "image"
 
     def _try_fast_plus_fused_sbs(self, rgb_frame: torch.Tensor, depth: torch.Tensor, stereo_config: Any) -> tuple[torch.Tensor | None, str]:
         if not _fast_plus_fused_enabled():

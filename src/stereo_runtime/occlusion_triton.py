@@ -10,7 +10,7 @@ def _occlusion_radius2_kernel(
     depth,
     shift_abs,
     out,
-    amax_shift: tl.constexpr,
+    amax_shift_ptr,
     total: tl.constexpr,
     width: tl.constexpr,
     height: tl.constexpr,
@@ -20,6 +20,7 @@ def _occlusion_radius2_kernel(
     active = offsets < total
     y = offsets // width
     x = offsets - y * width
+    amax_shift = tl.maximum(tl.load(amax_shift_ptr), 1.0e-6)
 
     found = tl.zeros((block,), tl.int1)
     for dy in tl.static_range(-2, 3):
@@ -74,7 +75,7 @@ def make_occlusion_mask_radius2(depth: torch.Tensor, shift_px: torch.Tensor) -> 
     out = torch.empty_like(depth)
     _, _, height, width = depth.shape
     total = height * width
-    amax_shift = float(shift_abs.amax().clamp_min(1e-6).item())
+    amax_shift = shift_abs.amax().clamp_min(1e-6).reshape(1)
     block = 256
     grid = (triton.cdiv(total, block),)
     _occlusion_radius2_kernel[grid](depth, shift_abs, out, amax_shift, total, width, height, block)
@@ -85,7 +86,7 @@ def _occlusion_radius1_kernel(
     depth,
     shift_abs,
     out,
-    amax_shift: tl.constexpr,
+    amax_shift_ptr,
     total: tl.constexpr,
     width: tl.constexpr,
     height: tl.constexpr,
@@ -95,6 +96,7 @@ def _occlusion_radius1_kernel(
     active = offsets < total
     y = offsets // width
     x = offsets - y * width
+    amax_shift = tl.maximum(tl.load(amax_shift_ptr), 1.0e-6)
 
     found = tl.zeros((block,), tl.int1)
     for dy in tl.static_range(-1, 2):
@@ -149,7 +151,7 @@ def make_occlusion_mask_radius1(depth: torch.Tensor, shift_px: torch.Tensor) -> 
     out = torch.empty_like(depth)
     _, _, height, width = depth.shape
     total = height * width
-    amax_shift = float(shift_abs.amax().clamp_min(1e-6).item())
+    amax_shift = shift_abs.amax().clamp_min(1e-6).reshape(1)
     block = 256
     grid = (triton.cdiv(total, block),)
     _occlusion_radius1_kernel[grid](depth, shift_abs, out, amax_shift, total, width, height, block)

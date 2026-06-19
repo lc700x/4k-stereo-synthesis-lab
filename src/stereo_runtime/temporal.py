@@ -15,11 +15,15 @@ class TemporalState:
     cooldown_remaining: int = 0
     reset_count: int = 0
     last_scene_delta: float = 0.0
+    pending_scene_delta: torch.Tensor | None = None
+    pending_scene_event: torch.cuda.Event | None = None
 
     def reset(self) -> None:
         self.reset_stereo()
         self.scene_reference = None
         self.cooldown_remaining = 0
+        self.pending_scene_delta = None
+        self.pending_scene_event = None
 
     def reset_stereo(self) -> None:
         self.left = None
@@ -41,20 +45,46 @@ def detect_scene_change(
     if state.scene_reference is None or state.scene_reference.shape != sample.shape:
         state.scene_reference = sample.detach()
         state.last_scene_delta = 0.0
+        state.pending_scene_delta = None
+        state.pending_scene_event = None
         return False
-    delta = float((sample - state.scene_reference.to(sample.device)).abs().mean().item())
+
+    changed = _consume_pending_scene_delta(state, threshold=threshold, cooldown_frames=cooldown_frames)
+    delta_tensor = (sample - state.scene_reference.to(sample.device)).abs().mean()
+    state.scene_reference = sample.detach()
+    if delta_tensor.is_cuda:
+        if state.pending_scene_delta is None:
+            event = torch.cuda.Event()
+            event.record(torch.cuda.current_stream(delta_tensor.device))
+            state.pending_scene_delta = delta_tensor.detach()
+            state.pending_scene_event = event
+        return changed
+    return _apply_scene_delta(state, float(delta_tensor.item()), threshold=threshold, cooldown_frames=cooldown_frames)
+
+
+def _consume_pending_scene_delta(state: TemporalState, *, threshold: float, cooldown_frames: int) -> bool:
+    pending = state.pending_scene_delta
+    if pending is None:
+        return False
+    event = state.pending_scene_event
+    if event is not None and not event.query():
+        return False
+    delta = float(pending.item())
+    state.pending_scene_delta = None
+    state.pending_scene_event = None
+    return _apply_scene_delta(state, delta, threshold=threshold, cooldown_frames=cooldown_frames)
+
+
+def _apply_scene_delta(state: TemporalState, delta: float, *, threshold: float, cooldown_frames: int) -> bool:
     state.last_scene_delta = delta
     if state.cooldown_remaining > 0:
         state.cooldown_remaining -= 1
-        state.scene_reference = sample.detach()
         return False
     changed = delta >= float(threshold)
-    state.scene_reference = sample.detach()
     if changed:
         state.reset_count += 1
         state.cooldown_remaining = max(0, int(cooldown_frames))
     return changed
-
 
 def apply_temporal(
     left: torch.Tensor,

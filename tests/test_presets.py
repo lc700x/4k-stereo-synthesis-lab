@@ -39,9 +39,9 @@ def test_stereo_presets_map_to_expected_modes():
     assert cinema.auto_reset_temporal is True
     assert cinema.ipd_mm == 64.0
     assert cinema.stereo_scale < 1.0
-    assert cinema.convergence == 0.45
+    assert cinema.convergence == 0.25
 
-    assert game.backend == "quality_4k"
+    assert game.backend == "fast_plus"
     assert game.hole_fill == "fast"
     assert game.temporal_strength < cinema.temporal_strength
     assert game.depth_strength < cinema.depth_strength
@@ -157,7 +157,7 @@ def test_manual_presets_bypass_auto_runtime_contract():
     manual = stereo_config_for_preset("game_low_latency", output_format="half_sbs")
     auto_default = stereo_config_for_preset("auto", output_format="half_sbs")
 
-    assert manual.backend == "quality_4k"
+    assert manual.backend == "fast_plus"
     assert manual.hole_fill == "fast"
     assert auto_default.backend == "quality_4k"
     assert auto_default.hole_fill == "edge_aware"

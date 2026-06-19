@@ -52,6 +52,33 @@ from utils import (
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DIAG_LOG = os.path.join(BASE_DIR, "logs", "diag.log")
 
+STEREO_QUALITY_DISPLAY = {
+    "en": {
+        "fast": "Lowest",
+        "fast_plus": "Medium",
+        "quality_4k": "High",
+        "hq_4k": "Highest",
+    },
+    "zh": {
+        "fast": "最低",
+        "fast_plus": "中等",
+        "quality_4k": "较高",
+        "hq_4k": "最高",
+    },
+}
+
+_NOISY_CONSOLE_PREFIXES = (
+    "[NativeUtil] sogou_native_util_pc loaded successfully",
+    "[warmup] same version",
+)
+
+
+def _is_noisy_console_output(data):
+    text = str(data or "").strip()
+    if not text:
+        return False
+    return any(text.startswith(prefix) for prefix in _NOISY_CONSOLE_PREFIXES)
+
 
 def _setup_console_logging():
     """Redirect stdout/stderr to also write to the diag log file."""
@@ -65,6 +92,8 @@ def _setup_console_logging():
             self._buffer = ""
 
         def write(self, data):
+            if _is_noisy_console_output(data):
+                return len(data or "")
             self.original.write(data)
             if data and data.strip():
                 try:
@@ -163,6 +192,7 @@ UI_TEXTS = {
         "Refresh": "Refresh",
         "Show FPS": "Show FPS",
         "IPD (m):": "IPD (mm):",
+        "Stereo Scale:": "Stereo Scale:",
         "Convergence:": "Convergence:",
         "Display Mode:": "Display Mode:",
         "Depth Model:": "Depth Model:",
@@ -177,7 +207,7 @@ UI_TEXTS = {
         "Still Image / HQ": "Still Image / HQ",
         "Debug / Export": "Debug / Export",
         "Synthetic View:": "Synthetic View:",
-        "Max Shift Ratio:": "Max Shift Ratio:",
+        "Max Shift Ratio:": "Shift Ratio:",
         "Temporal Strength:": "Temporal Strength:",
         "Temporal": "Temporal",
         "Scene Threshold:": "Scene Threshold:",
@@ -185,7 +215,6 @@ UI_TEXTS = {
         "Auto Scene Reset": "Auto Scene Reset",
         "Edge Dilation:": "Edge Dilation:",
         "Edge Threshold:": "Edge Threshold:",
-        "Depth Safety:": "Depth Safety:",
         "On": "On",
         "Anaglyph:": "Anaglyph:",
         "Cross Eyed": "Cross Eyed",
@@ -273,7 +302,7 @@ UI_TEXTS = {
         "tooltip_depth_quick": "Quick fixed depth presets for everyday use: Soft, Standard, or Enhanced",
         "tooltip_stereo_preset": "Auto switches scenes by weighted signals; manual presets force Cinema, Game, Still Image, or Debug behavior",
         "tooltip_stereo_quality": "Stereo synthesis backend: fast is lowest latency, quality_4k is balanced, hq_4k favors still-image quality",
-        "tooltip_max_shift": "Maximum horizontal disparity as a ratio of image width; higher values increase stereo separation",
+        "tooltip_max_shift": "Maximum horizontal shift as a ratio of image width; higher values increase stereo separation",
         "tooltip_temporal_strength": "Temporal smoothing strength for stereo output; higher values reduce flicker but can add lag",
         "tooltip_temporal": "Enable temporal stabilization between frames",
         "tooltip_scene_reset": "Scene-change threshold for resetting temporal history; lower values reset more often",
@@ -281,7 +310,6 @@ UI_TEXTS = {
         "tooltip_auto_scene_reset": "Automatically reset temporal state when a scene cut is detected",
         "tooltip_edge_dilation": "Expands detected depth edges for occlusion handling",
         "tooltip_edge_threshold": "Depth edge sensitivity; lower values detect more edges",
-        "tooltip_depth_safety": "Depth safety gate for flat UI, thumbnails, or low-texture content",
         "tooltip_anaglyph": "Color pair used when Display Mode is Anaglyph",
         "tooltip_cross_eyed": "Swap left and right eyes for cross-eyed viewing",
         "tooltip_advanced_stereo": "Show expert stereo/runtime parameters. Leave off for the simplified everyday UI.",
@@ -289,6 +317,7 @@ UI_TEXTS = {
         "tooltip_foreground_scale": "Foreground object scale",
         "tooltip_antialiasing": "Anti-aliasing level",
         "tooltip_ipd": "Interpupillary distance (mm)",
+        "tooltip_stereo_scale": "Stereo strength multiplier applied to the physical IPD; lower values reduce parallax, higher values increase depth",
         "tooltip_device": "Inference device",
         "tooltip_capture_tool": "Capture backend",
         "tooltip_run_mode": "Output mode",
@@ -316,6 +345,7 @@ UI_TEXTS = {
         "esc_stop": "Hold ESC 3s — stopping!",
         "exited_with_code": "Exited with code {}",
         "failed_save_yaml": "Failed to save YAML: {}",
+        "stereo_parameters_saved": "Stereo parameters saved",
         "invalid_url_scheme": "Invalid URL scheme: {}",
         "error_preview": "Failed to preview: {}",
         "url_copied": "URL copied to clipboard",
@@ -326,6 +356,7 @@ UI_TEXTS = {
         "Refresh": "刷新",
         "Show FPS": "显示帧率",
         "IPD (m):": "瞳距 (mm):",
+        "Stereo Scale:": "立体缩放:",
         "Convergence:": "会聚点:",
         "Display Mode:": "显示模式:",
         "Depth Model:": "深度模型:",
@@ -340,7 +371,7 @@ UI_TEXTS = {
         "Still Image / HQ": "图片 / 高质量",
         "Debug / Export": "调试 / 导出",
         "Synthetic View:": "立体质量:",
-        "Max Shift Ratio:": "最大位移比例:",
+        "Max Shift Ratio:": "位移比例:",
         "Temporal Strength:": "时域强度:",
         "Temporal": "时域稳定",
         "Scene Threshold:": "场景阈值:",
@@ -348,7 +379,6 @@ UI_TEXTS = {
         "Auto Scene Reset": "自动场景重置",
         "Edge Dilation:": "边缘扩张:",
         "Edge Threshold:": "边缘阈值:",
-        "Depth Safety:": "深度安全:",
         "On": "开启",
         "Anaglyph:": "红蓝模式:",
         "Cross Eyed": "交叉眼",
@@ -444,7 +474,7 @@ UI_TEXTS = {
         "tooltip_depth_quick": "给普通用户使用的固定深度档位：柔和、标准、增强",
         "tooltip_stereo_preset": "自动模式会按场景信号加权切换；手动模式固定为电影、游戏、图片或调试行为",
         "tooltip_stereo_quality": "立体合成后端：fast 低延迟，quality_4k 均衡，hq_4k 偏图片高质量",
-        "tooltip_max_shift": "最大水平视差占画面宽度的比例；越高立体分离越强",
+        "tooltip_max_shift": "水平位移占画面宽度的比例；越高立体分离越强",
         "tooltip_temporal_strength": "时域平滑强度；越高越稳定，但可能增加拖影或延迟",
         "tooltip_temporal": "启用帧间时域稳定",
         "tooltip_scene_reset": "场景变化重置阈值；越低越容易触发重置",
@@ -452,7 +482,6 @@ UI_TEXTS = {
         "tooltip_auto_scene_reset": "检测到场景切换时自动重置时域历史",
         "tooltip_edge_dilation": "扩张深度边缘区域，用于遮挡和补洞处理",
         "tooltip_edge_threshold": "深度边缘检测敏感度；越低检测到的边缘越多",
-        "tooltip_depth_safety": "针对平面 UI、缩略图、低纹理内容的深度安全门控",
         "tooltip_anaglyph": "显示模式为红蓝/补色时使用的颜色组合",
         "tooltip_cross_eyed": "交换左右眼，用于交叉眼观看",
         "tooltip_advanced_stereo": "显示专家级立体和运行时参数；普通使用建议保持关闭。",
@@ -460,6 +489,7 @@ UI_TEXTS = {
         "tooltip_foreground_scale": "前景缩放比例",
         "tooltip_antialiasing": "抗锯齿级别",
         "tooltip_ipd": "瞳距（毫米）",
+        "tooltip_stereo_scale": "作用在物理 IPD 上的立体强度倍率；数值越低视差越小，数值越高深度越强",
         "tooltip_device": "计算设备",
         "tooltip_capture_tool": "捕获后端",
         "tooltip_run_mode": "输出模式",
@@ -487,6 +517,7 @@ UI_TEXTS = {
         "esc_stop": "长按ESC 3秒停止",
         "exited_with_code": "退出码 {}",
         "failed_save_yaml": "保存 YAML 失败: {}",
+        "stereo_parameters_saved": "立体参数已保存",
         "invalid_url_scheme": "无效 URL 协议: {}",
         "error_preview": "打开浏览器失败: {}",
         "url_copied": "已复制网址到剪贴板",
@@ -516,7 +547,8 @@ DEFAULTS = {
     "Foreground Scale": 0.5,
     "IPD": 0.064,
     "Convergence": 0.0,
-    "Stereo Preset": "auto",
+    "Stereo Scale": 0.5,
+    "Stereo Preset": "cinema",
     "Stereo Quality": "quality_4k",
     "Max Shift Ratio": 0.05,
     "Temporal": True,
@@ -528,9 +560,6 @@ DEFAULTS = {
     "Edge Threshold": 0.04,
     "Cross Eyed": False,
     "Anaglyph Method": "red_cyan",
-    "Depth Safety": "Auto",
-    "Advanced Stereo": False,
-    "Advanced Device Options": False,
     "Display Mode": "Half-SBS",
     "FP16": False,
     "torch.compile": False,
@@ -971,6 +1000,7 @@ class CompactDropdown(ft.Container):
     def _build_menu(self):
         def on_item_click(e):
             val = e.control.data
+            self._value = val
             self._label.value = val
             self._apply_width()
             try:
@@ -1087,6 +1117,7 @@ class Desktop2StereoGUI:
         # Get the correct event loop in async context
         self._loop = asyncio.get_running_loop()
         self._proc_lock = asyncio.Lock()
+        self._hot_save_task = None
 
         self.page.title = f"Desktop2Stereo v{VERSION}"
         self.page.window.icon = os.path.join(os.path.dirname(__file__), "icon.ico")
@@ -1311,7 +1342,7 @@ class Desktop2StereoGUI:
         left_labels = [
             self.r0_label, self.r1a_label, self.depth_quick_label, self.r1b_label, self.r2a_label, self.r2b_label, self.r3a_label,
             self.stereo_preset_label, self.max_shift_label, self.scene_reset_label,
-            self.edge_dilation_label, self.depth_safety_label,
+            self.edge_dilation_label, self.stereo_scale_label,
             self.r4_label, self.r5_label, self.r6_label, self.target_fps_label,
             self.upscaler_label, self.r7a_label, self.r9_label, self.r10_label,
             self.lang_label,
@@ -1390,7 +1421,8 @@ class Desktop2StereoGUI:
         conv_options = [str(i / 4) for i in range(-2, 5)]
         self.convergence_dd = CompactDropdown(width=S(130),
             options=[v for v in conv_options],
-            value="0.0")
+            value="0.0",
+            on_select=self.on_stereo_hot_param_change)
         self.depth_quick_label = ft.Text("Depth Quick:", size=FONT_SIZE, width=S(130))
         self.depth_quick_dd = CompactDropdown(
             options=["Soft", "Standard", "Enhanced"],
@@ -1411,7 +1443,8 @@ class Desktop2StereoGUI:
         ds_options = [f"{i / 2:.1f}" for i in range(21)]
         self.depth_strength_dd = CompactDropdown(width=S(130),
             options=[v for v in ds_options],
-            value="2.0")
+            value="2.0",
+            on_select=self.on_stereo_hot_param_change)
         convergence_depth_row = ft.Row([
             self.r1b_label,
             self.convergence_dd,
@@ -1422,15 +1455,17 @@ class Desktop2StereoGUI:
 
         # Row 3b: Foreground scale + anti-aliasing
         self.r2b_label = ft.Text("Foreground Scale:", size=FONT_SIZE, width=S(130))
-        fg_options = [f"{i / 2:.1f}" for i in range(-10, 11)]
+        fg_options = [f"{i / 10:.1f}" for i in range(-9, 0)] + [f"{i / 2:.1f}" for i in range(0, 11)]
         self.foreground_scale_dd = CompactDropdown(width=S(130),
             options=[v for v in fg_options],
-            value="0.5")
+            value="0.5",
+            on_select=self.on_stereo_hot_param_change)
         self.r3a_label = ft.Text("Anti-aliasing:", size=FONT_SIZE, width=S(130))
         aa_options = [str(i) for i in range(11)]
         self.antialiasing_dd = CompactDropdown(width=S(130), 
             options=[v for v in aa_options],
-            value="2")
+            value="2",
+            on_select=self.on_stereo_hot_param_change)
         row2b = ft.Row([
             self.r2b_label,
             self.foreground_scale_dd,
@@ -1439,56 +1474,57 @@ class Desktop2StereoGUI:
             self.antialiasing_dd,
         ], spacing=1)
 
-        # Row 4: IPD + depth safety
+        # Row 4: IPD + stereo scale
         self.r3b_label = ft.Text("IPD (mm):", size=FONT_SIZE, width=S(130))
-        self.ipd_dd = CompactDropdown(options=[str(i) for i in range(58, 71)], value="64", width=S(130))
-        self.depth_safety_label = ft.Text("Depth Safety:", size=FONT_SIZE, width=S(130))
-        self.depth_safety_dd = CompactDropdown(options=["Auto", "On", "Off"], value="Auto", width=S(130))
+        self.ipd_dd = CompactDropdown(options=[str(i) for i in range(58, 71)], value="64", width=S(130), on_select=self.on_stereo_hot_param_change)
+        self.stereo_scale_label = ft.Text("Stereo Scale:", size=FONT_SIZE, width=S(130))
+        self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(1, 11)], value="0.5", width=S(130), on_select=self.on_stereo_hot_param_change)
         row3 = ft.Row([
             self.r3b_label,
             self.ipd_dd,
             ft.Container(width=S(40)),
-            self.depth_safety_label,
-            self.depth_safety_dd,
+            self.stereo_scale_label,
+            self.stereo_scale_dd,
         ], spacing=1)
 
         # Row 5: Stereo runtime mode and quality
         self.stereo_preset_label = ft.Text("Stereo Mode:", size=FONT_SIZE, width=S(130))
         self.stereo_preset_dd = CompactDropdown(
-            options=["Auto", "Cinema", "Game / Low Latency", "Still Image / HQ", "Debug / Export"],
-            value="Auto",
-            width=S(130))
+            options=["Cinema", "Game / Low Latency", "Still Image / HQ", "Debug / Export"],
+            value="Cinema",
+            width=S(130),
+            on_select=self.on_stereo_preset_change)
         self.stereo_quality_label = ft.Text("Synthetic View:", size=FONT_SIZE, width=S(130))
-        self.stereo_quality_dd = CompactDropdown(options=["fast", "fast_plus", "quality_4k", "hq_4k"], value="quality_4k", width=S(130))
+        self.stereo_quality_dd = CompactDropdown(options=self._stereo_quality_options(), value=self._stereo_quality_to_display("quality_4k"), width=S(130))
         stereo_row0 = ft.Row([self.stereo_preset_label, self.stereo_preset_dd, ft.Container(width=S(40)), self.stereo_quality_label, self.stereo_quality_dd], spacing=1)
 
         self.max_shift_label = ft.Text("Max Shift Ratio:", size=FONT_SIZE, width=S(130))
-        self.max_shift_dd = CompactDropdown(options=["0.02", "0.03", "0.04", "0.05", "0.06", "0.08", "0.10"], value="0.05", width=S(130))
+        self.max_shift_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)], value="0.05", width=S(130), on_select=self.on_stereo_hot_param_change)
         self.temporal_strength_label = ft.Text("Temporal Strength:", size=FONT_SIZE, width=S(130))
-        self.temporal_strength_dd = CompactDropdown(options=["0.00", "0.25", "0.40", "0.60", "0.75", "0.85", "0.95"], value="0.75", width=S(130))
+        self.temporal_strength_dd = CompactDropdown(options=["0.00", "0.25", "0.40", "0.60", "0.75", "0.85", "0.95"], value="0.75", width=S(130), on_select=self.on_stereo_hot_param_change)
         stereo_row1 = ft.Row([self.max_shift_label, self.max_shift_dd, ft.Container(width=S(40)), self.temporal_strength_label, self.temporal_strength_dd], spacing=1)
 
         self.scene_reset_label = ft.Text("Scene Threshold:", size=FONT_SIZE, width=S(130))
-        self.scene_reset_dd = CompactDropdown(options=["0.00", "0.12", "0.18", "0.22", "0.28", "0.35"], value="0.22", width=S(130))
+        self.scene_reset_dd = CompactDropdown(options=["0.00", "0.12", "0.18", "0.22", "0.28", "0.35"], value="0.22", width=S(130), on_select=self.on_stereo_hot_param_change)
         self.reset_cooldown_label = ft.Text("Reset Cooldown:", size=FONT_SIZE, width=S(130))
-        self.reset_cooldown_dd = CompactDropdown(options=["1", "2", "3", "4", "6"], value="3", width=S(130))
+        self.reset_cooldown_dd = CompactDropdown(options=["1", "2", "3", "4", "6"], value="3", width=S(130), on_select=self.on_stereo_hot_param_change)
         stereo_row2 = ft.Row([self.scene_reset_label, self.scene_reset_dd, ft.Container(width=S(40)), self.reset_cooldown_label, self.reset_cooldown_dd], spacing=1)
 
         self.edge_dilation_label = ft.Text("Edge Dilation:", size=FONT_SIZE, width=S(130))
-        self.edge_dilation_dd = CompactDropdown(options=["0", "1", "2", "3", "4"], value="2", width=S(130))
+        self.edge_dilation_dd = CompactDropdown(options=["0", "1", "2", "3", "4"], value="2", width=S(130), on_select=self.on_stereo_hot_param_change)
         self.edge_threshold_label = ft.Text("Edge Threshold:", size=FONT_SIZE, width=S(130))
-        self.edge_threshold_dd = CompactDropdown(options=["0.02", "0.04", "0.06", "0.08", "0.10"], value="0.04", width=S(130))
+        self.edge_threshold_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)], value="0.04", width=S(130), on_select=self.on_stereo_hot_param_change)
         stereo_row3 = ft.Row([self.edge_dilation_label, self.edge_dilation_dd, ft.Container(width=S(40)), self.edge_threshold_label, self.edge_threshold_dd], spacing=1)
 
-        self.cross_eyed_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT, label="Cross Eyed", value=False)
+        self.cross_eyed_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT, label="Cross Eyed", value=False, on_change=self.on_stereo_hot_param_change)
         self.anaglyph_label = ft.Text("Anaglyph:", size=FONT_SIZE, width=S(130))
-        self.anaglyph_dd = CompactDropdown(options=["red_cyan", "green_magenta", "amber_blue"], value="red_cyan", width=S(130))
+        self.anaglyph_dd = CompactDropdown(options=["red_cyan", "green_magenta", "amber_blue"], value="red_cyan", width=S(130), on_select=self.on_stereo_hot_param_change)
         stereo_row4 = ft.Row([self.anaglyph_label, self.anaglyph_dd, ft.Container(width=S(40)), self.cross_eyed_cb, ft.Container(width=S(20)), self.fp16_cb], spacing=1)
         self.advanced_stereo_cb = ft.Checkbox(
             scale=SCALE,
             visual_density=ft.VisualDensity.COMPACT,
             label="Advanced Stereo",
-            value=DEFAULTS.get("Advanced Stereo", False),
+            value=False,
             on_change=self.on_advanced_stereo_change,
         )
         advanced_stereo_row = ft.Row([self.advanced_stereo_cb], spacing=1)
@@ -1541,7 +1577,7 @@ class Desktop2StereoGUI:
             scale=SCALE,
             visual_density=ft.VisualDensity.COMPACT,
             label="Advanced Options",
-            value=DEFAULTS.get("Advanced Device Options", False),
+            value=False,
             on_change=self.on_advanced_device_change,
         )
         row5 = ft.Row([
@@ -1957,31 +1993,29 @@ class Desktop2StereoGUI:
         self.display_mode_dd.value = cfg.get("Display Mode", DEFAULTS["Display Mode"])
         self.xr_preview_cb.value = cfg.get("XR Preview Window", DEFAULTS["XR Preview Window"])
         self.local_vsync_cb.value = cfg.get("Local VSync", DEFAULTS["Local VSync"])
-        self.advanced_device_cb.value = bool(cfg.get("Advanced Device Options", DEFAULTS["Advanced Device Options"]))
+        self.advanced_device_cb.value = False
         self.upscaler_dd.options = self._upscaler_display_options()
         self.upscaler_dd.value = self._upscaler_to_display(cfg.get("Upscaler", DEFAULTS["Upscaler"]))
         self.upscaler_sharpness_dd.value = f'{self._parse_float(cfg.get("Upscaler Sharpness", DEFAULTS["Upscaler Sharpness"]), DEFAULTS["Upscaler Sharpness"]):.2f}'
         target_fps = self._parse_int(cfg.get("Target FPS", DEFAULTS["Target FPS"]), DEFAULTS["Target FPS"])
         self.target_fps_dd.value = self._target_fps_to_display(target_fps)
         self.antialiasing_dd.value = str(cfg.get("Anti-aliasing", DEFAULTS["Anti-aliasing"]))
-        self.foreground_scale_dd.value = str(cfg.get("Foreground Scale", DEFAULTS["Foreground Scale"]))
+        self.foreground_scale_dd.value = str(self._clamp_foreground_scale(cfg.get("Foreground Scale", DEFAULTS["Foreground Scale"])))
         self.convergence_dd.value = str(cfg.get("Convergence", DEFAULTS["Convergence"]))
         self.stereo_preset_dd.value = self._preset_to_display(cfg.get("Stereo Preset", DEFAULTS["Stereo Preset"]))
-        self.stereo_quality_dd.value = cfg.get("Stereo Quality", cfg.get("Synthetic View", DEFAULTS["Stereo Quality"]))
+        self.stereo_quality_dd.value = self._stereo_quality_to_display(cfg.get("Stereo Quality", cfg.get("Synthetic View", DEFAULTS["Stereo Quality"])))
         self.max_shift_dd.value = f'{self._parse_float(cfg.get("Max Shift Ratio", DEFAULTS["Max Shift Ratio"]), DEFAULTS["Max Shift Ratio"]):.2f}'
         self.temporal_strength_dd.value = f'{self._parse_float(cfg.get("Temporal Strength", DEFAULTS["Temporal Strength"]), DEFAULTS["Temporal Strength"]):.2f}'
-        self.scene_reset_dd.value = f'{self._parse_float(cfg.get("Scene Reset Threshold", DEFAULTS["Scene Reset Threshold"]), DEFAULTS["Scene Reset Threshold"]):.2f}'
-        self.reset_cooldown_dd.value = str(cfg.get("Reset Cooldown Frames", DEFAULTS["Reset Cooldown Frames"]))
         self.edge_dilation_dd.value = str(cfg.get("Edge Dilation", DEFAULTS["Edge Dilation"]))
         self.edge_threshold_dd.value = f'{self._parse_float(cfg.get("Edge Threshold", DEFAULTS["Edge Threshold"]), DEFAULTS["Edge Threshold"]):.2f}'
         self.cross_eyed_cb.value = cfg.get("Cross Eyed", DEFAULTS["Cross Eyed"])
         self.anaglyph_dd.value = cfg.get("Anaglyph Method", DEFAULTS["Anaglyph Method"])
-        self.depth_safety_dd.value = self._depth_safety_to_display(cfg.get("Depth Safety", DEFAULTS["Depth Safety"]))
-        self.advanced_stereo_cb.value = bool(cfg.get("Advanced Stereo", DEFAULTS["Advanced Stereo"]))
+        self.advanced_stereo_cb.value = False
         self._sync_advanced_stereo_visibility()
         self._sync_device_advanced_visibility(cfg.get("Run Mode", DEFAULTS.get("Run Mode", "Local Viewer")))
         ipd_m = cfg.get("IPD", DEFAULTS["IPD"])
         self.ipd_dd.value = str(int(ipd_m * 1000))
+        self.stereo_scale_dd.value = f'{self._parse_float(cfg.get("Stereo Scale", cfg.get("Stereo Strength Scale", DEFAULTS["Stereo Scale"])), DEFAULTS["Stereo Scale"]):.1f}'
         self.fp16_cb.value = DEFAULTS["FP16"]
         self.showfps_cb.value = cfg.get("Show FPS", DEFAULTS["Show FPS"])
         self.fill_16_9_cb.value = cfg.get("Fill 16:9", DEFAULTS["Fill 16:9"])
@@ -2441,7 +2475,7 @@ class Desktop2StereoGUI:
             self.update_ui_texts()
             self._sync_visibility()
             if self._status_key:
-                self.set_status(UI_TEXTS[self.language][self._status_key], key=self._status_key)
+                self.set_status(UI_TEXTS[self.language].get(self._status_key, self.status_text.value), key=self._status_key)
             # Theme: update_ui_texts already set options, here we only set the value
             t = UI_TEXTS[self.language]
             cur = self.theme_dd.value
@@ -2465,21 +2499,21 @@ class Desktop2StereoGUI:
         self.r2b_label.value = t["Foreground Scale:"]
         self.r3a_label.value = t["Anti-aliasing:"]
         self.r3b_label.value = t["IPD (m):"]
+        self.stereo_scale_label.value = t["Stereo Scale:"]
         self.stereo_preset_label.value = t["Stereo Mode:"]
         preset_key = self._display_to_preset(self.stereo_preset_dd.value)
-        self.stereo_preset_dd.options = [t["Auto"], t["Cinema"], t["Game / Low Latency"], t["Still Image / HQ"], t["Debug / Export"]]
+        self.stereo_preset_dd.options = [t["Cinema"], t["Game / Low Latency"], t["Still Image / HQ"], t["Debug / Export"]]
         self.stereo_preset_dd.value = self._preset_to_display(preset_key)
         self.stereo_quality_label.value = t["Synthetic View:"]
+        stereo_quality_key = self._display_to_stereo_quality(self.stereo_quality_dd.value)
+        self.stereo_quality_dd.options = self._stereo_quality_options()
+        self.stereo_quality_dd.value = self._stereo_quality_to_display(stereo_quality_key)
         self.max_shift_label.value = t["Max Shift Ratio:"]
         self.temporal_strength_label.value = t["Temporal Strength:"]
         self.scene_reset_label.value = t["Scene Threshold:"]
         self.reset_cooldown_label.value = t["Reset Cooldown:"]
         self.edge_dilation_label.value = t["Edge Dilation:"]
         self.edge_threshold_label.value = t["Edge Threshold:"]
-        self.depth_safety_label.value = t["Depth Safety:"]
-        depth_safety_key = self._display_to_depth_safety(self.depth_safety_dd.value)
-        self.depth_safety_dd.options = [t["Auto"], t["On"], t["Off"]]
-        self.depth_safety_dd.value = self._depth_safety_to_display(depth_safety_key)
         self.anaglyph_label.value = t["Anaglyph:"]
         self.cross_eyed_cb.label = t["Cross Eyed"]
         self.advanced_stereo_cb.label = t["Advanced Stereo"]
@@ -2586,13 +2620,13 @@ class Desktop2StereoGUI:
             (self.reset_cooldown_dd, "tooltip_reset_cooldown"),
             (self.edge_dilation_dd, "tooltip_edge_dilation"),
             (self.edge_threshold_dd, "tooltip_edge_threshold"),
-            (self.depth_safety_dd, "tooltip_depth_safety"),
             (self.anaglyph_dd, "tooltip_anaglyph"),
             (self.cross_eyed_cb, "tooltip_cross_eyed"),
             (self.advanced_stereo_cb, "tooltip_advanced_stereo"),
             (self.foreground_scale_dd, "tooltip_foreground_scale"),
             (self.antialiasing_dd, "tooltip_antialiasing"),
             (self.ipd_dd, "tooltip_ipd"),
+            (self.stereo_scale_dd, "tooltip_stereo_scale"),
             (self.device_dd, "tooltip_device"),
             (self.advanced_device_cb, "tooltip_advanced_device_options"),
             (self.capture_tool_dd, "tooltip_capture_tool"),
@@ -2818,6 +2852,170 @@ class Desktop2StereoGUI:
         await asyncio.sleep(delay)
         self.set_status("", key="")
 
+
+    def on_stereo_preset_change(self, e=None):
+        preset = self._display_to_preset(self.stereo_preset_dd.value)
+        if self._apply_stereo_preset_values(preset):
+            self._schedule_stereo_hot_save()
+        else:
+            self.on_stereo_hot_param_change(e)
+
+    def _apply_stereo_preset_values(self, preset):
+        values = self._stereo_preset_gui_values(preset)
+        if not values:
+            return False
+        self.stereo_quality_dd.value = self._stereo_quality_to_display(values["quality"])
+        self.depth_strength_dd.value = f"{values['depth_strength']:.1f}"
+        self.depth_quick_dd.value = self._depth_quick_to_display(values["depth_quick"])
+        self.convergence_dd.value = f"{values['convergence']:.2f}".rstrip("0").rstrip(".")
+        self.max_shift_dd.value = f"{values['max_shift_ratio']:.2f}"
+        self.stereo_scale_dd.value = f"{values['stereo_scale']:.1f}"
+        self.temporal_strength_dd.value = f"{values['temporal_strength']:.2f}"
+        self.foreground_scale_dd.value = f"{values['foreground_scale']:.1f}"
+        self.antialiasing_dd.value = str(values["antialiasing"])
+        self.edge_dilation_dd.value = str(values["edge_dilation"])
+        self.edge_threshold_dd.value = f"{values['edge_threshold']:.2f}"
+        self.cross_eyed_cb.value = False
+        for ctrl in (
+            self.stereo_quality_dd,
+            self.depth_strength_dd,
+            self.depth_quick_dd,
+            self.convergence_dd,
+            self.max_shift_dd,
+            self.temporal_strength_dd,
+            self.foreground_scale_dd,
+            self.antialiasing_dd,
+            self.edge_dilation_dd,
+            self.edge_threshold_dd,
+            self.cross_eyed_cb,
+        ):
+            try:
+                ctrl.update()
+            except Exception:
+                pass
+        return True
+
+    @staticmethod
+    def _stereo_preset_gui_values(preset):
+        return {
+            "cinema": {
+                "quality": "quality_4k",
+                "depth_strength": 2.4,
+                "depth_quick": "Enhanced",
+                "convergence": 0.25,
+                "max_shift_ratio": 0.05,
+                "stereo_scale": 0.5,
+                "temporal_strength": 0.75,
+                "foreground_scale": 0.5,
+                "antialiasing": 1,
+                "edge_dilation": 2,
+                "edge_threshold": 0.04,
+            },
+            "game_low_latency": {
+                "quality": "fast_plus",
+                "depth_strength": 1.6,
+                "depth_quick": "Soft",
+                "convergence": 0.25,
+                "max_shift_ratio": 0.04,
+                "stereo_scale": 0.5,
+                "temporal_strength": 0.25,
+                "foreground_scale": 0.0,
+                "antialiasing": 0,
+                "edge_dilation": 1,
+                "edge_threshold": 0.04,
+            },
+            "still_image_hq": {
+                "quality": "hq_4k",
+                "depth_strength": 3.0,
+                "depth_quick": "Enhanced",
+                "convergence": 0.25,
+                "max_shift_ratio": 0.06,
+                "stereo_scale": 0.5,
+                "temporal_strength": 0.00,
+                "foreground_scale": 0.5,
+                "antialiasing": 2,
+                "edge_dilation": 3,
+                "edge_threshold": 0.04,
+            },
+            "debug_export": {
+                "quality": "quality_4k",
+                "depth_strength": 2.4,
+                "depth_quick": "Enhanced",
+                "convergence": 0.25,
+                "max_shift_ratio": 0.05,
+                "stereo_scale": 0.5,
+                "temporal_strength": 0.75,
+                "foreground_scale": 0.0,
+                "antialiasing": 0,
+                "edge_dilation": 2,
+                "edge_threshold": 0.04,
+            },
+        }.get(preset)
+
+    def on_stereo_hot_param_change(self, e=None):
+        self._schedule_stereo_hot_save()
+
+    def _schedule_stereo_hot_save(self, delay=0.15):
+        task = getattr(self, "_hot_save_task", None)
+        if task and not task.done():
+            task.cancel()
+        try:
+            self._hot_save_task = asyncio.create_task(self._save_stereo_hot_params_after_delay(delay))
+        except RuntimeError:
+            self._save_stereo_hot_params()
+
+    async def _save_stereo_hot_params_after_delay(self, delay):
+        try:
+            await asyncio.sleep(delay)
+            self._save_stereo_hot_params()
+        except asyncio.CancelledError:
+            return
+
+    def _save_stereo_hot_params(self):
+        path = os.path.join(BASE_DIR, "settings.yaml")
+        cfg = self._config.copy()
+        if os.path.exists(path):
+            try:
+                loaded = read_yaml(path)
+                if loaded:
+                    cfg.update(loaded)
+            except Exception:
+                pass
+        temporal_strength = self._parse_float(self.temporal_strength_dd.value, DEFAULTS["Temporal Strength"])
+        scene_reset_threshold = self._parse_float(self.scene_reset_dd.value, DEFAULTS["Scene Reset Threshold"])
+        antialias_strength = self._parse_float(self.antialiasing_dd.value, DEFAULTS["Depth Antialias Strength"])
+        foreground_scale = self._clamp_foreground_scale(self._parse_float(self.foreground_scale_dd.value, DEFAULTS["Foreground Scale"]))
+        self.foreground_scale_dd.value = f"{foreground_scale:.1f}"
+        cfg.update({
+            "Stereo Preset": self._display_to_preset(self.stereo_preset_dd.value),
+            "Stereo Quality": self._display_to_stereo_quality(self.stereo_quality_dd.value),
+            "Synthetic View": self._display_to_stereo_quality(self.stereo_quality_dd.value),
+            "IPD": self._parse_int(self.ipd_dd.value, int(DEFAULTS["IPD"] * 1000)) / 1000.0,
+            "Stereo Scale": self._parse_float(self.stereo_scale_dd.value, DEFAULTS["Stereo Scale"]),
+            "Convergence": self._parse_float(self.convergence_dd.value, DEFAULTS["Convergence"]),
+            "Depth Strength": self._parse_float(self.depth_strength_dd.value, DEFAULTS["Depth Strength"]),
+            "Depth Quick": self._display_to_depth_quick(self.depth_quick_dd.value),
+            "Max Shift Ratio": self._parse_float(self.max_shift_dd.value, DEFAULTS["Max Shift Ratio"]),
+            "Temporal": temporal_strength > 0.0,
+            "Temporal Strength": temporal_strength,
+            "Auto Scene Reset": scene_reset_threshold > 0.0,
+            "Scene Reset Threshold": scene_reset_threshold,
+            "Reset Cooldown Frames": self._parse_int(self.reset_cooldown_dd.value, DEFAULTS["Reset Cooldown Frames"]),
+            "Foreground Scale": foreground_scale,
+            "Anti-aliasing": self._parse_int(self.antialiasing_dd.value, DEFAULTS["Anti-aliasing"]),
+            "Depth Antialias Strength": antialias_strength,
+            "Edge Dilation": self._parse_int(self.edge_dilation_dd.value, DEFAULTS["Edge Dilation"]),
+            "Edge Threshold": self._parse_float(self.edge_threshold_dd.value, DEFAULTS["Edge Threshold"]),
+            "Anaglyph Method": self.anaglyph_dd.value,
+            "Cross Eyed": bool(self.cross_eyed_cb.value),
+        })
+        ok, err = save_yaml(path, cfg)
+        if ok:
+            self._config.update(cfg)
+            self.set_status(UI_TEXTS[self.language]["stereo_parameters_saved"], key="stereo_parameters_saved")
+        else:
+            self.set_status(UI_TEXTS[self.language]["failed_save_yaml"].format(err))
+
     def set_status(self, msg, key=None):
         self.status_text.value = msg
         if key is not None:
@@ -2925,6 +3123,7 @@ class Desktop2StereoGUI:
             self.depth_strength_dd.update()
         except Exception:
             pass
+        self._schedule_stereo_hot_save()
 
     @staticmethod
     def _depth_strength_for_quick(value):
@@ -2935,6 +3134,23 @@ class Desktop2StereoGUI:
         }
         return mapping.get(value, 2.0)
 
+    def _stereo_quality_language_key(self):
+        return "zh" if str(getattr(self, "language", "EN")).upper().startswith("ZH") else "en"
+
+    def _stereo_quality_options(self):
+        return list(STEREO_QUALITY_DISPLAY[self._stereo_quality_language_key()].values())
+
+    def _stereo_quality_to_display(self, value):
+        mapping = STEREO_QUALITY_DISPLAY[self._stereo_quality_language_key()]
+        return mapping.get(str(value or "quality_4k"), mapping["quality_4k"])
+
+    def _display_to_stereo_quality(self, value):
+        text = str(value or "")
+        for mapping in STEREO_QUALITY_DISPLAY.values():
+            for key, label in mapping.items():
+                if text == label or text == key:
+                    return key
+        return "quality_4k"
     def _depth_quick_to_display(self, value):
         return UI_TEXTS[self.language].get(value, value)
 
@@ -2965,8 +3181,6 @@ class Desktop2StereoGUI:
     @staticmethod
     def _display_to_preset(value):
         mapping = {
-            "Auto": "auto",
-            "自动": "auto",
             "Cinema": "cinema",
             "影院": "cinema",
             "电影 / 偏均衡": "cinema",
@@ -2977,34 +3191,26 @@ class Desktop2StereoGUI:
             "Debug / Export": "debug_export",
             "调试 / 导出": "debug_export",
         }
-        return mapping.get(value, str(value or "auto").strip().lower())
+        return mapping.get(value, str(value or "cinema").strip().lower())
 
     def _preset_to_display(self, value):
         mapping = {
-            "auto": "Auto",
+            "auto": "Cinema",
             "cinema": "Cinema",
             "game_low_latency": "Game / Low Latency",
             "still_image_hq": "Still Image / HQ",
             "debug_export": "Debug / Export",
         }
-        key = mapping.get(str(value or "auto").strip().lower(), "Auto")
+        key = mapping.get(str(value or "cinema").strip().lower(), "Cinema")
         return UI_TEXTS[self.language].get(key, key) if hasattr(self, "language") else key
 
-    def _depth_safety_to_display(self, value):
-        return UI_TEXTS[self.language].get(value, value)
-
     @staticmethod
-    def _display_to_depth_safety(value):
-        mapping = {
-            "Auto": "Auto",
-            "自动": "Auto",
-            "On": "On",
-            "开启": "On",
-            "Off": "Off",
-            "关闭": "Off",
-        }
-        return mapping.get(value, str(value or "Auto"))
-
+    def _clamp_foreground_scale(value):
+        try:
+            value = float(value)
+        except (ValueError, TypeError):
+            value = float(DEFAULTS["Foreground Scale"])
+        return max(-0.9, min(5.0, value))
     @staticmethod
     def _parse_int(val, default):
         try:
@@ -3039,13 +3245,18 @@ class Desktop2StereoGUI:
 
         temporal_strength = self._parse_float(self.temporal_strength_dd.value, DEFAULTS["Temporal Strength"])
         scene_reset_threshold = self._parse_float(self.scene_reset_dd.value, DEFAULTS["Scene Reset Threshold"])
+        foreground_scale = self._clamp_foreground_scale(self._parse_float(self.foreground_scale_dd.value, DEFAULTS["Foreground Scale"]))
 
         self._config.update({
             "Capture Mode": self.capture_mode_key,
             "Monitor Index": monitor_idx,
             "Window Title": self.selected_window_name if self.capture_mode_key == "Window" else "",
             "Show FPS": self.showfps_cb.value,
+            "Stereo Preset": self._display_to_preset(self.stereo_preset_dd.value),
+            "Stereo Quality": self._display_to_stereo_quality(self.stereo_quality_dd.value),
+            "Synthetic View": self._display_to_stereo_quality(self.stereo_quality_dd.value),
             "IPD": self._parse_int(self.ipd_dd.value, int(DEFAULTS["IPD"] * 1000)) / 1000.0,
+            "Stereo Scale": self._parse_float(self.stereo_scale_dd.value, DEFAULTS["Stereo Scale"]),
             "Convergence": self._parse_float(self.convergence_dd.value, DEFAULTS["Convergence"]),
             "Display Mode": self.display_mode_dd.value,
             "Model List": ALL_MODELS,
@@ -3055,8 +3266,8 @@ class Desktop2StereoGUI:
             "Anti-aliasing": self._parse_int(self.antialiasing_dd.value, DEFAULTS["Anti-aliasing"]),
             "Depth Antialias Strength": self._parse_float(self.antialiasing_dd.value, DEFAULTS["Depth Antialias Strength"]),
             "Stereo Preset": self._display_to_preset(self.stereo_preset_dd.value),
-            "Stereo Quality": self.stereo_quality_dd.value,
-            "Synthetic View": self.stereo_quality_dd.value,
+            "Stereo Quality": self._display_to_stereo_quality(self.stereo_quality_dd.value),
+            "Synthetic View": self._display_to_stereo_quality(self.stereo_quality_dd.value),
             "Max Shift Ratio": self._parse_float(self.max_shift_dd.value, DEFAULTS["Max Shift Ratio"]),
             "Temporal": temporal_strength > 0.0,
             "Temporal Strength": temporal_strength,
@@ -3067,9 +3278,7 @@ class Desktop2StereoGUI:
             "Edge Threshold": self._parse_float(self.edge_threshold_dd.value, DEFAULTS["Edge Threshold"]),
             "Cross Eyed": self.cross_eyed_cb.value,
             "Anaglyph Method": self.anaglyph_dd.value,
-            "Depth Safety": self._display_to_depth_safety(self.depth_safety_dd.value),
-            "Advanced Stereo": self.advanced_stereo_cb.value,
-            "Foreground Scale": self._parse_float(self.foreground_scale_dd.value, DEFAULTS["Foreground Scale"]),
+            "Foreground Scale": foreground_scale,
             "Depth Resolution": self._parse_int(self.depth_res_dd.value, DEFAULTS["Depth Resolution"]),
             "FP16": self.fp16_cb.value,
             "Computing Device": self.device_label_to_index.get(self.device_dd.value, DEFAULTS["Computing Device"]),
@@ -3077,7 +3286,6 @@ class Desktop2StereoGUI:
             "Run Mode": self.run_mode_key,
             "XR Preview Window": self.xr_preview_cb.value,
             "Local VSync": self.local_vsync_cb.value,
-            "Advanced Device Options": self.advanced_device_cb.value,
             "Target FPS": self._target_fps_from_display(self.target_fps_dd.value),
             "Processing Resolution": self._config.get("Processing Resolution", DEFAULTS["Processing Resolution"]),
             "Upscaler": self._upscaler_from_display(self.upscaler_dd.value),
@@ -3148,7 +3356,7 @@ class Desktop2StereoGUI:
             self._config["Recompile CoreML"] = False
             self._config["Recompile OpenVINO"] = False
             self._config["FP16"] = DEFAULTS["FP16"]
-            self._config["Stereo Preset"] = DEFAULTS["Stereo Preset"]
+            self._config["Stereo Preset"] = "cinema"
             save_yaml(os.path.join(BASE_DIR, "settings.yaml"), self._config)
         except Exception as e:
             self.set_status(UI_TEXTS[self.language]["err_start_failed"].format(e))

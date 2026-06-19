@@ -158,8 +158,8 @@ def synthesize_fast_plus(rgb: torch.Tensor, depth: torch.Tensor, config: StereoC
         eyes = edge_aware_fill(eyes, fill_mask, radius=variant.radius, strength=variant.strength, fused=config.fused)
         left, right = eyes.chunk(2, dim=0)
     elif variant.fill == "directional":
-        left = directional_fill_one(left, mask, eye_sign=-1, taps=variant.taps, strength=variant.strength, direction=variant.direction)
-        right = directional_fill_one(right, mask, eye_sign=1, taps=variant.taps, strength=variant.strength, direction=variant.direction)
+        left = directional_fill_one(left, mask, eye_sign=1, taps=variant.taps, strength=variant.strength, direction=variant.direction)
+        right = directional_fill_one(right, mask, eye_sign=-1, taps=variant.taps, strength=variant.strength, direction=variant.direction)
     elif variant.fill != "none":
         raise ValueError(f"unknown fill type: {variant.fill}")
     if config.cross_eyed:

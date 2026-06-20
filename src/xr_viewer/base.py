@@ -2,6 +2,7 @@
 # Desktop2Stereo OpenXR viewer: no-room profile with built-in screen effects.
 
 from .implementation import *
+from .overlay import OverlayMixin
 
 
 class ScreenEffectsMixin:
@@ -20,12 +21,12 @@ class ScreenEffectsMixin:
         self._ground_light_enabled = bool(kwargs.get('ground_light_enabled', False))
 
         self._border_alpha = max(float(getattr(self, '_border_alpha', 0.0)), 0.0)
-        self._glow_intensity = float(kwargs.get('glow_intensity', 0.22))
-        self._glow_width_m = float(kwargs.get('glow_width_m', 0.035))
+        self._glow_intensity = float(kwargs.get('glow_intensity', 0.6))
+        self._glow_width_m = float(kwargs.get('glow_width_m', 0.30))
         self._glow_ref_screen = float(kwargs.get('glow_ref_screen', 2.4))
         self._glow_color = tuple(kwargs.get('glow_color', (0.30, 0.55, 1.0)))
         self._glow_target_color = self._glow_color
-        self._shadow_opacity = float(kwargs.get('shadow_opacity', 0.22))
+        self._shadow_opacity = float(kwargs.get('shadow_opacity', 0.8))
         self._ground_light_color = tuple(kwargs.get('ground_light_color', (0.25, 0.45, 1.0)))
         self._ground_light_intensity = float(kwargs.get('ground_light_intensity', 0.10))
         self._breath_dx = self._breath_dy = self._breath_dz = 0.0
@@ -92,6 +93,11 @@ class ScreenEffectsMixin:
         intensity = float(getattr(self, '_glow_intensity', 0.0))
         if intensity <= 0.0:
             return
+
+        glow_color = np.array(getattr(self, '_glow_color', (0.30, 0.55, 1.0)), dtype='f4')
+        glow_target = np.array(getattr(self, '_glow_target_color', tuple(glow_color)), dtype='f4')
+        glow_color = glow_color * 0.88 + glow_target * 0.12
+        self._glow_color = tuple(float(x) for x in glow_color)
 
         screen_long = max(self.screen_width, self.screen_height)
         glow_scale = screen_long / max(float(getattr(self, '_glow_ref_screen', 2.4)), 1e-6)
@@ -183,7 +189,7 @@ class ScreenEffectsMixin:
         self.ctx.disable(moderngl.BLEND)
         self.ctx.depth_mask = True
 
-class OpenXRViewer(ScreenEffectsMixin, OpenXRViewerCore):
+class OpenXRViewer(ScreenEffectsMixin, OpenXRViewerCore, OverlayMixin):
     """No-room viewer.
 
     Keeps normal viewing policy and screen effects separate from room/environment

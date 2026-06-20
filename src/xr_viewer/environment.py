@@ -3,9 +3,10 @@
 # Shared runtime/rendering code is in xrviewer_core.py; room-specific code lives here.
 
 from .implementation import *
+from .overlay import OverlayMixin
 
 
-class OpenXRViewer(OpenXRViewerCore):
+class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
     """Room/environment viewer.
 
     This class keeps the environment-specific behavior separate from the normal

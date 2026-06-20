@@ -50,9 +50,30 @@ try:
     import xr
     OPENXR_AVAILABLE = True
 except ImportError:
+    xr = None
     OPENXR_AVAILABLE = False
     print("[OpenXRViewer] pyopenxr not installed. Run: pip install pyopenxr")
 
+
+
+def _openxr_app_api_version():
+    """Request OpenXR 1.0 for broad runtime compatibility."""
+    if xr is not None and hasattr(xr, "Version"):
+        return xr.Version(1, 0, 0)
+    return xr.XR_CURRENT_API_VERSION
+
+
+def _float_option(kwargs, key, env_name, default, min_value=None, max_value=None):
+    raw = kwargs.get(key, os.environ.get(env_name, default))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = float(default)
+    if min_value is not None:
+        value = max(float(min_value), value)
+    if max_value is not None:
+        value = min(float(max_value), value)
+    return value
 # GLB loader (for VR controller models)
 import struct
 import json
@@ -2479,9 +2500,11 @@ class OpenXRViewerCore:
             kwargs.get('openxr_runtime_eye_gpu_upload', os.environ.get('D2S_OPENXR_RUNTIME_EYE_GPU_UPLOAD', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')
         self._runtime_eye_gpu_logged = False
+        self._runtime_eye_texture_gpu_enabled = True
         self._runtime_eye_texture_logged = False
         self._runtime_eye_cpu_logged = False
         self._runtime_eye_gpu_disabled_reason = None
+        self._screen_footprint_logged = set()
         self._runtime_eye_texture_resources = [None, None]
         self._runtime_eye_texture_resource_size = None
         self._runtime_eye_pbos = [None, None]
@@ -2533,8 +2556,8 @@ class OpenXRViewerCore:
         self._cached_sbs_res        = (0, 0)
 
         # Virtual screen transform (world space, metres / radians)
-        self.screen_distance = 2.0
-        self.screen_width    = 2.4
+        self.screen_distance = _float_option(kwargs, 'openxr_screen_distance', 'D2S_OPENXR_SCREEN_DISTANCE', 2.0, 0.25, 10.0)
+        self.screen_width    = _float_option(kwargs, 'openxr_screen_width', 'D2S_OPENXR_SCREEN_WIDTH', 2.4, 0.25, 20.0)
         self._screen_ref_size = 2.4   # long-dimension reference for resize
         self.screen_height   = None   # derived from frame aspect ratio on first frame
 
@@ -2658,6 +2681,17 @@ class OpenXRViewerCore:
         # Screen floating/breathing animation
 
         # screen presets: (name, width_m, distance_m) -height is derived from width and frame aspect ratio
+        self._screen_presets = [
+            ('10" Tablet', 0.30, 0.4),
+            ('27" Monitor', 0.60, 0.6),
+            ('65" TV', 1.44, 2.0),
+            ('100" Projector 1', 2.40, 2.0),
+            ('100" Projector 2', 2.21, 2.5),
+            ('1000" IMAX', 22.0, 20.0),
+        ]
+        self._preset_index = 3
+        self._preset_name_overlay = None
+        self._screen_curved = False
         self.screen_pan_x    = 0.0
         self.screen_pan_y    = 0.0
         self.screen_yaw      = 0.0    # rotation around Y axis
@@ -2859,6 +2893,27 @@ class OpenXRViewerCore:
         self._help_tex_size = (1, 1)  # Dynamic, _build_help_texture sets the actual size based on text layout
 
         # Depth-ratio OSD: floating panel that appears when depth_ratio changes
+        self._depth_osd_tex       = None
+        self._depth_osd_vao       = None
+        self._depth_osd_tex_size  = (256, 78)
+        self._depth_osd_alpha     = 0.0
+        self._depth_osd_show_t    = -999.0
+        self._depth_osd_last_val  = None
+
+        # Screen preset OSD: shows the selected physical screen preset.
+        self._preset_osd_tex       = None
+        self._preset_osd_vao       = None
+        self._preset_osd_tex_size  = (768, 78)
+        self._preset_osd_alpha     = 0.0
+        self._preset_osd_show_t    = -999.0
+        self._preset_osd_last_key  = None
+
+        # Screen size/distance OSD: shown while resizing or moving the screen.
+        self._screen_osd_tex       = None
+        self._screen_osd_vao       = None
+        self._screen_osd_tex_size  = (512, 78)
+        self._screen_osd_show_t    = -999.0
+        self._screen_osd_last_key  = None
 
         # Brand switch OSD: right-controller-attached indicator
         self._brand_osd_tex       = None
@@ -2932,6 +2987,15 @@ class OpenXRViewerCore:
 
         self._configure_profile_view_layout()
 
+        # Curved-screen GL resources. Geometry is rebuilt only when screen params change.
+        self._curved_prog = None
+        self._curved_vbo = None
+        self._curved_vao = None
+        self._curved_border_prog = None
+        self._curved_border_vbo = None
+        self._curved_border_vao = None
+        self._curved_verts_params = None
+        self._curved_border_verts_params = None
         # Background color cycling (left thumbstick click)
         self._bg_color_idx    = 0       # index into _BG_COLORS
 
@@ -3189,6 +3253,31 @@ class OpenXRViewerCore:
             self._ground_prog, [(vbo_ground, '2f 2f', 'in_position', 'in_uv')]
         )
 
+        # Curved screen: world-space cylindrical arc. Runtime-direct eye textures
+        # stay on the flat path until that path has an explicit curved projection.
+        self._curved_prog = self.ctx.program(
+            vertex_shader=_CURVED_VERT,
+            fragment_shader=FRAGMENT_SHADER,
+        )
+        self._curved_prog['u_convergence'].value = self.convergence
+        self._curved_prog['tex_color'].value = 0
+        self._curved_prog['tex_depth'].value = 1
+        _CURVED_N = 48
+        _curved_buf_bytes = (_CURVED_N + 1) * 2 * (3 + 2) * 4
+        self._curved_vbo = self.ctx.buffer(reserve=_curved_buf_bytes, dynamic=True)
+        self._curved_vao = self.ctx.vertex_array(
+            self._curved_prog,
+            [(self._curved_vbo, '3f 2f', 'in_position', 'in_uv')],
+        )
+        self._curved_border_prog = self.ctx.program(
+            vertex_shader=_CURVED_VERT,
+            fragment_shader=_SOLID_FRAG,
+        )
+        self._curved_border_vbo = self.ctx.buffer(reserve=_curved_buf_bytes, dynamic=True)
+        self._curved_border_vao = self.ctx.vertex_array(
+            self._curved_border_prog,
+            [(self._curved_border_vbo, '3f 8x', 'in_position')],
+        )
         # Laser beam: a very thin elongated quad (width=0.003 m, length=5 m)
         # in local space X=[-0.5,0.5], Y=[-1,1]; we scale X to beam_w, Y to half-length
         laser_verts = np.array([
@@ -3249,6 +3338,32 @@ class OpenXRViewerCore:
             self._overlay_prog, [(vbo2, '2f 2f', 'in_position', 'in_uv')]
         )
 
+        # Depth-ratio OSD
+        dw, dh = self._depth_osd_tex_size
+        self._depth_osd_tex = self.ctx.texture((dw, dh), 4, dtype='f1')
+        self._depth_osd_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        vbo_dosd = self.ctx.buffer(vertices.tobytes())
+        self._depth_osd_vao = self.ctx.vertex_array(
+            self._overlay_prog, [(vbo_dosd, '2f 2f', 'in_position', 'in_uv')]
+        )
+
+        # Preset OSD
+        pw, ph = self._preset_osd_tex_size
+        self._preset_osd_tex = self.ctx.texture((pw, ph), 4, dtype='f1')
+        self._preset_osd_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        vbo_posd = self.ctx.buffer(vertices.tobytes())
+        self._preset_osd_vao = self.ctx.vertex_array(
+            self._overlay_prog, [(vbo_posd, '2f 2f', 'in_position', 'in_uv')]
+        )
+
+        # Screen-info OSD
+        sw, sh = self._screen_osd_tex_size
+        self._screen_osd_tex = self.ctx.texture((sw, sh), 4, dtype='f1')
+        self._screen_osd_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+        vbo_sosd = self.ctx.buffer(vertices.tobytes())
+        self._screen_osd_vao = self.ctx.vertex_array(
+            self._overlay_prog, [(vbo_sosd, '2f 2f', 'in_position', 'in_uv')]
+        )
         # Brand switch OSD: controller model indicator (reuses _overlay_prog)
         bw, bh = self._brand_osd_tex_size
         self._brand_osd_tex = self.ctx.texture((bw, bh), 4, dtype='f1')
@@ -4156,7 +4271,7 @@ class OpenXRViewerCore:
                 application_version=1,
                 engine_name="D2S",
                 engine_version=1,
-                api_version=xr.XR_CURRENT_API_VERSION,
+                api_version=_openxr_app_api_version(),
             )
             create_info = xr.InstanceCreateInfo(
                 application_info=app_info,
@@ -4205,7 +4320,7 @@ class OpenXRViewerCore:
         # 6. Session
         session_info = xr.SessionCreateInfo(
             system_id=self._xr_system_id,
-            next=ctypes.cast(ctypes.pointer(binding), ctypes.c_void_p),
+            next=binding,
         )
         self._xr_session = xr.create_session(self._xr_instance, session_info)
         if not quiet:
@@ -4589,7 +4704,7 @@ class OpenXRViewerCore:
                 application_version=1,
                 engine_name="D2S",
                 engine_version=1,
-                api_version=xr.XR_CURRENT_API_VERSION,
+                api_version=_openxr_app_api_version(),
             )
             create_info = xr.InstanceCreateInfo(
                 application_info=app_info,
@@ -4636,7 +4751,7 @@ class OpenXRViewerCore:
         # 5. Session
         session_info = xr.SessionCreateInfo(
             system_id=self._xr_system_id,
-            next=ctypes.cast(ctypes.pointer(binding), ctypes.c_void_p),
+            next=binding,
         )
         self._xr_session = xr.create_session(self._xr_instance, session_info)
         if not quiet:
@@ -5548,8 +5663,11 @@ class OpenXRViewerCore:
                 raise RuntimeError(f"Runtime eye tensor size changed during upload: left={tuple(left.shape)} right={tuple(right.shape)}")
             device_index = left.device.index if left.device.index is not None else 0
             torch.cuda.current_stream(device_index).synchronize()
+            texture_gpu_was_enabled = self._runtime_eye_texture_gpu_enabled
             if self._try_update_runtime_frame_texture_gpu((left, right), w, h):
                 return True
+            if texture_gpu_was_enabled and not self._runtime_eye_texture_gpu_enabled:
+                return False
             return self._update_runtime_frame_pbo_gpu((left, right), w, h)
         except Exception as e:
             self._runtime_eye_gpu_enabled = False
@@ -5564,6 +5682,8 @@ class OpenXRViewerCore:
             return False
 
     def _try_update_runtime_frame_texture_gpu(self, eyes, w, h):
+        if not self._runtime_eye_texture_gpu_enabled:
+            return False
         if BACKEND != "CUDA" or not hasattr(self._cuda_gl, "register_image"):
             return False
         try:
@@ -5582,8 +5702,9 @@ class OpenXRViewerCore:
             return True
         except Exception as e:
             self._release_runtime_eye_texture_resources()
+            self._runtime_eye_texture_gpu_enabled = False
             self._runtime_eye_gpu_disabled_reason = str(e)
-            print(f"[OpenXRViewer] runtime_direct_opengl_texture unavailable: {e}; trying PBO fallback")
+            print(f"[OpenXRViewer] runtime_direct_opengl_texture unavailable: {e}; using PBO fallback")
             return False
 
     def _update_runtime_frame_pbo_gpu(self, eyes, w, h):
@@ -5651,6 +5772,49 @@ class OpenXRViewerCore:
             self._d3d11_native_renderer.has_frame = False
 
 
+    def _log_screen_footprint_once(self, eye_index, mvp, swapchain_size):
+        key = (
+            int(eye_index),
+            tuple(swapchain_size),
+            tuple(self._texture_size or (0, 0)),
+            round(float(self.screen_width), 3),
+            round(float(self.screen_height or 0.0), 3),
+            round(float(self.screen_distance), 3),
+        )
+        if key in self._screen_footprint_logged:
+            return
+        self._screen_footprint_logged.add(key)
+        try:
+            sc_w, sc_h = int(swapchain_size[0]), int(swapchain_size[1])
+            corners = np.array([
+                [-1.0, -1.0, 0.0, 1.0],
+                [1.0, -1.0, 0.0, 1.0],
+                [1.0, 1.0, 0.0, 1.0],
+                [-1.0, 1.0, 0.0, 1.0],
+            ], dtype=np.float32)
+            clip = (mvp @ corners.T).T
+            valid = np.abs(clip[:, 3]) > 1e-6
+            if not np.any(valid):
+                footprint = "unknown"
+            else:
+                ndc = clip[valid, :3] / clip[valid, 3:4]
+                px = (ndc[:, 0] * 0.5 + 0.5) * sc_w
+                py = (ndc[:, 1] * 0.5 + 0.5) * sc_h
+                min_x, max_x = float(np.min(px)), float(np.max(px))
+                min_y, max_y = float(np.min(py)), float(np.max(py))
+                footprint_w = max(0.0, min(max_x, sc_w) - max(min_x, 0.0))
+                footprint_h = max(0.0, min(max_y, sc_h) - max(min_y, 0.0))
+                footprint = f"{int(round(footprint_w))}x{int(round(footprint_h))}"
+            tex_w, tex_h = self._texture_size or (0, 0)
+            print(
+                f"[OpenXRViewer] screen footprint eye={eye_index} approx={footprint} "
+                f"swapchain={sc_w}x{sc_h} texture={int(tex_w)}x{int(tex_h)} "
+                f"screen_m={self.screen_width:.3f}x{self.screen_height:.3f} "
+                f"distance_m={self.screen_distance:.3f}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(f"[OpenXRViewer] screen footprint unavailable: {type(exc).__name__}: {exc}", flush=True)
     def _build_model_mat4(self):
         """
         Build the model matrix for the screen in world space.
@@ -5704,6 +5868,51 @@ class OpenXRViewerCore:
 
         return T @ R @ S
 
+    def _build_curved_screen_verts(self, N=48, width_override=None, height_override=None, dist_offset=0.0):
+        """Return a TRIANGLE_STRIP curved screen arc in world space."""
+        if self.screen_height is None:
+            fw, fh = self.frame_size
+            if fh > fw:
+                self.screen_height = self._screen_ref_size
+                self.screen_width = self.screen_height * 9.0 / 16.0
+            else:
+                self.screen_width = self._screen_ref_size
+                self.screen_height = self.screen_width * 9.0 / 16.0
+
+        radius = self.screen_distance + dist_offset
+        half_w = (width_override if width_override is not None else self.screen_width) / 2.0
+        half_h = (height_override if height_override is not None else self.screen_height) / 2.0
+        half_ang = min(half_w / max(radius, 0.01), math.pi / 2)
+
+        cy = math.cos(self.screen_yaw)
+        sy_ = math.sin(self.screen_yaw)
+        cp = math.cos(self.screen_pitch)
+        sp = math.sin(self.screen_pitch)
+        cr = math.cos(self.screen_roll)
+        sr = math.sin(self.screen_roll)
+        cx = self.screen_pan_x
+        cy_pan = self.screen_pan_y
+
+        verts = []
+        for i in range(N + 1):
+            t = i / N
+            ang = -half_ang + 2.0 * half_ang * t
+            lx = radius * math.sin(ang)
+            lz = radius * (1.0 - math.cos(ang))
+            rx = lx * cy + lz * sy_
+            rz = -lx * sy_ + lz * cy
+            for row, v in ((0, 0.0), (1, 1.0)):
+                ly = -half_h if row == 0 else half_h
+                wy = ly * cp - rz * sp
+                wz = ly * sp + rz * cp
+                wx = rx
+                wx_roll = wx * cr - wy * sr
+                wy_roll = wx * sr + wy * cr
+                wx = wx_roll + cx
+                wy = wy_roll + cy_pan
+                wz += -radius
+                verts.extend([wx, wy, wz, t, v])
+        return np.array(verts, dtype='f4')
     def _get_or_create_fbo(self, eye_index, image_index, texture_id, w, h):
         """Lazily create and cache a ModernGL Framebuffer wrapping the swapchain texture.
 
@@ -6206,6 +6415,56 @@ class OpenXRViewerCore:
         self._yaw_offset   = 0.0
         self._pitch_offset = 0.0
 
+    def _apply_preset(self, index):
+        """Apply screen preset: size, distance, and reposition to face the user."""
+        if not self._screen_presets:
+            return False
+        index = int(index) % len(self._screen_presets)
+        name, width_m, distance_m = self._screen_presets[index]
+        self._reset_orientation_offsets()
+        self.screen_width = float(width_m)
+        self._screen_ref_size = float(width_m)
+        self.screen_height = None
+        self.screen_pitch = 0.0
+        self._screen_curved = False
+        self._preset_index = index
+        self.screen_pan_y = float(self._initial_head_y)
+
+        if self._head_pos_w is not None and self._head_fwd_w is not None:
+            hx, _, hz = self._head_pos_w
+            fx, fy, fz = self._head_fwd_w
+            flen = math.sqrt(fx * fx + fy * fy + fz * fz)
+            if flen > 1e-4:
+                fx /= flen
+                fy /= flen
+                fz /= flen
+            else:
+                fx, fy, fz = 0.0, 0.0, -1.0
+            self.screen_pan_x = hx + fx * float(distance_m)
+            self.screen_distance = -(hz + fz * float(distance_m))
+            self.screen_yaw = math.atan2(-fx, -fz)
+        else:
+            self.screen_pan_x = 0.0
+            self.screen_distance = float(distance_m)
+            self.screen_yaw = 0.0
+
+        self._preset_name_overlay = f"{name}  {float(width_m):.2f}m / {float(distance_m):.2f}m"
+        self._last_overlay_update = 0.0
+        self._screen_footprint_logged.clear()
+        self._border_alpha = 1.0
+        self._border_idle_t = time.perf_counter()
+        if self._keyboard_visible:
+            self._anchor_keyboard_below_screen()
+        print(
+            f"[OpenXRViewer] Screen preset: {name} "
+            f"width={self.screen_width:.3f}m distance={float(distance_m):.3f}m",
+            flush=True,
+        )
+        return True
+
+    def _cycle_screen_preset(self):
+        return self._apply_preset(self._preset_index + 1)
+
     def _reset_screen_to_default(self, show_border=False):
         """Reset screen to upright default: 2 m ahead horizontally, perpendicular to floor.
 
@@ -6257,10 +6516,39 @@ class OpenXRViewerCore:
             self._anchor_keyboard_below_screen()
 
     def _screen_uv_to_world(self, u, v):
-        """Convert a screen UV in [0,1] to its world-space 3-D position on the screen plane."""
+        """Convert a screen UV in [0,1] to its world-space 3-D position on the screen."""
         sh, screen_pos, r_ax, u_ax, _screen_n = self._screen_basis()
-        return screen_pos + r_ax * ((u - 0.5) * self.screen_width) + u_ax * ((v - 0.5) * sh)
+        if self._screen_curved:
+            radius = max(self.screen_distance, 1e-6)
+            half_w = self.screen_width / 2.0
+            half_h = sh / 2.0
+            half_ang = min(half_w / radius, math.pi / 2)
 
+            cy = math.cos(self.screen_yaw)
+            sy_ = math.sin(self.screen_yaw)
+            cp = math.cos(self.screen_pitch)
+            sp = math.sin(self.screen_pitch)
+            cr = math.cos(self.screen_roll)
+            sr = math.sin(self.screen_roll)
+
+            ang = -half_ang + 2.0 * half_ang * float(u)
+            lx = radius * math.sin(ang)
+            lz = radius * (1.0 - math.cos(ang))
+            ly = (float(v) - 0.5) * sh
+
+            rx = lx * cy + lz * sy_
+            rz = -lx * sy_ + lz * cy
+            wy = ly * cp - rz * sp
+            wz = ly * sp + rz * cp
+            wx = rx
+            wx_roll = wx * cr - wy * sr
+            wy_roll = wx * sr + wy * cr
+            return np.array([
+                wx_roll + self.screen_pan_x,
+                wy_roll + self.screen_pan_y,
+                wz - radius,
+            ], dtype='f8')
+        return screen_pos + r_ax * ((u - 0.5) * self.screen_width) + u_ax * ((v - 0.5) * sh)
     def _screen_basis(self):
         """Return screen height, center, right/up axes, and normal in world space."""
         sh = self.screen_height
@@ -7260,24 +7548,62 @@ class OpenXRViewerCore:
             self.depth_tex.use(location=1)
 
         eye_sign = -1.0 if eye_index == 0 else 1.0
-        model = self._build_model_mat4()
-        mvp = vp_mat @ model
-        self.prog['u_mvp'].write(mvp.T.tobytes())
-        self.prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
-        self.prog['u_eye_offset'].value = 0.0 if self._runtime_direct_source else eye_sign * self.ipd_uv / 2.0
-        self.prog['u_depth_strength'].value = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
-        self.prog['u_convergence'].value = float(self.convergence)
-        self.prog['u_corner_radius'].value = self._corner_radius
-        self.quad_vao.render(moderngl.TRIANGLE_STRIP)
+        if self._screen_curved and self._curved_prog is not None and not self._runtime_direct_source:
+            params = (
+                self.screen_width,
+                self.screen_height,
+                self.screen_distance,
+                self.screen_pan_x,
+                self.screen_pan_y,
+                self.screen_yaw,
+                self.screen_pitch,
+                self.screen_roll,
+            )
+            if self._curved_verts_params != params:
+                arc_verts = self._build_curved_screen_verts()
+                self._curved_vbo.write(arc_verts.tobytes())
+                self._curved_verts_params = params
+            self._curved_prog['u_mvp'].write(vp_mat.T.tobytes())
+            self._curved_prog['u_roll'].value = self.screen_roll
+            self._curved_prog['u_eye_offset'].value = eye_sign * self.ipd_uv / 2.0
+            self._curved_prog['u_depth_strength'].value = self.depth_strength * self.depth_ratio
+            self._curved_prog['u_convergence'].value = float(self.convergence)
+            self._curved_prog['u_corner_radius'].value = self._corner_radius
+            self._curved_vao.render(moderngl.TRIANGLE_STRIP, vertices=(48 + 1) * 2)
+        else:
+            model = self._build_model_mat4()
+            mvp = vp_mat @ model
+            if self._runtime_direct_source:
+                self._log_screen_footprint_once(eye_index, mvp, (sc_w, sc_h))
+            self.prog['u_mvp'].write(mvp.T.tobytes())
+            self.prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
+            self.prog['u_eye_offset'].value = 0.0 if self._runtime_direct_source else eye_sign * self.ipd_uv / 2.0
+            self.prog['u_depth_strength'].value = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
+            self.prog['u_convergence'].value = float(self.convergence)
+            self.prog['u_corner_radius'].value = self._corner_radius
+            self.quad_vao.render(moderngl.TRIANGLE_STRIP)
 
         # Optional screen effects on/around the desktop quad (normal viewer only).
         self._render_screen_foreground_effects(mgl_fbo, vp_mat)
-
         # 3. Keyboard
         if self._keyboard_visible and self._keyboard_tex is not None:
             self.ctx.viewport = (0, 0, sc_w, sc_h)
             self._render_keyboard(mgl_fbo, vp_mat)
 
+        # 5. Depth OSD (floating panel, always checked; method handles its own alpha)
+        if self._depth_osd_tex is not None:
+            self.ctx.viewport = (0, 0, sc_w, sc_h)
+            self._render_depth_osd(eye_index, mgl_fbo, vp_mat)
+
+        # 5b. Screen-info OSD (size + distance, shown while right grip + stick adjusts)
+        if self._screen_osd_tex is not None:
+            self.ctx.viewport = (0, 0, sc_w, sc_h)
+            self._render_screen_osd(eye_index, mgl_fbo, vp_mat)
+
+        # 5c. Preset OSD (name, shown briefly after cycling presets with Y button)
+        if self._preset_osd_tex is not None:
+            self.ctx.viewport = (0, 0, sc_w, sc_h)
+            self._render_preset_osd(eye_index, mgl_fbo, vp_mat)
         # 6b. Brand OSD (controller model indicator, attached to right controller)
         if self._brand_osd_tex is not None and self._grip_mat_r is not None:
             self.ctx.viewport = (0, 0, sc_w, sc_h)
@@ -7521,6 +7847,83 @@ class OpenXRViewerCore:
         sh, screen_pos, r_ax, u_ax, screen_n = self._screen_basis()
         safe_w = max(self.screen_width, 1e-6)
         safe_h = max(sh, 1e-6)
+
+        if self._screen_curved:
+            beam_max = 30.0
+            radius = max(self.screen_distance, 1e-6)
+            half_w = self.screen_width / 2.0
+            half_h = sh / 2.0
+            half_ang = min(half_w / radius, math.pi / 2)
+
+            cy = math.cos(self.screen_yaw)
+            sy_ = math.sin(self.screen_yaw)
+            cp = math.cos(self.screen_pitch)
+            sp = math.sin(self.screen_pitch)
+            yaw_rot = np.array([[cy, 0.0, sy_], [0.0, 1.0, 0.0], [-sy_, 0.0, cy]], dtype='f8')
+            pitch_rot = np.array([[1.0, 0.0, 0.0], [0.0, cp, -sp], [0.0, sp, cp]], dtype='f8')
+            m_inv = yaw_rot.T @ pitch_rot.T
+            origin = np.array([self.screen_pan_x, self.screen_pan_y, -radius], dtype='f8')
+
+            def f_dist(t):
+                p = ctrl_pos + fwd_w * t
+                vl = m_inv @ (p - origin)
+                return math.hypot(float(vl[0]), float(vl[2]) - radius) - radius
+
+            t0 = 0.01
+            t1 = beam_max
+            f0 = f_dist(t0)
+            f1 = f_dist(t1)
+            bracket = None
+            if abs(f0) < 1e-6:
+                bracket = (t0, t0)
+            elif f0 * f1 < 0:
+                bracket = (t0, t1)
+            else:
+                a = t0
+                fa = f0
+                for i in range(1, 49):
+                    b = t0 + (t1 - t0) * (i / 48.0)
+                    fb = f_dist(b)
+                    if abs(fb) < 1e-6 or fa * fb < 0:
+                        bracket = (a, b)
+                        break
+                    a = b
+                    fa = fb
+            if bracket is None:
+                return None
+            a, b = bracket
+            fa = f_dist(a)
+            fb = f_dist(b)
+            if fa * fb > 0:
+                return None
+            for _ in range(40):
+                m = 0.5 * (a + b)
+                fm = f_dist(m)
+                if abs(fm) < 1e-6:
+                    a = b = m
+                    break
+                if fa * fm <= 0:
+                    b = m
+                    fb = fm
+                else:
+                    a = m
+                    fa = fm
+            t_hit = 0.5 * (a + b)
+            if t_hit < 0.01 or t_hit > beam_max:
+                return None
+            p = ctrl_pos + fwd_w * t_hit
+            vl = m_inv @ (p - origin)
+            lx = float(vl[0])
+            ly = float(vl[1])
+            lz = float(vl[2])
+            if abs(ly) > half_h + 1e-6:
+                return None
+            ang = math.atan2(lx, radius - lz)
+            if ang < -half_ang - 1e-6 or ang > half_ang + 1e-6:
+                return None
+            u = (ang + half_ang) / (2.0 * half_ang) if half_ang > 1e-9 else 0.5
+            v = (ly + half_h) / (2.0 * half_h) if half_h > 1e-9 else 0.5
+            return float(u), float(v), float(t_hit)
 
         denom = float(np.dot(screen_n, fwd_w))
         if abs(denom) < 1e-6:
@@ -8658,6 +9061,7 @@ class OpenXRViewerCore:
                                                 self._screen_ref_size + rx * RESIZE_SPEED * dt)
                     self.screen_height = None
                     self._resizing = True
+                    self._screen_osd_show_t = time.perf_counter()
                 elif (not screen_locked) and abs(ry) > abs(rx) and abs(ry) > DEAD:
                     # Right-grip + right-stick Y ->radial distance along head->screen ray
                     _t = (abs(ry) - DEAD) / (1.0 - DEAD)
@@ -8679,6 +9083,7 @@ class OpenXRViewerCore:
                             self.screen_pan_x    = float(hx + ux * R3_new)
                             self.screen_pan_y    = float(hy + uy * R3_new)
                             self.screen_distance = float(-(hz + uz * R3_new))
+                            self._screen_osd_show_t = time.perf_counter()
         elif grip_l and not grip_r:
             if self._keyboard_visible and self._grip_target_l == 'keyboard':
                 # Left grip latched onto keyboard + right stick ->standalone
@@ -8763,8 +9168,14 @@ class OpenXRViewerCore:
                         self._fps_overlay_visible = self._panel_mode != 2
                         self._a_long_fired = True
                 if not a_now and self._a_last and not self._a_long_fired:
+                    self._screen_curved = not self._screen_curved
+                    self._curved_verts_params = None
+                    self._curved_border_verts_params = None
+                    self._border_alpha = 1.0
+                    self._border_idle_t = time.perf_counter()
+                    self._preset_name_overlay = 'Curved Screen' if self._screen_curved else 'Flat Screen'
+                    self._preset_osd_show_t = time.perf_counter()
                     self._ab_was_held = False
-
                 B_LONG = 1.0
                 if b_now and not self._b_last:
                     self._b_press_t = time.perf_counter()
@@ -8772,28 +9183,43 @@ class OpenXRViewerCore:
                 if b_now and not self._b_long_fired:
                     if time.perf_counter() - self._b_press_t >= B_LONG:
                         self._b_long_fired = True
+                if not b_now and self._b_last and not self._b_long_fired:
+                    if not hasattr(self, '_bg_color_saved_for_b') or self._bg_color_saved_for_b is None:
+                        self._bg_color_saved_for_b = self._bg_color_idx
+                        self._bg_color_idx = 3 if len(_BG_COLORS) > 3 else 0
+                    else:
+                        self._bg_color_idx = self._bg_color_saved_for_b
+                        self._bg_color_saved_for_b = None
         self._a_last = a_now
         self._b_last = b_now
 
-        # Y (left): short press recenters profile view pose; long press switches rooms.
-        Y_LONG = 1.0   # seconds to trigger room switch
+        # Y (left): short press applies default screen preset; long press cycles presets.
+        Y_LONG = 0.6
         y_now = self._read_bool_action(self._act_y_btn, "/user/hand/left")
         if y_now and not self._y_last:
             self._y_press_t    = time.perf_counter()
             self._y_long_fired = False
         if y_now and not self._y_long_fired:
             if time.perf_counter() - self._y_press_t >= Y_LONG:
-                self._switch_environment_model()
+                if not self._switch_environment_model():
+                    self._cycle_screen_preset()
                 self._y_long_fired = True
         if not y_now and self._y_last and not self._y_long_fired:
-            if not self._recenter_profile_view_pose():
+            if not self._apply_preset(3):
                 self._reset_screen_to_default(show_border=True)
         self._y_last = y_now
 
-        # X (left): short press -> toggle virtual keyboard.
+        # X (left): short press -> toggle virtual keyboard; long press cycles background.
+        X_LONG = 0.6
         x_now = self._read_bool_action(self._act_x_btn, "/user/hand/left")
-
-        if not x_now and self._x_last:
+        if x_now and not self._x_last:
+            self._x_press_t = time.perf_counter()
+            self._x_long_fired = False
+        if x_now and not getattr(self, '_x_long_fired', False):
+            if time.perf_counter() - getattr(self, '_x_press_t', 0.0) >= X_LONG:
+                self._bg_color_idx = (self._bg_color_idx + 1) % len(_BG_COLORS)
+                self._x_long_fired = True
+        if not x_now and self._x_last and not getattr(self, '_x_long_fired', False):
             self._keyboard_visible = not self._keyboard_visible
             if self._keyboard_visible:
                 if self._keyboard_tex is None:
@@ -8801,7 +9227,6 @@ class OpenXRViewerCore:
                 self._anchor_keyboard_below_screen()
 
         self._x_last = x_now
-
         # Thumbstick clicks: grip held ->depth/visual, no grip ->keyboard shortcuts
         lsc_now = self._read_bool_action(self._act_left_stick_click, "/user/hand/left")
         rsc_now = self._read_bool_action(self._act_right_stick_click, "/user/hand/right")
@@ -9501,13 +9926,25 @@ class OpenXRViewerCore:
         self._release_runtime_eye_pbos()
         self._release_runtime_eye_textures()
 
-        for tex in (self._overlay_tex, self._brand_osd_tex, self.color_tex, self.depth_tex):
+        for tex in (
+            self._overlay_tex,
+            self._depth_osd_tex,
+            self._preset_osd_tex,
+            self._screen_osd_tex,
+            self._brand_osd_tex,
+            self.color_tex,
+            self.depth_tex,
+        ):
             if tex:
                 try:
                     tex.release()
                 except Exception:
                     pass
-        self._overlay_tex = self._brand_osd_tex = None
+        self._overlay_tex = None
+        self._depth_osd_tex = None
+        self._preset_osd_tex = None
+        self._screen_osd_tex = None
+        self._brand_osd_tex = None
         if self._calib_tex:
             try:
                 self._calib_tex.release()
@@ -9521,6 +9958,20 @@ class OpenXRViewerCore:
                 pass
             self._help_tex = None
         self.color_tex = self.depth_tex = None
+
+        for attr in (
+            '_curved_vao', '_curved_vbo', '_curved_prog',
+            '_curved_border_vao', '_curved_border_vbo', '_curved_border_prog',
+        ):
+            obj = getattr(self, attr, None)
+            if obj:
+                try:
+                    obj.release()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+        self._curved_verts_params = None
+        self._curved_border_verts_params = None
 
         self._release_env_model_resources()
 

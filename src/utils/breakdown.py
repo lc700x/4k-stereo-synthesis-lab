@@ -1,0 +1,147 @@
+from __future__ import annotations
+
+import threading
+import time
+
+
+LATEST_KEYS = {
+    "rt_backend",
+    "rt_depth_backend",
+    "rt_output_format",
+    "rt_output_dtype",
+    "rt_output_pack",
+    "rt_sbs_backend",
+    "rt_occ_backend",
+    "rt_fill_backend",
+    "rt_depth_total_ms",
+    "rt_depth_model_ms",
+    "rt_synthesis_ms",
+    "rt_total_ms",
+}
+
+
+class FPSBreakdown:
+    def __init__(self, *, enabled: bool, target_fps: int | float):
+        self.enabled = enabled
+        self.target_fps = target_fps
+        self.lock = threading.Lock()
+        self.stats = {
+            "capture": 0,
+            "raw_get": 0,
+            "runtime": 0,
+            "viewer_get": 0,
+            "loops": 0,
+            "update_ms": 0.0,
+            "render_ms": 0.0,
+            "swap_ms": 0.0,
+            "wait_ms": 0.0,
+            "update_count": 0,
+            "render_count": 0,
+            "swap_count": 0,
+            "wait_count": 0,
+        }
+        self.last_log = time.perf_counter()
+
+    def inc(self, name: str, amount: int | float = 1) -> None:
+        if not self.enabled:
+            return
+        with self.lock:
+            self.stats[name] = self.stats.get(name, 0) + amount
+
+    def add_time(self, name: str, seconds: float) -> None:
+        if not self.enabled:
+            return
+        with self.lock:
+            self.stats[f"{name}_ms"] = self.stats.get(f"{name}_ms", 0.0) + seconds * 1000.0
+            self.stats[f"{name}_count"] = self.stats.get(f"{name}_count", 0) + 1
+
+    def set_latest(self, name: str, value) -> None:
+        if not self.enabled:
+            return
+        with self.lock:
+            self.stats[name] = value
+
+    def add_runtime_timing(self, runtime_result) -> None:
+        if not self.enabled:
+            return
+        timing = getattr(runtime_result, "timing", None) or {}
+        debug = getattr(runtime_result, "debug_info", None) or {}
+        with self.lock:
+            for key in ("depth_total_ms", "depth_model_ms", "synthesis_ms", "pack_ms", "total_ms"):
+                value = timing.get(key)
+                if value is not None:
+                    self.stats[f"rt_{key}"] = float(value)
+            self.stats["rt_backend"] = str(debug.get("backend", "unknown"))
+            self.stats["rt_depth_backend"] = str(debug.get("runtime_depth_backend", "unknown"))
+            self.stats["rt_output_format"] = str(debug.get("runtime_output_format", "unknown"))
+            self.stats["rt_output_dtype"] = str(debug.get("runtime_output_dtype", "unknown"))
+            self.stats["rt_output_pack"] = str(debug.get("runtime_output_pack_backend", "n/a"))
+            if "sbs_backend" in debug:
+                self.stats["rt_sbs_backend"] = str(debug.get("sbs_backend"))
+            if "occlusion_mask_backend" in debug:
+                self.stats["rt_occ_backend"] = str(debug.get("occlusion_mask_backend"))
+            if "hole_fill_backend" in debug:
+                self.stats["rt_fill_backend"] = str(debug.get("hole_fill_backend"))
+            if "fast_plus_fused_backend" in debug:
+                self.stats["rt_fast_plus_fused_backend"] = str(debug.get("fast_plus_fused_backend"))
+            if "fast_plus_fused_skip" in debug:
+                self.stats["rt_fast_plus_fused_skip"] = str(debug.get("fast_plus_fused_skip"))
+            if "fast_plus_fused_temporal_bypass" in debug:
+                self.stats["rt_fast_plus_fused_temporal_bypass"] = str(debug.get("fast_plus_fused_temporal_bypass"))
+
+    def log(self, now: float | None = None) -> None:
+        if not self.enabled:
+            return
+        now = time.perf_counter() if now is None else now
+        elapsed = now - self.last_log
+        if elapsed < 1.0:
+            return
+        with self.lock:
+            stats = dict(self.stats)
+            for key in list(self.stats.keys()):
+                if key in LATEST_KEYS:
+                    continue
+                self.stats[key] = 0.0 if key.endswith("_ms") else 0
+            self.last_log = now
+
+        def rate(name: str) -> float:
+            return stats.get(name, 0) / elapsed
+
+        def avg_ms(name: str) -> float:
+            count = stats.get(f"{name}_count", 0)
+            return stats.get(f"{name}_ms", 0.0) / count if count else 0.0
+
+        print(
+            "[FPSBreakdown] "
+            f"target={self.target_fps}Hz "
+            f"cap={rate('capture'):.1f} raw={rate('raw_get'):.1f} "
+            f"overwrite={rate('raw_overwritten'):.1f} drain_drop={rate('raw_dropped_stale'):.1f} "
+            f"runtime={rate('runtime'):.1f} viewer_get={rate('viewer_get'):.1f} "
+            f"loop={rate('loops'):.1f} "
+            f"update={avg_ms('update'):.2f}ms "
+            f"render={avg_ms('render'):.2f}ms "
+            f"post={avg_ms('post'):.2f}ms "
+            f"swap={avg_ms('swap'):.2f}ms "
+            f"wait={avg_ms('wait'):.2f}ms "
+            f"rt_loop={avg_ms('rt_loop'):.2f}ms "
+            f"rt_cap2rgb={avg_ms('rt_cap2rgb'):.2f}ms "
+            f"rt_prepare={avg_ms('rt_prepare'):.2f}ms "
+            f"pre={stats.get('rt_preprocess_backend', 'unknown')} "
+            f"rt_call={avg_ms('rt_call'):.2f}ms "
+            f"rt_put={avg_ms('rt_put'):.2f}ms "
+            f"rt_backend={stats.get('rt_backend', 'unknown')} "
+            f"rt_depth={stats.get('rt_depth_total_ms', 0.0):.2f}ms "
+            f"rt_model={stats.get('rt_depth_model_ms', 0.0):.2f}ms "
+            f"rt_synth={stats.get('rt_synthesis_ms', 0.0):.2f}ms "
+            f"rt_total={stats.get('rt_total_ms', 0.0):.2f}ms "
+            f"rt_depth_backend={stats.get('rt_depth_backend', 'unknown')} "
+            f"rt_out={stats.get('rt_output_dtype', 'unknown')} "
+            f"rt_pack={stats.get('rt_output_pack', 'n/a')} "
+            f"rt_sbs={stats.get('rt_sbs_backend', 'unknown')} "
+            f"rt_occ={stats.get('rt_occ_backend', 'n/a')} "
+            f"rt_fill={stats.get('rt_fill_backend', 'n/a')} "
+            f"rt_fused={stats.get('rt_fast_plus_fused_backend', 'n/a')} "
+            f"rt_fused_skip={stats.get('rt_fast_plus_fused_skip', 'n/a')} "
+            f"rt_fused_temporal_bypass={stats.get('rt_fast_plus_fused_temporal_bypass', 'n/a')}",
+            flush=True,
+        )

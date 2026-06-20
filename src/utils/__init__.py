@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 from streaming.audio import STEREO_MIX_NAMES
 from streaming.config import DEFAULT_PORT
 
@@ -18,77 +20,206 @@ from .display import (
     _get_device_name_from_mss_monitor,
     get_monitor_size,
 )
-from .device_runtime import resolve_device_runtime
 from .network import get_local_ip
-from .runtime_exports import resolve_runtime_exports
 from .runtime_state import shutdown_event
 from .settings import read_yaml
 
-settings = bootstrap_settings("settings.yaml", os_name=OS_NAME)
-from viewer import (
-    crop_icon,
-    get_font_type,
-    hide_window_from_capture,
-    send_ctrl_cmd_f,
-    set_window_to_bottom,
-    show_window_in_capture,
-)
 
-_RUNTIME_EXPORTS = resolve_runtime_exports(settings, os_name=OS_NAME)
-MODEL_MAPPING = _RUNTIME_EXPORTS.model_mapping
-STREAM_QUALITY = _RUNTIME_EXPORTS.stream_quality
-STREAM_PORT = _RUNTIME_EXPORTS.stream_port
-LOCAL_IP = _RUNTIME_EXPORTS.local_ip
-RUN_MODE = _RUNTIME_EXPORTS.run_mode
-STREAM_MODE = _RUNTIME_EXPORTS.stream_mode
-USE_3D_MONITOR = _RUNTIME_EXPORTS.use_3d_monitor
-LOSSLESS_SCALING_SUPPORT = _RUNTIME_EXPORTS.lossless_scaling_support
-MODEL = _RUNTIME_EXPORTS.model
-MODEL_ID = _RUNTIME_EXPORTS.model_id
-ALL_MODELS = _RUNTIME_EXPORTS.all_models
-CACHE_PATH = _RUNTIME_EXPORTS.cache_path
-DEPTH_RESOLUTION = _RUNTIME_EXPORTS.depth_resolution
-DEVICE_ID = _RUNTIME_EXPORTS.device_id
-FP16 = _RUNTIME_EXPORTS.fp16
-MONITOR_INDEX = _RUNTIME_EXPORTS.monitor_index
-DISPLAY_MODE = _RUNTIME_EXPORTS.display_mode
-STEREO_DISPLAY_INDEX = _RUNTIME_EXPORTS.stereo_display_index
-STEREO_DISPLAY_SELECTION = _RUNTIME_EXPORTS.stereo_display_selection
-OUTPUT_RESOLUTION = _RUNTIME_EXPORTS.output_resolution
-SHOW_FPS = _RUNTIME_EXPORTS.show_fps
-DEPTH_STRENGTH = _RUNTIME_EXPORTS.depth_strength
-IPD = _RUNTIME_EXPORTS.ipd
-CONVERGENCE = _RUNTIME_EXPORTS.convergence
-CAPTURE_MODE = _RUNTIME_EXPORTS.capture_mode
-WINDOW_TITLE = _RUNTIME_EXPORTS.window_title
-TARGET_FPS = _RUNTIME_EXPORTS.target_fps
-FPS = _RUNTIME_EXPORTS.fps
-FOREGROUND_SCALE = _RUNTIME_EXPORTS.foreground_scale
-AA_STRENGTH = _RUNTIME_EXPORTS.aa_strength
-USE_TORCH_COMPILE = _RUNTIME_EXPORTS.use_torch_compile
-USE_TENSORRT = _RUNTIME_EXPORTS.use_tensorrt
-RECOMPILE_TRT = _RUNTIME_EXPORTS.recompile_trt
-USE_COREML = _RUNTIME_EXPORTS.use_coreml
-RECOMPILE_COREML = _RUNTIME_EXPORTS.recompile_coreml
-USE_OPENVINO = _RUNTIME_EXPORTS.use_openvino
-RECOMPILE_OPENVINO = _RUNTIME_EXPORTS.recompile_openvino
-CAPTURE_TOOL = _RUNTIME_EXPORTS.capture_tool
-FILL_16_9 = _RUNTIME_EXPORTS.fill_16_9
-LOCAL_VSYNC = _RUNTIME_EXPORTS.local_vsync
-UPSCALER = _RUNTIME_EXPORTS.upscaler
-UPSCALER_SHARPNESS = _RUNTIME_EXPORTS.upscaler_sharpness
-FIX_VIEWER_ASPECT = _RUNTIME_EXPORTS.fix_viewer_aspect
-STEREOMIX_DEVICE = _RUNTIME_EXPORTS.stereo_mix_device
-STREAM_KEY = _RUNTIME_EXPORTS.stream_key
-AUDIO_DELAY = _RUNTIME_EXPORTS.audio_delay
-CRF = _RUNTIME_EXPORTS.crf
-LANG = _RUNTIME_EXPORTS.language
-ROWS = _RUNTIME_EXPORTS.controller_help_rows
-ENV_ROWS = _RUNTIME_EXPORTS.environment_help_rows
-CONTROLLER_MODEL = _RUNTIME_EXPORTS.controller_model
-ENVIRONMENT_MODEL = _RUNTIME_EXPORTS.environment_model
-XR_PREVIEW_WINDOW = _RUNTIME_EXPORTS.xr_preview_window
+_settings = None
+_runtime_exports = None
+_device_runtime = None
 
-_DEVICE_RUNTIME = resolve_device_runtime(DEVICE_ID)
-DEVICE = _DEVICE_RUNTIME.device
-DEVICE_INFO = _DEVICE_RUNTIME.device_info
+
+_RUNTIME_EXPORT_ATTRS = {
+    "MODEL_MAPPING": "model_mapping",
+    "STREAM_QUALITY": "stream_quality",
+    "STREAM_PORT": "stream_port",
+    "LOCAL_IP": "local_ip",
+    "RUN_MODE": "run_mode",
+    "STREAM_MODE": "stream_mode",
+    "USE_3D_MONITOR": "use_3d_monitor",
+    "LOSSLESS_SCALING_SUPPORT": "lossless_scaling_support",
+    "MODEL": "model",
+    "MODEL_ID": "model_id",
+    "ALL_MODELS": "all_models",
+    "CACHE_PATH": "cache_path",
+    "DEPTH_RESOLUTION": "depth_resolution",
+    "DEVICE_ID": "device_id",
+    "FP16": "fp16",
+    "MONITOR_INDEX": "monitor_index",
+    "DISPLAY_MODE": "display_mode",
+    "STEREO_DISPLAY_INDEX": "stereo_display_index",
+    "STEREO_DISPLAY_SELECTION": "stereo_display_selection",
+    "OUTPUT_RESOLUTION": "output_resolution",
+    "SHOW_FPS": "show_fps",
+    "DEPTH_STRENGTH": "depth_strength",
+    "IPD": "ipd",
+    "CONVERGENCE": "convergence",
+    "CAPTURE_MODE": "capture_mode",
+    "WINDOW_TITLE": "window_title",
+    "TARGET_FPS": "target_fps",
+    "FPS": "fps",
+    "FOREGROUND_SCALE": "foreground_scale",
+    "AA_STRENGTH": "aa_strength",
+    "USE_TORCH_COMPILE": "use_torch_compile",
+    "USE_TENSORRT": "use_tensorrt",
+    "RECOMPILE_TRT": "recompile_trt",
+    "USE_COREML": "use_coreml",
+    "RECOMPILE_COREML": "recompile_coreml",
+    "USE_OPENVINO": "use_openvino",
+    "RECOMPILE_OPENVINO": "recompile_openvino",
+    "CAPTURE_TOOL": "capture_tool",
+    "FILL_16_9": "fill_16_9",
+    "LOCAL_VSYNC": "local_vsync",
+    "UPSCALER": "upscaler",
+    "UPSCALER_SHARPNESS": "upscaler_sharpness",
+    "FIX_VIEWER_ASPECT": "fix_viewer_aspect",
+    "STEREOMIX_DEVICE": "stereo_mix_device",
+    "STREAM_KEY": "stream_key",
+    "AUDIO_DELAY": "audio_delay",
+    "CRF": "crf",
+    "LANG": "language",
+    "ROWS": "controller_help_rows",
+    "ENV_ROWS": "environment_help_rows",
+    "CONTROLLER_MODEL": "controller_model",
+    "ENVIRONMENT_MODEL": "environment_model",
+    "XR_PREVIEW_WINDOW": "xr_preview_window",
+}
+
+
+_VIEWER_ATTRS = {
+    "crop_icon",
+    "get_font_type",
+    "hide_window_from_capture",
+    "send_ctrl_cmd_f",
+    "set_window_to_bottom",
+    "show_window_in_capture",
+}
+
+
+def _get_settings():
+    global _settings
+    if _settings is None:
+        _settings = bootstrap_settings("settings.yaml", os_name=OS_NAME)
+    return _settings
+
+
+def _get_runtime_exports():
+    global _runtime_exports
+    if _runtime_exports is None:
+        from .runtime_exports import resolve_runtime_exports
+
+        _runtime_exports = resolve_runtime_exports(_get_settings(), os_name=OS_NAME)
+    return _runtime_exports
+
+
+def _get_device_runtime():
+    global _device_runtime
+    if _device_runtime is None:
+        from .device_runtime import resolve_device_runtime
+
+        _device_runtime = resolve_device_runtime(__getattr__("DEVICE_ID"))
+    return _device_runtime
+
+
+def __getattr__(name):
+    if name == "settings":
+        value = _get_settings()
+    elif name in _RUNTIME_EXPORT_ATTRS:
+        value = getattr(_get_runtime_exports(), _RUNTIME_EXPORT_ATTRS[name])
+    elif name == "DEVICE":
+        value = _get_device_runtime().device
+    elif name == "DEVICE_INFO":
+        value = _get_device_runtime().device_info
+    elif name in _VIEWER_ATTRS:
+        import viewer
+
+        value = getattr(viewer, name)
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
+
+__all__ = [
+    "AA_STRENGTH",
+    "ALL_MODELS",
+    "AUDIO_DELAY",
+    "CACHE_PATH",
+    "CAPTURE_MODE",
+    "CAPTURE_TOOL",
+    "COMPILE_FIX_KEYWORDS",
+    "CONVERGENCE",
+    "CONTROLLER_MODEL",
+    "CRF",
+    "DEBUG",
+    "DEFAULT_PORT",
+    "DEPTH_RESOLUTION",
+    "DEPTH_STRENGTH",
+    "DEVICE",
+    "DEVICE_ID",
+    "DEVICE_INFO",
+    "DISABLE_COREML_KEYWORDS",
+    "DISABLE_CUDNN_KEYWORDS",
+    "DISABLE_OPENVINO_KEYWORDS",
+    "DISABLE_TRITON_KEYWORDS",
+    "DISABLE_TRT_KEYWORDS",
+    "DISPLAY_MODE",
+    "ENVIRONMENT_MODEL",
+    "ENV_ROWS",
+    "FILL_16_9",
+    "FIX_VIEWER_ASPECT",
+    "FORCE_FP32_KEYWORDS",
+    "FOREGROUND_SCALE",
+    "FP16",
+    "FPS",
+    "IPD",
+    "LANG",
+    "LOCAL_IP",
+    "LOCAL_VSYNC",
+    "LOSSLESS_SCALING_SUPPORT",
+    "MODEL",
+    "MODEL_ID",
+    "MODEL_MAPPING",
+    "MONITOR_INDEX",
+    "OS_NAME",
+    "OUTPUT_RESOLUTION",
+    "RECOMPILE_COREML",
+    "RECOMPILE_OPENVINO",
+    "RECOMPILE_TRT",
+    "ROWS",
+    "RUN_MODE",
+    "SHOW_FPS",
+    "STEREOMIX_DEVICE",
+    "STEREO_DISPLAY_INDEX",
+    "STEREO_DISPLAY_SELECTION",
+    "STEREO_MIX_NAMES",
+    "STREAM_KEY",
+    "STREAM_MODE",
+    "STREAM_PORT",
+    "STREAM_QUALITY",
+    "TARGET_FPS",
+    "TRT_FIX_KEYWORDS",
+    "UPSCALER",
+    "UPSCALER_SHARPNESS",
+    "USE_3D_MONITOR",
+    "USE_COREML",
+    "USE_OPENVINO",
+    "USE_TENSORRT",
+    "USE_TORCH_COMPILE",
+    "VERSION",
+    "WINDOW_TITLE",
+    "XR_PREVIEW_WINDOW",
+    "_get_device_name_from_mss_monitor",
+    "crop_icon",
+    "get_font_type",
+    "get_local_ip",
+    "get_monitor_size",
+    "hide_window_from_capture",
+    "read_yaml",
+    "send_ctrl_cmd_f",
+    "set_window_to_bottom",
+    "settings",
+    "show_window_in_capture",
+    "shutdown_event",
+]

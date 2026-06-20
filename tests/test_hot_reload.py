@@ -1,0 +1,94 @@
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+from stereo_runtime.hot_reload import (
+    clamp_foreground_scale_hot_reload,
+    hot_reload_value_snapshot,
+    runtime_stereo_overrides,
+    to_bool_hot_reload,
+)
+
+
+def make_config(**overrides):
+    values = {
+        "stereo_quality": "fast_plus",
+        "depth_strength": 1.0,
+        "convergence": 0.5,
+        "ipd": 0.064,
+        "ipd_mm": 64.0,
+        "stereo_scale": 1.0,
+        "max_shift_ratio": 0.03,
+        "foreground_scale": 1.0,
+        "depth_antialias_strength": 0.25,
+        "edge_threshold": 0.1,
+        "edge_dilation": 2,
+        "screen_edge_mask_suppression": 0.0,
+        "cross_eyed": False,
+        "anaglyph_method": "dubois",
+        "fused": True,
+        "temporal_strength": 0.5,
+        "scene_reset_threshold": 0.2,
+        "reset_cooldown_frames": 4,
+        "stereo_preset": "cinema",
+        "mode": "cinema",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_hot_reload_value_snapshot_parses_expected_fields():
+    config = make_config()
+    settings = {
+        "Depth Strength": "1.25",
+        "Convergence": "0.75",
+        "IPD mm": "65",
+        "Stereo Scale": "1.5",
+        "Max Shift Ratio": "0.04",
+        "Temporal Strength": "0",
+        "Scene Reset Threshold": "0.3",
+        "Reset Cooldown Frames": "7",
+        "Foreground Scale": "9.0",
+        "Depth Antialias Strength": "0.8",
+        "Edge Dilation": "3",
+        "Edge Threshold": "0.2",
+        "Anaglyph Method": "gray",
+        "Cross Eyed": "yes",
+    }
+
+    values = hot_reload_value_snapshot(settings, config)
+
+    assert values["depth_strength"] == 1.25
+    assert values["convergence"] == 0.75
+    assert values["ipd"] == 0.065
+    assert values["ipd_mm"] == 65.0
+    assert values["stereo_scale"] == 1.5
+    assert values["max_shift_ratio"] == 0.04
+    assert values["temporal"] is False
+    assert values["scene_reset_threshold"] == 0.3
+    assert values["reset_cooldown_frames"] == 7
+    assert values["foreground_scale"] == 5.0
+    assert values["depth_antialias_strength"] == 0.8
+    assert values["edge_dilation"] == 3
+    assert values["edge_threshold"] == 0.2
+    assert values["anaglyph_method"] == "gray"
+    assert values["cross_eyed"] is True
+
+
+def test_runtime_stereo_overrides_maps_runtime_config():
+    runtime = SimpleNamespace(config=make_config())
+
+    overrides = runtime_stereo_overrides(runtime)
+
+    assert overrides["backend"] == "fast_plus"
+    assert overrides["depth_strength"] == 1.0
+    assert overrides["cross_eyed"] is False
+    assert overrides["fused"] is True
+
+
+def test_hot_reload_bool_and_foreground_helpers():
+    assert to_bool_hot_reload(True) is True
+    assert to_bool_hot_reload("on") is True
+    assert to_bool_hot_reload(None) is False
+    assert clamp_foreground_scale_hot_reload(-5.0) == -0.9
+    assert clamp_foreground_scale_hot_reload(10.0) == 5.0

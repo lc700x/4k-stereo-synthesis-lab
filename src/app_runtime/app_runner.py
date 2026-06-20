@@ -59,6 +59,7 @@ class AppModeCallbacks:
     render_active_event: object
     source_active_event: object
     idle_active_event: object
+    render_active_set: Callable
     render_active_clear: Callable
     source_active_set: Callable
     wait_idle_clear: Callable
@@ -202,6 +203,7 @@ def build_app_mode_callbacks(
     render_active_event,
     source_active_event,
     idle_active_event,
+    render_active_set,
     render_active_clear,
     source_active_set,
     wait_idle_clear,
@@ -219,6 +221,7 @@ def build_app_mode_callbacks(
         render_active_event=render_active_event,
         source_active_event=source_active_event,
         idle_active_event=idle_active_event,
+        render_active_set=render_active_set,
         render_active_clear=render_active_clear,
         source_active_set=source_active_set,
         wait_idle_clear=wait_idle_clear,
@@ -293,9 +296,7 @@ def run_app_mode(mode, *, runtime_q, thread_latencies, settings: AppModeSettings
         )
         openxr_callbacks = OpenXRRuntimeCallbacks(
             update_runtime_config=callbacks.update_openxr_runtime_config,
-            render_active_event=callbacks.render_active_event,
-            source_active_event=callbacks.source_active_event,
-            idle_active_event=callbacks.idle_active_event,
+            render_active_set=callbacks.render_active_set,
             render_active_clear=callbacks.render_active_clear,
             source_active_set=callbacks.source_active_set,
             wait_idle_clear=callbacks.wait_idle_clear,

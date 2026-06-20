@@ -19,10 +19,21 @@ class CaptureSessionCallbacks:
     on_tick: Callable[[], None]
 
 
+
+def _frame_size_text(frame) -> str:
+    shape = tuple(getattr(frame, "shape", ()))
+    if len(shape) >= 2:
+        return f"{int(shape[1])}x{int(shape[0])}"
+    width = getattr(frame, "width", None)
+    height = getattr(frame, "height", None)
+    if width is not None and height is not None:
+        return f"{int(width)}x{int(height)}"
+    return "unknown"
 class CaptureSessionLoop:
     def __init__(self, config: CaptureConfig, callbacks: CaptureSessionCallbacks):
         self.config = config
         self.callbacks = callbacks
+        self._logged_frame_shape = False
 
     def run(self, shutdown_event) -> None:
         runner = create_capture_runner(self.config)
@@ -44,6 +55,12 @@ class CaptureSessionLoop:
             self.callbacks.inc_source_stat("capture_dropped_paused")
 
     def _frame_arrived(self, frame_raw, size, capture_start_time: float) -> None:
+        if not self._logged_frame_shape:
+            self._logged_frame_shape = True
+            print(
+                f"[capture_loop] frame raw={_frame_size_text(frame_raw)} target={size}",
+                flush=True,
+            )
         self.callbacks.inc_source_stat("capture_frames", last_capture_ts=capture_start_time)
         self.callbacks.inc_breakdown("capture")
         if self.callbacks.is_shutdown():

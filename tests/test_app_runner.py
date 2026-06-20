@@ -46,6 +46,7 @@ def _callbacks():
         render_active_event=object(),
         source_active_event=object(),
         idle_active_event=object(),
+        render_active_set=lambda: None,
         render_active_clear=lambda: None,
         source_active_set=lambda: None,
         wait_idle_clear=lambda: None,
@@ -74,6 +75,29 @@ def test_run_app_mode_dispatches_legacy(monkeypatch):
     assert calls
     assert calls[0][0].stream_port == 8000
 
+
+def test_run_app_mode_dispatches_openxr_without_event_constructor_args(monkeypatch):
+    calls = []
+
+    def fake_run_openxr_mode(runtime_q, config, callbacks):
+        calls.append((runtime_q, config, callbacks))
+        return "openxr-window"
+
+    monkeypatch.setattr("app_runtime.app_runner.run_openxr_mode", fake_run_openxr_mode)
+
+    result = run_app_mode(
+        "OpenXR",
+        runtime_q="runtime-q",
+        thread_latencies={},
+        settings=_settings(),
+        callbacks=_callbacks(),
+    )
+
+    assert result.window == "openxr-window"
+    assert result.streamer is None
+    assert calls[0][1].controller_model == "controller"
+    assert calls[0][2].update_runtime_config is not None
+    assert not hasattr(calls[0][2], "render_active_event")
 
 def test_build_app_mode_settings_maps_core_fields():
     settings = build_app_mode_settings(
@@ -127,6 +151,7 @@ def test_build_app_mode_callbacks_maps_callables():
         render_active_event=object(),
         source_active_event=object(),
         idle_active_event=object(),
+        render_active_set=lambda: None,
         render_active_clear=lambda: None,
         source_active_set=lambda: None,
         wait_idle_clear=lambda: None,

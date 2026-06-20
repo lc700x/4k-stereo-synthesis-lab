@@ -121,6 +121,7 @@ def main(mode="Viewer"):
             render_active_event=context.openxr_state.render_active,
             source_active_event=context.openxr_state.source_active,
             idle_active_event=context.openxr_state.wait_idle_active,
+            render_active_set=context.openxr_state.render_active.set,
             render_active_clear=context.openxr_state.render_active.clear,
             source_active_set=context.openxr_state.source_active.set,
             wait_idle_clear=context.openxr_state.wait_idle_active.clear,

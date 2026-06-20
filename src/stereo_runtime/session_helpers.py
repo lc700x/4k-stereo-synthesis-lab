@@ -103,9 +103,30 @@ class StereoRuntimeLogger:
 
     def log_fast_plus_fused_runtime_state(self, runtime_result) -> None:
         debug = getattr(runtime_result, "debug_info", None) or {}
+        output_format = str(debug.get("runtime_output_format", "unknown"))
+        if output_format == "openxr_eye_views":
+            state = (
+                str(debug.get("backend", "unknown")),
+                output_format,
+                str(debug.get("runtime_output_dtype", "unknown")),
+                str(debug.get("runtime_output_eye_size", "unknown")),
+            )
+            if state == self.last_fused_state:
+                return
+            self.last_fused_state = state
+            print(
+                "[Main] Stereo runtime output:"
+                f" backend={state[0]}"
+                f" output={state[1]}"
+                f" dtype={state[2]}"
+                f" eye={state[3]}",
+                flush=True,
+            )
+            return
+
         state = (
             str(debug.get("backend", "unknown")),
-            str(debug.get("runtime_output_format", "unknown")),
+            output_format,
             str(debug.get("runtime_output_dtype", "unknown")),
             str(debug.get("runtime_output_pack_backend", "n/a")),
             str(debug.get("fast_plus_fused_backend", "n/a")),

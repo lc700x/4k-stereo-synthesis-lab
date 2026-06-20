@@ -29,6 +29,13 @@ try:
 except ImportError:
     xr = None
 
+
+
+def _openxr_app_api_version():
+    """Request OpenXR 1.0 for broad runtime compatibility."""
+    if xr is not None and hasattr(xr, "Version"):
+        return xr.Version(1, 0, 0)
+    return xr.XR_CURRENT_API_VERSION
 from . import render as _render
 from .render import (
     _create_d3d11_device, _create_d3d11_shared_texture,
@@ -72,7 +79,7 @@ class D3D11BackendMixin:
             application_version=1,
             engine_name="D2S",
             engine_version=1,
-            api_version=xr.XR_CURRENT_API_VERSION,
+            api_version=_openxr_app_api_version(),
         )
         create_info = xr.InstanceCreateInfo(
             application_info=app_info,

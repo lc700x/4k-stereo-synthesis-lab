@@ -12,7 +12,7 @@ from .paths import BASE_DIR
 from .localization import UI_MESSAGES
 from .capture_sources import (
     PRIMARY_MONITOR_SUFFIX, get_capture_tool_options,
-    get_primary_monitor_index, list_windows,
+    get_primary_monitor_index, list_monitors, list_windows,
 )
 from .devices import DEVICES
 
@@ -445,7 +445,7 @@ class GUIBuilderMixin:
 
         # Row 9: Input monitor/window + Refresh
         self.capture_mode_dd = CompactDropdown(options=["Monitor", "Window"],
-            value="Monitor", on_select=self.on_capture_mode_change, dyna_width=True)
+            value="Monitor", on_select=self.on_capture_mode_change, width=S(100))
         self.monitor_dd = CompactDropdown(on_select=self._on_monitor_change, max_width=S(300))
         self.window_dd = CompactDropdown(on_select=self.on_window_selected, max_width=S(300))
         self.refresh_btn = ft.Button(content=ft.Text("Refresh", size=FONT_SIZE),
@@ -602,28 +602,22 @@ class GUIBuilderMixin:
 
     def populate_monitors(self):
         self.monitor_label_to_index = {}
-        monitors = []
-        try:
-            import mss
-            with mss.mss() as sct:
-                monitors = sct.monitors[1:]
-        except Exception:
-            monitors = []
+        monitors = list_monitors()
         if not monitors:
             self.monitor_dd.options = []
             self.monitor_dd.update()
             return {}
         primary_index = get_primary_monitor_index()
-        if primary_index < 1 or primary_index > len(monitors):
-            primary_index = 1
         current_val = self.monitor_dd.value if hasattr(self, 'monitor_dd') else ""
         found = False
         opts = []
-        for idx, mon in enumerate(monitors, start=1):
-            is_primary = idx == primary_index
+        for mon in monitors:
+            capture_index = mon["capture_index"]
+            display_number = mon["display_number"]
+            is_primary = capture_index == primary_index
             suffix = PRIMARY_MONITOR_SUFFIX if is_primary else ""
-            label = f"{idx}: {mon['width']}x{mon['height']} @ ({mon['left']},{mon['top']}){suffix}"
-            self.monitor_label_to_index[label] = idx
+            label = f"{display_number}: {mon['width']}x{mon['height']} @ ({mon['left']},{mon['top']}){suffix}"
+            self.monitor_label_to_index[label] = capture_index
             opts.append(label)
             if label == current_val:
                 found = True

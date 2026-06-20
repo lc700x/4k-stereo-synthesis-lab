@@ -86,3 +86,26 @@ def test_stereo_runtime_logger_deduplicates_fused_logs(capsys):
     output = capsys.readouterr().out
     assert output.count("[Main] Stereo runtime output:") == 1
     assert "fast_plus_fused=triton" in output
+
+def test_stereo_runtime_logger_openxr_output_log(capsys):
+    runtime = FakeRuntime()
+    logger = StereoRuntimeLogger(runtime, active_preset_getter=lambda: "cinema")
+    result = SimpleNamespace(
+        debug_info={
+            "backend": "openxr_roll_adaptive_grid_sample",
+            "runtime_output_format": "openxr_eye_views",
+            "runtime_output_dtype": "uint8",
+            "runtime_output_eye_size": "3840x2160",
+        }
+    )
+
+    logger.log_fast_plus_fused_runtime_state(result)
+    logger.log_fast_plus_fused_runtime_state(result)
+
+    output = capsys.readouterr().out
+    assert output.count("[Main] Stereo runtime output:") == 1
+    assert "output=openxr_eye_views" in output
+    assert "dtype=uint8" in output
+    assert "eye=3840x2160" in output
+    assert "fast_plus_fused" not in output
+    assert "pack=" not in output

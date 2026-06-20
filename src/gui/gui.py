@@ -18,6 +18,7 @@ from .config import DEFAULTS
 from .controls import S
 from .paths import BASE_DIR
 from .localization import UI_MESSAGES
+from .flet_runtime import ensure_vendored_flet_view
 
 
 class Desktop2StereoGUI(
@@ -116,6 +117,7 @@ class Desktop2StereoGUI(
 
 def main():
     """Entry point for the GUI application."""
+    ensure_vendored_flet_view()
     ft.run(_async_main)
 
 

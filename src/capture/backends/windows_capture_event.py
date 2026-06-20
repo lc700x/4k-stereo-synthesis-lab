@@ -19,6 +19,7 @@ def _load_windows_capture(capture_tool):
     return WindowsCapture, Frame, InternalCaptureControl
 
 
+
 def _setup_dpi_awareness():
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -115,11 +116,15 @@ class WindowsCaptureEventRunner:
                 time.sleep(0.1)
                 continue
 
-            cap = (
-                WindowsCapture(window_name=self.config.window_title)
-                if self.config.capture_mode == "Window"
-                else WindowsCapture(monitor_index=self.config.monitor_index)
-            )
+            if self.config.capture_mode == "Window":
+                cap = WindowsCapture(window_name=self.config.window_title)
+            else:
+                print(
+                    f"[capture_loop] WindowsCapture monitor_index={self.config.monitor_index} "
+                    f"tool={self.capture_tool}",
+                    flush=True,
+                )
+                cap = WindowsCapture(monitor_index=self.config.monitor_index)
             self._session = cap
             self._control = None
             if on_session_update is not None:

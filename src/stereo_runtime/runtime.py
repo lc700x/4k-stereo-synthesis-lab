@@ -516,6 +516,8 @@ class StereoRuntime:
         debug = dict(openxr.debug_info)
         debug["runtime_depth_backend"] = self.depth_config.backend
         debug["runtime_output_format"] = "openxr_eye_views"
+        debug["runtime_output_dtype"] = _runtime_eye_dtype(openxr.left_eye, openxr.right_eye)
+        debug["runtime_output_eye_size"] = _runtime_eye_size(openxr.left_eye)
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         if memory:
             debug.update(memory)
@@ -659,6 +661,24 @@ def _validate_runtime_rgb_frame(rgb_frame: Any) -> torch.Tensor:
     return rgb_frame
 
 
+
+def _runtime_eye_dtype(left_eye, right_eye) -> str:
+    left_dtype = str(getattr(left_eye, "dtype", "unknown")).replace("torch.", "")
+    right_dtype = str(getattr(right_eye, "dtype", "unknown")).replace("torch.", "")
+    if left_dtype == right_dtype:
+        return left_dtype
+    return f"left={left_dtype},right={right_dtype}"
+
+
+def _runtime_eye_size(eye) -> str:
+    shape = tuple(getattr(eye, "shape", ()))
+    if len(shape) == 4:
+        shape = shape[1:]
+    if len(shape) == 3 and shape[0] in (3, 4):
+        return f"{int(shape[2])}x{int(shape[1])}"
+    if len(shape) == 3 and shape[-1] >= 3:
+        return f"{int(shape[1])}x{int(shape[0])}"
+    return "unknown"
 def _runtime_output_uint8_enabled() -> bool:
     return str(os.environ.get("D2S_RUNTIME_OUTPUT_UINT8", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
 

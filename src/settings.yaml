@@ -1,5 +1,5 @@
 Capture Mode: Monitor
-Monitor Index: 1
+Monitor Index: 3
 Window Title: ''
 Show FPS: true
 Model List:
@@ -346,7 +346,7 @@ Lossless Scaling Support: false
 Capture Tool: WindowsCaptureCUDA
 Fill 16:9: true
 Fix Viewer Aspect: false
-Stereo Output: 3
+Stereo Output: 1
 Advanced Stereo: true
 Advanced Device Options: false
 OpenVINO: false

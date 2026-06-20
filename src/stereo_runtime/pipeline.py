@@ -38,9 +38,20 @@ class RuntimePipelineContext:
     log_fast_plus_fused_runtime_state: Callable[[object], None]
 
 
+
+def _rgb_size_text(frame) -> str:
+    shape = tuple(getattr(frame, "shape", ()))
+    if len(shape) == 4:
+        return f"{int(shape[3])}x{int(shape[2])}"
+    if len(shape) == 3 and shape[0] in (3, 4):
+        return f"{int(shape[2])}x{int(shape[1])}"
+    if len(shape) == 3:
+        return f"{int(shape[1])}x{int(shape[0])}"
+    return "unknown"
 class RuntimePipelineLoop:
     def __init__(self, context: RuntimePipelineContext):
         self.context = context
+        self._logged_rgb_shape = False
 
     def run(self) -> None:
         ctx = self.context
@@ -85,6 +96,12 @@ class RuntimePipelineLoop:
                     use_torch=ctx.use_cudart,
                     output="tensor",
                 )
+                if not self._logged_rgb_shape:
+                    self._logged_rgb_shape = True
+                    print(
+                        f"[process_runtime_loop] rgb={_rgb_size_text(frame_rgb)}",
+                        flush=True,
+                    )
                 ctx.breakdown_add_time("rt_cap2rgb", time.perf_counter() - process_start_time)
                 ctx.set_preprocess_backend(
                     str(getattr(frame_rgb, "_d2s_preprocess_backend", "unknown"))

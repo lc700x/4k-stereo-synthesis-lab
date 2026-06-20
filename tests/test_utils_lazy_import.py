@@ -34,3 +34,10 @@ def test_runtime_utils_attribute_still_loads_settings():
     result = _run_python("from utils import FPS; print(isinstance(FPS, int))", SRC)
 
     assert result.stdout.strip() == "True"
+
+
+def test_main_uses_explicit_settings_loader_to_avoid_submodule_collision():
+    main_text = (SRC / "main.py").read_text(encoding="utf-8")
+
+    assert "settings, shutdown_event" not in main_text
+    assert "settings=_get_settings()" in main_text

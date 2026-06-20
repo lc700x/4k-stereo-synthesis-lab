@@ -4,7 +4,7 @@ import time
 import subprocess
 import os
 
-from utils import OS_NAME, OUTPUT_RESOLUTION, CAPTURE_MODE, CAPTURE_TOOL, MONITOR_INDEX, FPS, WINDOW_TITLE, IPD, DEPTH_STRENGTH, CONVERGENCE, RUN_MODE, STEREOMIX_DEVICE, STREAM_KEY, AUDIO_DELAY, CRF, DEVICE_INFO, DEVICE, CACHE_PATH, settings, shutdown_event, SHOW_FPS
+from utils import OS_NAME, OUTPUT_RESOLUTION, CAPTURE_MODE, CAPTURE_TOOL, MONITOR_INDEX, FPS, WINDOW_TITLE, IPD, DEPTH_STRENGTH, CONVERGENCE, RUN_MODE, STEREOMIX_DEVICE, STREAM_KEY, AUDIO_DELAY, CRF, DEVICE_INFO, DEVICE, CACHE_PATH, shutdown_event, SHOW_FPS, _get_settings
 from capture import capture_frame_to_rgb, prepare_rgb_for_stereo_runtime
 from capture.session import CaptureSessionLoop
 from stereo_runtime.pipeline import RuntimePipelineLoop
@@ -17,7 +17,7 @@ from viewer.window_utils import is_window_visible_on_screen, list_windows
 
 context = create_runtime_context(
     file_path=__file__,
-    settings=settings,
+    settings=_get_settings(),
     cache_path=CACHE_PATH,
     device=DEVICE,
     device_info=DEVICE_INFO,

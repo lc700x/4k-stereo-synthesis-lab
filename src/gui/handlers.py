@@ -1,0 +1,790 @@
+"""GUI Handler Mixin — event handlers, visibility sync, i18n, audio, refresh."""
+import os
+import re
+import subprocess
+import flet as ft
+from utils import (
+    OS_NAME, ALL_MODELS, DEFAULT_PORT, STEREO_MIX_NAMES,
+    DISABLE_TRT_KEYWORDS, DISABLE_COREML_KEYWORDS, DISABLE_OPENVINO_KEYWORDS,
+    get_local_ip,
+)
+from . import devices as devices_module
+from .capture_sources import (
+    get_capture_tool_options, get_primary_monitor_index, list_windows,
+)
+from .config import DEFAULTS, FAMILY_SIZE_TO_MODEL, FAMILY_TO_SIZES
+from .controls import FONT_SIZE
+from .localization import UI_MESSAGES, is_supported_locale
+from .devices import DEVICES
+
+
+class GUIHandlerMixin:
+    """Mixin providing event handlers, visibility sync, and i18n for Desktop2StereoGUI."""
+
+    # ── locale-dependent converters ──
+
+    def _upscaler_display_options(self):
+        t = UI_MESSAGES[self.locale]
+        return [t.get("Auto", "Auto"), t.get("Off", "Off"), "FSR1"]
+
+    def _upscaler_to_display(self, value):
+        value_l = str(value or "").strip().lower()
+        if value_l == "fsr1":
+            return "FSR1"
+        if value_l in ("auto", "自动"):
+            return UI_MESSAGES[self.locale].get("Auto", "Auto")
+        return UI_MESSAGES[self.locale].get("Off", "Off")
+
+    def _target_fps_to_display(self, value):
+        fps = self._parse_int(value, DEFAULTS["Target FPS"])
+        if fps <= 0:
+            return UI_MESSAGES[self.locale].get("Auto", "Auto")
+        return str(fps)
+
+    def _depth_quick_to_display(self, value):
+        return UI_MESSAGES[self.locale].get(value, value)
+
+    def _preset_to_display(self, value):
+        mapping = {
+            "auto": "Cinema", "cinema": "Cinema",
+            "game_low_latency": "Game / Low Latency",
+            "still_image_hq": "Still Image / HQ",
+            "debug_export": "Debug / Export",
+        }
+        key = mapping.get(str(value or "cinema").strip().lower(), "Cinema")
+        return UI_MESSAGES[self.locale].get(key, key) if hasattr(self, "locale") else key
+
+    # ── model handlers ──
+
+    def on_model_family_change(self, e):
+        family = e.control.value
+        sizes = FAMILY_TO_SIZES.get(family, [])
+        self.model_size_dd.options = [s for s in sizes]
+        self.model_size_dd.value = sizes[0] if sizes else ""
+        self.model_size_dd.update()
+        self._on_model_changed()
+
+    def on_model_size_change(self, e):
+        self._on_model_changed()
+
+    @property
+    def current_model_name(self):
+        family = self.depth_model_dd.value
+        size = self.model_size_dd.value
+        return FAMILY_SIZE_TO_MODEL.get((family, size), family if not size else f"{family}-{size}")
+
+    def _on_model_changed(self):
+        model = self.current_model_name
+        self._config["Depth Model"] = model
+        self.update_depth_resolution_options(model)
+        self.auto_enable_optimizers_based_on_device()
+        if not devices_module.IS_ROCM and "CUDA" in self.device_dd.value:
+            self.update_tensorrt_visibility_based_on_model(model)
+        elif "MPS" in self.device_dd.value:
+            self.update_coreml_visibility_based_on_model(model)
+        elif "XPU" in self.device_dd.value:
+            self.update_openvino_visibility_based_on_model(model)
+        self._fit_window_to_content()
+
+    # ── device / accelerator handlers ──
+
+    def on_device_change(self, e):
+        device_label = e.control.value if e else self.device_dd.value
+        self._config["Computing Device"] = self.device_label_to_index.get(device_label, 0)
+        if OS_NAME in ("Windows", "Darwin"):
+            new_opts = get_capture_tool_options(device_label)
+            self.capture_tool_dd.options = [o for o in new_opts]
+            if self.capture_tool_dd.value not in new_opts:
+                self.capture_tool_dd.value = new_opts[0]
+            self.capture_tool_dd.update()
+        self._update_accelerator_visibility(device_label)
+        self._fit_window_to_content()
+
+    def _update_accelerator_visibility(self, device_label):
+        cuda = "CUDA" in device_label
+        dml = "DirectML" in device_label
+        mps = "MPS" in device_label
+        xpu = "XPU" in device_label
+        other = not (cuda or dml or mps or xpu)
+        self.torch_compile_cb.visible = cuda
+        self.tensorrt_cb.visible = cuda and not devices_module.IS_ROCM
+        self.tensorrt_cb.disabled = False
+        self.recompile_trt_cb.visible = self.tensorrt_cb.value if self.tensorrt_cb.visible else False
+        self.coreml_cb.visible = mps
+        self.coreml_cb.disabled = False
+        self.recompile_coreml_cb.visible = self.coreml_cb.value if self.coreml_cb.visible else False
+        self.openvino_cb.visible = xpu
+        self.openvino_cb.disabled = False
+        self.recompile_openvino_cb.visible = self.openvino_cb.value if self.openvino_cb.visible else False
+        self.fp16_cb.visible = not (dml or mps)
+        self.acceleration_label.visible = not (dml or other)
+        is_windows_or_mac = OS_NAME in ("Windows", "Darwin")
+        self.capture_tool_label.visible = is_windows_or_mac
+        self.capture_tool_dd.visible = is_windows_or_mac
+        if dml or other:
+            self.torch_compile_cb.visible = False
+            self.tensorrt_cb.visible = False
+            self.recompile_trt_cb.visible = False
+            self.coreml_cb.visible = False
+            self.recompile_coreml_cb.visible = False
+            self.openvino_cb.visible = False
+            self.recompile_openvino_cb.visible = False
+        current_model = self.current_model_name
+        if cuda and not devices_module.IS_ROCM:
+            self.update_tensorrt_visibility_based_on_model(current_model)
+        if mps:
+            self.update_coreml_visibility_based_on_model(current_model)
+        if xpu:
+            self.update_openvino_visibility_based_on_model(current_model)
+
+    def _on_trt_toggle(self, e):
+        self.recompile_trt_cb.visible = self.tensorrt_cb.value
+        self._fit_window_to_content()
+
+    def _on_coreml_toggle(self, e):
+        self.recompile_coreml_cb.visible = self.coreml_cb.value
+        self._fit_window_to_content()
+
+    def _on_openvino_toggle(self, e):
+        self.recompile_openvino_cb.visible = self.openvino_cb.value
+        self._fit_window_to_content()
+
+    def auto_enable_optimizers_based_on_device(self):
+        device_label = self.device_dd.value
+        model_lower = (self.current_model_name or "").lower()
+        self.tensorrt_cb.value = False
+        self.coreml_cb.value = False
+        self.openvino_cb.value = False
+        if "CUDA" in device_label and not devices_module.IS_ROCM:
+            should = not any(kw in model_lower for kw in DISABLE_TRT_KEYWORDS)
+            self.tensorrt_cb.value = should
+            self.torch_compile_cb.value = True
+        elif "MPS" in device_label:
+            should = not any(kw in model_lower for kw in DISABLE_COREML_KEYWORDS)
+            self.coreml_cb.value = should
+        elif "XPU" in device_label:
+            should = not any(kw in model_lower for kw in DISABLE_OPENVINO_KEYWORDS)
+            self.openvino_cb.value = should
+        self._on_trt_toggle(None)
+        self._on_coreml_toggle(None)
+        self._on_openvino_toggle(None)
+
+    def update_tensorrt_visibility_based_on_model(self, model_name):
+        if not model_name:
+            return
+        if not devices_module.IS_ROCM and "CUDA" in self.device_dd.value:
+            should_disable = any(kw in model_name.lower() for kw in DISABLE_TRT_KEYWORDS)
+            if should_disable:
+                self.tensorrt_cb.value = False
+                self.tensorrt_cb.disabled = True
+                self.recompile_trt_cb.visible = False
+            else:
+                self.tensorrt_cb.disabled = False
+
+    def update_coreml_visibility_based_on_model(self, model_name):
+        if not model_name:
+            return
+        if "MPS" in self.device_dd.value:
+            should_disable = any(kw in model_name.lower() for kw in DISABLE_COREML_KEYWORDS)
+            if should_disable:
+                self.coreml_cb.value = False
+                self.coreml_cb.disabled = True
+                self.recompile_coreml_cb.visible = False
+            else:
+                self.coreml_cb.disabled = False
+
+    def update_openvino_visibility_based_on_model(self, model_name):
+        if not model_name:
+            return
+        if "XPU" in self.device_dd.value:
+            should_disable = any(kw in model_name.lower() for kw in DISABLE_OPENVINO_KEYWORDS)
+            if should_disable:
+                self.openvino_cb.value = False
+                self.openvino_cb.disabled = True
+                self.recompile_openvino_cb.visible = False
+            else:
+                self.openvino_cb.disabled = False
+
+    # ── capture tool / mode handlers ──
+
+    def on_capture_tool_change(self, e):
+        tool = e.control.value if e else self.capture_tool_dd.value
+        if tool == "DesktopDuplication":
+            self.capture_mode_key = "Monitor"
+            self.capture_mode_dd.value = UI_MESSAGES[self.locale]["Monitor"]
+            self.capture_mode_dd.disabled = True
+            self.set_status(UI_MESSAGES[self.locale]["DesktopDuplication selected: Window capture mode disabled."])
+        else:
+            self.capture_mode_dd.disabled = False
+            self.set_status("", key="")
+        self.capture_mode_dd.update()
+        self._sync_capture_mode_visibility()
+
+    def _sync_capture_mode_visibility(self):
+        if self.capture_mode_key == "Monitor":
+            self.monitor_dd.visible = True
+            self.window_dd.visible = False
+        else:
+            self.monitor_dd.visible = False
+            self.window_dd.visible = True
+        self._safe_update(self.monitor_dd, self.window_dd)
+        self._fit_window_to_content()
+
+    def on_capture_mode_change(self, e):
+        mode = e.control.value
+        texts = UI_MESSAGES[self.locale]
+        reverse_map = {texts["Monitor"]: "Monitor", texts["Window"]: "Window"}
+        self.capture_mode_key = reverse_map.get(mode, "Monitor")
+        self._sync_capture_mode_visibility()
+        if self.capture_mode_key == "Window":
+            self.refresh_window_list()
+        self.update_stereo_monitor_menu()
+        self._fit_window_to_content()
+
+    def on_window_selected(self, e):
+        label = e.control.value if e else self.window_dd.value
+        m = re.search(r'\[h:(\d+)\]$', label)
+        target_handle = int(m.group(1)) if m else None
+        display_title = re.sub(r'\s*\[h:\d+\]$', '', label).strip()
+        self.selected_window_name = display_title
+        for win in self._window_objects:
+            wh = win.get("handle") or 0
+            if target_handle is not None and wh == target_handle:
+                self.selected_window_handle = win.get("handle")
+                self.selected_window_rect = win.get("rect")
+                break
+            elif target_handle is None and win["title"] == display_title:
+                self.selected_window_handle = win.get("handle")
+                self.selected_window_rect = win.get("rect")
+                break
+        self._fit_window_to_content()
+
+    def _on_monitor_change(self, e):
+        self.update_stereo_monitor_menu()
+        self._fit_window_to_content()
+        self.set_status(f"{UI_MESSAGES[self.locale]['Selected input monitor:']} {e.control.value}")
+
+    # ── run mode / visibility handlers ──
+
+    def on_run_mode_change(self, e):
+        label = e.control.value
+        texts = UI_MESSAGES[self.locale]
+        mode_map = {
+            texts.get("Local Viewer", "Local Viewer"): "Local Viewer",
+            texts.get("OpenXR Link", "OpenXR Link"): "OpenXR Link",
+            texts.get("RTMP Streamer", "RTMP Streamer"): "RTMP Streamer",
+            texts.get("MJPEG Streamer", "MJPEG Streamer"): "MJPEG Streamer",
+            texts.get("Legacy Streamer", "Legacy Streamer"): "Legacy Streamer",
+            texts.get("3D Monitor", "3D Monitor"): "3D Monitor",
+        }
+        self.run_mode_key = mode_map.get(label, "Local Viewer")
+        self._config["Run Mode"] = self.run_mode_key
+        self._sync_visibility()
+
+    def on_advanced_device_change(self, e):
+        self._sync_visibility()
+        self._fit_window_to_content()
+        self._safe_update(self.page)
+
+    def _sync_device_advanced_visibility(self, mode):
+        advanced = bool(getattr(self, "advanced_device_cb", None) and self.advanced_device_cb.value)
+        show_timing = advanced and mode in ["Local Viewer", "3D Monitor", "OpenXR Link"]
+        show_enhance = advanced and mode in ["Local Viewer", "3D Monitor"]
+        self.row6b.visible = show_timing
+        self.row6c.visible = show_enhance
+        self.target_fps_label.visible = show_timing
+        self.target_fps_dd.visible = show_timing
+        self.local_vsync_cb.visible = advanced and mode in ["Local Viewer", "3D Monitor"]
+        self.upscaler_label.visible = show_enhance
+        self.upscaler_dd.visible = show_enhance
+        self.upscaler_sharpness_label.visible = show_enhance
+        self.upscaler_sharpness_dd.visible = show_enhance
+
+    def _sync_visibility(self):
+        mode = self.run_mode_key
+        texts = UI_MESSAGES[self.locale]
+        mode_reverse = {
+            "Local Viewer": texts["Local Viewer"], "OpenXR Link": texts["OpenXR Link"],
+            "RTMP Streamer": texts["RTMP Streamer"], "MJPEG Streamer": texts["MJPEG Streamer"],
+            "Legacy Streamer": texts["Legacy Streamer"], "3D Monitor": texts["3D Monitor"],
+        }
+        self.run_mode_dd.value = mode_reverse.get(mode, texts["Local Viewer"])
+        is_openxr = mode == "OpenXR Link"
+        self.display_mode_label.visible = not is_openxr
+        self.display_mode_dd.visible = not is_openxr
+        self.xr_preview_cb.visible = is_openxr
+        self._sync_device_advanced_visibility(mode)
+        self.row7b.visible = is_openxr
+        if is_openxr:
+            self.showfps_cb.visible = False
+            self.fill_16_9_cb.visible = False
+            self.fix_aspect_cb.visible = False
+        else:
+            self.showfps_cb.visible = True
+            self.fill_16_9_cb.visible = True
+            self.fix_aspect_cb.visible = mode in ["Local Viewer", "3D Monitor"]
+        if mode in ["Legacy Streamer", "3D Monitor"]:
+            self.display_mode_dd.options = ["Half-SBS", "Full-SBS", "Half-TAB", "Full-TAB"]
+        else:
+            self.display_mode_dd.options = [
+                "Half-SBS", "Full-SBS", "Half-TAB", "Full-TAB",
+                "Depth Map", "Anaglyph", "Interleaved", "Mono", "Leia"]
+        mon_count = self._get_monitor_count()
+        stereo_full = mode in ["Local Viewer", "3D Monitor", "RTMP Streamer"] and mon_count > 1
+        self.stereo_output_label.visible = not is_openxr
+        self.stereo_monitor_dd.visible = stereo_full
+        if hasattr(self, '_stereo_spacer'):
+            self._stereo_spacer.visible = stereo_full
+        self.row9.visible = (not is_openxr) and (stereo_full or self.fill_16_9_cb.visible or self.fix_aspect_cb.visible or self.lossless_cb.visible)
+        if mode == "3D Monitor":
+            self.stereo_monitor_dd.value = self.monitor_dd.value
+        row_map = self._get_streamer_row_map()
+        self._show_streamer_rows(*row_map.get(mode, []))
+        self.lossless_cb.visible = (OS_NAME == "Windows" and mode == "RTMP Streamer")
+        self.update_stereo_monitor_menu()
+        self._fit_window_to_content()
+        if mode in ["Local Viewer", "RTMP Streamer"]:
+            self._auto_select_stereo_monitor()
+        if mode == "RTMP Streamer":
+            self.populate_audio_devices()
+            self.auto_select_stereo_mix()
+            saved_mix = self._config.get("Stereo Mix", "")
+            if saved_mix and saved_mix in (self.audio_dd.options or []):
+                self.audio_dd.value = saved_mix
+        self.update_stream_url()
+        self._fit_window_to_content()
+        self.page.update()
+
+    def _auto_select_stereo_monitor(self):
+        mon_count = self._get_monitor_count()
+        if mon_count <= 1:
+            return
+        cur = self.stereo_monitor_dd.value
+        valid = cur and cur in self.stereo_monitor_dd.options and cur != "Viewer Window"
+        if not valid:
+            input_label = self.monitor_dd.value if self.capture_mode_key == "Monitor" else None
+            for lbl in self.monitor_label_to_index:
+                if lbl != input_label:
+                    self.stereo_monitor_dd.value = lbl
+                    break
+
+    # ── theme / language ──
+
+    def on_theme_change(self, e):
+        color = e.control.value
+        cn_map = {"系统": "system", "蓝色": "blue", "绿色": "green", "红色": "red",
+                  "紫色": "purple", "橙色": "orange", "青色": "teal", "粉色": "pink", "灰色": "grey"}
+        color = cn_map.get(color, color.lower())
+        if OS_NAME == "Windows":
+            font = "Microsoft YaHei"
+        elif OS_NAME == "Darwin":
+            font = "PingFang SC"
+        else:
+            font = "Noto Sans SC"
+        if color == "system":
+            self.page.theme_mode = ft.ThemeMode.SYSTEM
+            self.page.theme = ft.Theme(color_scheme_seed="blue", font_family=font)
+        else:
+            self.page.theme = ft.Theme(color_scheme_seed=color, font_family=font)
+        self.page.update()
+
+    def on_language_change(self, e):
+        lang_display = e.control.value
+        _LANG_MAP = {"English": "EN", "简体中文": "CN"}
+        lang = _LANG_MAP.get(lang_display, "EN")
+        if is_supported_locale(lang):
+            self.locale = lang
+            self._config["Language"] = lang
+            self.update_ui_texts()
+            self._sync_visibility()
+            if self._status_key:
+                self.set_status(UI_MESSAGES[self.locale].get(self._status_key, self.status_text.value), key=self._status_key)
+            t = UI_MESSAGES[self.locale]
+            cur = self.theme_dd.value
+            cn_map = {"系统": "system", "蓝色": "blue", "绿色": "green", "红色": "red",
+                      "紫色": "purple", "橙色": "orange", "青色": "teal", "粉色": "pink", "灰色": "grey"}
+            key = cn_map.get(cur, cur.lower() if cur else "system")
+            self.theme_dd.value = t.get(key, key) if self.locale == "CN" else key.capitalize()
+            self._fit_window_to_content()
+            self.page.update()
+
+    # ── i18n text update ──
+
+    def update_ui_texts(self):
+        t = UI_MESSAGES[self.locale]
+        self.depth_model_label.value = t["Depth Model:"]
+        self.fp16_cb.label = t["FP16"]
+        self.depth_resolution_label.value = t["Depth Resolution:"]
+        self.convergence_label.value = t["Convergence:"]
+        self.depth_strength_label.value = t["Depth Strength:"]
+        self.depth_quick_label.value = t["Depth Quick:"]
+        depth_quick_key = self._display_to_depth_quick(self.depth_quick_dd.value)
+        self.depth_quick_dd.options = [t["Soft"], t["Standard"], t["Enhanced"]]
+        self.depth_quick_dd.value = self._depth_quick_to_display(depth_quick_key)
+        self.foreground_scale_label.value = t["Foreground Scale:"]
+        self.antialiasing_label.value = t["Anti-aliasing:"]
+        self.ipd_label.value = t["IPD (m):"]
+        self.stereo_scale_label.value = t["Stereo Scale:"]
+        self.stereo_preset_label.value = t["Stereo Mode:"]
+        preset_key = self._display_to_preset(self.stereo_preset_dd.value)
+        self.stereo_preset_dd.options = [t["Cinema"], t["Game / Low Latency"], t["Still Image / HQ"], t["Debug / Export"]]
+        self.stereo_preset_dd.value = self._preset_to_display(preset_key)
+        self.stereo_quality_label.value = t["Synthetic View:"]
+        stereo_quality_key = self._display_to_stereo_quality(self.stereo_quality_dd.value)
+        self.stereo_quality_dd.options = self._stereo_quality_options()
+        self.stereo_quality_dd.value = self._stereo_quality_to_display(stereo_quality_key)
+        self.max_shift_label.value = t["Max Shift Ratio:"]
+        self.temporal_strength_label.value = t["Temporal Strength:"]
+        self.scene_reset_label.value = t["Scene Threshold:"]
+        self.reset_cooldown_label.value = t["Reset Cooldown:"]
+        self.edge_dilation_label.value = t["Edge Dilation:"]
+        self.edge_threshold_label.value = t["Edge Threshold:"]
+        self.anaglyph_label.value = t["Anaglyph:"]
+        self.cross_eyed_cb.label = t["Cross Eyed"]
+        self.advanced_stereo_cb.label = t["Advanced Stereo"]
+        self.acceleration_label.value = t["Inference Acceleration:"]
+        self.torch_compile_cb.label = t["torch.compile"]
+        self.tensorrt_cb.label = t["TensorRT"]
+        self.coreml_cb.label = t["CoreML"]
+        self.openvino_cb.label = t["OpenVINO"]
+        self.recompile_trt_cb.label = t["Recompile TensorRT"]
+        self.recompile_coreml_cb.label = t["Recompile CoreML"]
+        self.recompile_openvino_cb.label = t["Recompile OpenVINO"]
+        self.computing_device_label.value = t["Computing Device:"]
+        self.advanced_device_cb.label = t["Advanced Device Options"]
+        self.showfps_cb.label = t["Show FPS"]
+        self.capture_tool_label.value = t["Capture Tool:"]
+        self.run_mode_label.value = t["Run Mode:"]
+        self.display_mode_label.value = t["Display Mode:"]
+        self.xr_preview_cb.label = t.get("XR Preview Window", "XR画面预览窗口" if self.locale == "CN" else "XR Preview Window")
+        self.local_vsync_cb.label = t.get("Local VSync", "Local VSync")
+        self.target_fps_label.value = t.get("Capture FPS:", "Capture FPS:")
+        target_fps_value = self._target_fps_from_display(self.target_fps_dd.value)
+        self.target_fps_dd.options = [t["Auto"], "60", "72", "80", "90", "120"]
+        self.target_fps_dd.value = self._target_fps_to_display(target_fps_value)
+        self.upscaler_label.value = t.get("Upscaler:", "Upscaler:")
+        self.upscaler_sharpness_label.value = t.get("Upscaler Sharpness:", "Sharpness:")
+        upscaler_value = self._upscaler_from_display(self.upscaler_dd.value)
+        self.upscaler_dd.options = self._upscaler_display_options()
+        self.upscaler_dd.value = self._upscaler_to_display(upscaler_value)
+        self.stereo_output_label.value = t["Stereo Output:"]
+        self.theme_label.value = t["Theme:"]
+        theme_display = ["System", "Blue", "Green", "Red", "Purple", "Orange", "Teal", "Pink", "Grey"]
+        self.theme_dd.options = [t.get(k.lower(), k) for k in theme_display]
+        cur = self.theme_dd.value
+        cn_map = {"系统": "system", "蓝色": "blue", "绿色": "green", "红色": "red",
+                  "紫色": "purple", "橙色": "orange", "青色": "teal", "粉色": "pink", "灰色": "grey"}
+        key = cn_map.get(cur, cur.lower() if cur else "system")
+        self.theme_dd.value = t.get(key, key) if self.locale == "CN" else key.capitalize()
+        self.fill_16_9_cb.label = t["Fill 16:9"]
+        self.fix_aspect_cb.label = t["Fix Viewer Aspect"]
+        self.lossless_cb.label = t["Lossless Scaling Support"]
+        self.controller_label.value = t["Controller:"]
+        self.environment_label.value = t["Environment:"]
+        self.lang_label.value = t["Set Language:"]
+        run_mode_texts = {}
+        if OS_NAME == "Darwin":
+            run_mode_texts = {
+                "Local Viewer": t["Local Viewer"], "RTMP Streamer": t["RTMP Streamer"],
+                "MJPEG Streamer": t["MJPEG Streamer"], "Legacy Streamer": t["Legacy Streamer"],
+            }
+        else:
+            run_mode_texts = {
+                "Local Viewer": t["Local Viewer"], "OpenXR Link": t["OpenXR Link"],
+                "RTMP Streamer": t["RTMP Streamer"], "MJPEG Streamer": t["MJPEG Streamer"],
+                "Legacy Streamer": t["Legacy Streamer"],
+            }
+            if OS_NAME == "Windows":
+                run_mode_texts["3D Monitor"] = t["3D Monitor"]
+        self.run_mode_dd.options = [v for v in run_mode_texts.values()]
+        self.capture_mode_dd.options = [t["Monitor"], t["Window"]]
+        self.capture_mode_dd.value = t["Monitor"] if self.capture_mode_key == "Monitor" else t["Window"]
+        self.capture_mode_dd.reapply_width()
+        self.stream_url_label.value = t["Streamer URL"]
+        self.stream_port_label.value = t["Streamer Port:"]
+        self.stream_quality_label.value = t["Stream Quality:"]
+        self.stream_proto_label.value = t["Stream Protocol:"]
+        self.stream_key_label.value = t["Stream Key"]
+        self.audio_label.value = t["Stereo Mix"]
+        self.crf_label.value = t["CRF"]
+        self.audio_delay_label.value = t["Audio Delay"]
+        self.preview_btn.content.value = t["Preview"]
+        self.refresh_btn.content.value = t["Refresh"]
+        self.reset_btn.content.value = t["Reset"]
+        self.stop_btn.content.value = t["Stop"]
+        self.run_btn.content.value = t["Run"]
+
+        def _set_tooltip(ctrl, text):
+            if hasattr(ctrl, "set_tooltip"):
+                ctrl.set_tooltip(text)
+            else:
+                try:
+                    ctrl.tooltip = text
+                except Exception:
+                    pass
+
+        _set_tooltip(self.window_dd, t["tooltip_window"])
+        for ctrl, key in [
+            (self.depth_model_dd, "tooltip_depth_model"),
+            (self.model_size_dd, "tooltip_depth_model"),
+            (self.depth_res_dd, "tooltip_depth_res"),
+            (self.convergence_dd, "tooltip_convergence"),
+            (self.depth_strength_dd, "tooltip_depth_strength"),
+            (self.depth_quick_dd, "tooltip_depth_quick"),
+            (self.stereo_preset_dd, "tooltip_stereo_preset"),
+            (self.stereo_quality_dd, "tooltip_stereo_quality"),
+            (self.max_shift_dd, "tooltip_max_shift"),
+            (self.temporal_strength_dd, "tooltip_temporal_strength"),
+            (self.scene_reset_dd, "tooltip_scene_reset"),
+            (self.reset_cooldown_dd, "tooltip_reset_cooldown"),
+            (self.edge_dilation_dd, "tooltip_edge_dilation"),
+            (self.edge_threshold_dd, "tooltip_edge_threshold"),
+            (self.anaglyph_dd, "tooltip_anaglyph"),
+            (self.cross_eyed_cb, "tooltip_cross_eyed"),
+            (self.advanced_stereo_cb, "tooltip_advanced_stereo"),
+            (self.foreground_scale_dd, "tooltip_foreground_scale"),
+            (self.antialiasing_dd, "tooltip_antialiasing"),
+            (self.ipd_dd, "tooltip_ipd"),
+            (self.stereo_scale_dd, "tooltip_stereo_scale"),
+            (self.device_dd, "tooltip_device"),
+            (self.advanced_device_cb, "tooltip_advanced_device_options"),
+            (self.capture_tool_dd, "tooltip_capture_tool"),
+            (self.run_mode_dd, "tooltip_run_mode"),
+            (self.display_mode_dd, "tooltip_display_mode"),
+            (self.local_vsync_cb, "tooltip_local_vsync"),
+            (self.target_fps_dd, "tooltip_target_fps"),
+            (self.ctrl_model_dd, "tooltip_ctrl_model"),
+            (self.env_model_dd, "tooltip_env_model"),
+            (self.capture_mode_dd, "tooltip_capture_mode"),
+            (self.monitor_dd, "tooltip_monitor"),
+            (self.stereo_monitor_dd, "tooltip_stereo_monitor"),
+            (self.lang_dd, "tooltip_lang"),
+            (self.theme_dd, "tooltip_theme"),
+            (self.stream_quality_dd, "tooltip_stream_quality"),
+            (self.stream_proto_dd, "tooltip_stream_proto"),
+            (self.audio_dd, "tooltip_audio"),
+            (self.stream_port_tf, "tooltip_stream_port"),
+            (self.stream_key_tf, "tooltip_stream_key"),
+            (self.crf_tf, "tooltip_crf"),
+            (self.audio_delay_tf, "tooltip_audio_delay"),
+        ]:
+            _set_tooltip(ctrl, t.get(key, UI_MESSAGES["EN"].get(key, key)))
+        self._auto_align_labels(force=True)
+
+    def _safe_update(self, *controls):
+        for c in controls:
+            try:
+                c.update()
+            except RuntimeError:
+                pass
+            except Exception as e:
+                print(f"[Warning] _safe_update failed: {e}")
+
+    # ── stream URL ──
+
+    def update_stream_url(self, e=None):
+        if not self.stream_container.visible:
+            return
+        protocol = self.stream_proto_dd.value
+        port = self.stream_port_tf.value or str(DEFAULT_PORT)
+        stream_key = self.stream_key_tf.value or "live"
+        local_ip = get_local_ip()
+        if self.run_mode_key in ["MJPEG Streamer", "Legacy Streamer"]:
+            self.stream_url_tf.content.controls[0].value = f"http://{local_ip}:{port}/"
+        else:
+            templates = {
+                "RTMP": f"rtmp://{local_ip}:{port}/{stream_key}",
+                "RTSP": f"rtsp://{local_ip}:{port}/{stream_key}",
+                "HLS": f"http://{local_ip}:{port}/{stream_key}/",
+                "HLS M3U8": f"http://{local_ip}:{port}/{stream_key}/index.m3u8",
+                "WebRTC": f"http://{local_ip}:{port}/{stream_key}/",
+            }
+            self.stream_url_tf.content.controls[0].value = templates.get(protocol, f"http://{local_ip}:{port}/{stream_key}/")
+        self._safe_update(self.stream_url_tf)
+        self.preview_btn.visible = protocol not in ["RTMP", "RTSP"]
+        self._safe_update(self.preview_btn)
+
+    def _on_stream_protocol_change(self, e):
+        self.stream_protocol_key = e.control.value
+        self._config["Stream Protocol"] = self.stream_protocol_key
+        self.update_stream_url()
+        self._fit_window_to_content()
+
+    def _on_stream_key_change(self, e):
+        val = e.control.value or ""
+        if not re.match(r'^[A-Za-z0-9_-]*$', val) or len(val) > 64:
+            self.set_status(UI_MESSAGES[self.locale]["err_stream_key"])
+        self._config["Stream Key"] = val
+        self.update_stream_url()
+
+    # ── audio ──
+
+    def populate_audio_devices(self):
+        if OS_NAME == "Linux":
+            self._populate_audio_linux()
+        else:
+            self._populate_audio_generic()
+        if self.audio_devices:
+            self.audio_dd.options = [d for d in self.audio_devices]
+            self.audio_dd.value = self.audio_devices[0]
+            self.audio_dd.update()
+            if self.audio_devices[0] in ["No Stereo Mix device found", "sounddevice not available"]:
+                self.set_status(self.audio_devices[0])
+
+    def _populate_audio_generic(self):
+        self.audio_devices = []
+        try:
+            import sounddevice as sd
+            all_devices = sd.query_devices()
+            found = set()
+            for dev in all_devices:
+                name = (dev.get("name", "") or "").lower()
+                in_ch = dev.get("max_input_channels", 0)
+                out_ch = dev.get("max_output_channels", 0)
+                if in_ch > 0 or out_ch > 0:
+                    for mix in STEREO_MIX_NAMES:
+                        if mix in name and "audio stereo input" not in name:
+                            found.add(dev.get("name"))
+                            break
+                    if "virtual-audio-capturer" in name:
+                        found.add(dev.get("name"))
+            if not found and OS_NAME == "Darwin":
+                print("[Info] No audio capture devices found on MacOS.\nRecommended tools:\n- BlackHole: https://existential.audio/blackhole/\n- Virtual Desktop Streamer: https://www.vrdesktop.net/\n- Loopback: https://rogueamoeba.com/loopback/")
+                self.audio_devices = ["No audio capture devices found"]
+            elif not found and OS_NAME == "Windows":
+                print("[Warning] No Stereo Mix devices found, please enable it in audio settings.\nIf no Stereo Mix, install 'Screen Capture Recorder':\nhttps://github.com/rdp/screen-capture-recorder-to-video-windows-free/releases")
+                self.audio_devices = ["virtual-audio-capturer"]
+            else:
+                self.audio_devices = list(found) or ["No Stereo Mix device found"]
+        except ImportError:
+            self.audio_devices = ["sounddevice not available"]
+        except Exception as e:
+            self.audio_devices = [f"Error: {e}"]
+
+    def _populate_audio_linux(self):
+        self.audio_devices = []
+        try:
+            result = subprocess.run(["pacmd", "list-sources"], capture_output=True, text=True, check=True)
+            sources = []
+            for block in result.stdout.split("index:")[1:]:
+                m = re.search(r"name:\s*<(.+?)>", block)
+                if m:
+                    sources.append(m.group(1))
+            self.audio_devices = sources or ["No audio sources found"]
+        except Exception:
+            self.audio_devices = ["pacmd not available"]
+
+    def auto_select_stereo_mix(self):
+        if not self.audio_devices:
+            return
+        for dev in self.audio_devices:
+            dl = dev.lower()
+            for mix in STEREO_MIX_NAMES:
+                if mix in dl and "audio stereo input" not in dl:
+                    self.audio_dd.value = dev
+                    self.audio_dd.update()
+                    return
+        for dev in self.audio_devices:
+            if "virtual-audio-capturer" in dev.lower():
+                self.audio_dd.value = dev
+                self.audio_dd.update()
+                return
+        self.audio_dd.value = "No Stereo Mix device found"
+        self.audio_dd.update()
+
+    # ── refresh ──
+
+    def refresh_monitor_and_window(self, e=None):
+        self.populate_monitors()
+        if self.capture_mode_key == "Window":
+            self.refresh_window_list()
+        if self.run_mode_key == "RTMP Streamer":
+            self.populate_audio_devices()
+            self.auto_select_stereo_mix()
+        self.update_stereo_monitor_menu()
+        self._sync_visibility()
+        self._fit_window_to_content()
+        if self.capture_mode_key == "Monitor" and self.monitor_dd.value:
+            self.set_status(f"{UI_MESSAGES[self.locale]['Selected input monitor:']} {self.monitor_dd.value}")
+        elif self.capture_mode_key == "Window" and self.selected_window_name:
+            self.set_status(f"{UI_MESSAGES[self.locale]['Selected input window:']} {self.selected_window_name}")
+
+    def refresh_window_list(self):
+        try:
+            windows = list_windows()
+            if not windows:
+                self.window_dd.options = []
+                self.window_dd.update()
+                return
+            self._window_objects = windows
+            win_labels = [f"{w['title']} [h:{w['handle'] or 0}]" for w in windows]
+            self.window_dd.options = win_labels
+            if self.selected_window_name:
+                labels_by_title = [lbl for lbl in win_labels if lbl.startswith(self.selected_window_name + " [")]
+                selected_handle_str = f"[h:{self.selected_window_handle or 0}]"
+                match = next((lbl for lbl in labels_by_title if selected_handle_str in lbl), None)
+                if match:
+                    self.window_dd.value = match
+                elif labels_by_title:
+                    self.window_dd.value = labels_by_title[0]
+                    self.on_window_selected(None)
+                else:
+                    self.window_dd.value = win_labels[0] if windows else ""
+                    self.on_window_selected(None)
+            elif windows:
+                self.window_dd.value = win_labels[0]
+                self.on_window_selected(None)
+            self.window_dd.update()
+        except Exception as e:
+            self.set_status(UI_MESSAGES[self.locale]["err_refresh_window"].format(e))
+
+    # ── stereo preset / advanced stereo ──
+
+    def on_stereo_preset_change(self, e=None):
+        preset = self._display_to_preset(self.stereo_preset_dd.value)
+        if self._apply_stereo_preset_values(preset):
+            self._schedule_stereo_hot_save()
+        else:
+            self.on_stereo_hot_param_change(e)
+
+    def _apply_stereo_preset_values(self, preset):
+        values = self._stereo_preset_gui_values(preset)
+        if not values:
+            return False
+        self.stereo_quality_dd.value = self._stereo_quality_to_display(values["quality"])
+        self.depth_strength_dd.value = f"{values['depth_strength']:.1f}"
+        self.depth_quick_dd.value = self._depth_quick_to_display(values["depth_quick"])
+        self.convergence_dd.value = f"{values['convergence']:.2f}".rstrip("0").rstrip(".")
+        self.max_shift_dd.value = f"{values['max_shift_ratio']:.2f}"
+        self.stereo_scale_dd.value = f"{values['stereo_scale']:.1f}"
+        self.temporal_strength_dd.value = f"{values['temporal_strength']:.2f}"
+        self.foreground_scale_dd.value = f"{values['foreground_scale']:.1f}"
+        self.antialiasing_dd.value = str(values["antialiasing"])
+        self.edge_dilation_dd.value = str(values["edge_dilation"])
+        self.edge_threshold_dd.value = f"{values['edge_threshold']:.2f}"
+        self.cross_eyed_cb.value = False
+        for ctrl in (
+            self.stereo_quality_dd, self.depth_strength_dd, self.depth_quick_dd,
+            self.convergence_dd, self.max_shift_dd, self.temporal_strength_dd,
+            self.foreground_scale_dd, self.antialiasing_dd, self.edge_dilation_dd,
+            self.edge_threshold_dd, self.cross_eyed_cb,
+        ):
+            self._safe_update(ctrl)
+        return True
+
+    def on_advanced_stereo_change(self, e):
+        self._sync_advanced_stereo_visibility()
+        self._fit_window_to_content()
+        self._safe_update(self.page)
+
+    def _sync_advanced_stereo_visibility(self):
+        visible = bool(getattr(self, "advanced_stereo_cb", None) and self.advanced_stereo_cb.value)
+        for row in getattr(self, "_advanced_stereo_rows", []):
+            row.visible = visible
+
+    def on_depth_quick_change(self, value):
+        quick = value if isinstance(value, str) else getattr(getattr(value, "control", None), "value", self.depth_quick_dd.value)
+        strength = self._depth_strength_for_quick(self._display_to_depth_quick(quick))
+        self.depth_strength_dd.value = f"{strength:.1f}"
+        self._safe_update(self.depth_strength_dd)
+        self._schedule_stereo_hot_save()

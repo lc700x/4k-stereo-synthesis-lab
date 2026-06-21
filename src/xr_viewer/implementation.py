@@ -5509,6 +5509,65 @@ class OpenXRViewerCore:
         self._pbo_texture_size = (w, h)
         print(f"[OpenXRViewer] GPU interop PBOs created ({BACKEND}) {w}x{h}")
 
+    def _sample_glow_target_color(self, rgb, is_tensor):
+        """Update glow target from a thin frame border with minimal CPU work."""
+        try:
+            if is_tensor:
+                h, w = int(rgb.shape[1]), int(rgb.shape[2])
+                bt = max(1, int(min(h, w) * 0.08))
+
+                top_h = min(bt, h)
+                bot_h = min(bt, h)
+                total = rgb[:, :top_h, :].float().sum(dim=(1, 2))
+                total = total + rgb[:, max(0, h - bot_h):, :].float().sum(dim=(1, 2))
+                count = (top_h * w) + (bot_h * w)
+
+                mid_h = max(0, h - top_h - bot_h)
+                side_w = min(bt, w)
+                if mid_h > 0 and side_w > 0:
+                    y0 = top_h
+                    y1 = h - bot_h
+                    total = total + rgb[:, y0:y1, :side_w].float().sum(dim=(1, 2))
+                    total = total + rgb[:, y0:y1, max(0, w - side_w):].float().sum(dim=(1, 2))
+                    count += mid_h * side_w * 2
+
+                avg = (total / max(1, count)).clamp(0, 255).detach().cpu().numpy()
+                self._glow_target_color = (
+                    float(avg[0]) / 255.0,
+                    float(avg[1]) / 255.0,
+                    float(avg[2]) / 255.0,
+                )
+                return
+
+            rgb_np = np.asarray(rgb, dtype=np.uint8)
+            h, w = rgb_np.shape[:2]
+            bt = max(1, int(min(h, w) * 0.08))
+            top_h = min(bt, h)
+            bot_h = min(bt, h)
+            step = 4
+
+            total = rgb_np[:top_h:step, ::step, :].sum(axis=(0, 1), dtype=np.float64)
+            total += rgb_np[max(0, h - bot_h)::step, ::step, :].sum(axis=(0, 1), dtype=np.float64)
+            count = (len(range(0, top_h, step)) + len(range(0, bot_h, step))) * len(range(0, w, step))
+
+            mid_h = max(0, h - top_h - bot_h)
+            side_w = min(bt, w)
+            if mid_h > 0 and side_w > 0:
+                y0 = top_h
+                y1 = h - bot_h
+                total += rgb_np[y0:y1:step, :side_w:step, :].sum(axis=(0, 1), dtype=np.float64)
+                total += rgb_np[y0:y1:step, max(0, w - side_w)::step, :].sum(axis=(0, 1), dtype=np.float64)
+                count += len(range(y0, y1, step)) * len(range(0, side_w, step)) * 2
+
+            avg = total / max(1, count)
+            self._glow_target_color = (
+                float(avg[0]) / 255.0,
+                float(avg[1]) / 255.0,
+                float(avg[2]) / 255.0,
+            )
+        except Exception:
+            pass
+
     # Per-frame helpers
     def _update_frame(self, rgb, depth):
         """Upload RGB and depth to GL textures -GPU path when available, CPU fallback."""
@@ -5532,6 +5591,7 @@ class OpenXRViewerCore:
                 self._d3d11_native_renderer.update_frame(rgb, depth)
                 self.frame_size = (w, h)
                 self.screen_height = None
+                self._maybe_sample_glow_target_color(rgb, is_tensor)
                 return
             except Exception as e:
                 print(f"[OpenXRViewer] D3D11 native frame upload failed: {e}")
@@ -5603,6 +5663,31 @@ class OpenXRViewerCore:
             # No glGenerateMipmap for depth: keep DIBR sampling at full-res
             # to match viewer.py FullSBS numerics.
 
+        self._maybe_sample_glow_target_color(rgb, is_tensor)
+
+    def _maybe_sample_glow_target_color(self, rgb, is_tensor):
+        """Sample frame color only when glow or cinema spill lighting consumes it."""
+        glow_active = (
+            float(getattr(self, '_glow_intensity', 0.0)) > 0.0
+            and float(getattr(self, '_glow_intensity_multiplier', 0.0)) > 0.0
+        )
+        env_spill_active = (
+            getattr(self, '_bg_color_idx', 0) != 1
+            and bool(getattr(self, '_env_model_visible', False))
+            and bool(getattr(self, '_env_model_prims', []))
+            and float(getattr(self, '_screen_light_intensity', 0.0)) > 0.0
+        )
+        dark_room_active = (
+            getattr(self, '_bg_color_idx', 0) == 0
+            and bool(getattr(self, '_dark_room_prims', []))
+            and not bool(getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', []))
+            and float(getattr(self, '_screen_light_intensity', 0.0)) > 0.0
+        )
+        if glow_active or env_spill_active or dark_room_active:
+            self._glow_color_counter = int(getattr(self, '_glow_color_counter', 0)) + 1
+            if self._glow_color_counter >= 15:
+                self._glow_color_counter = 0
+                self._sample_glow_target_color(rgb, is_tensor)
 
     def _runtime_eye_to_numpy(self, frame):
         import torch
@@ -7851,6 +7936,7 @@ class OpenXRViewerCore:
         # Pre-compute view-projection once per eye -all quads multiply their model
         # matrix against this rather than recomputing proj @ view each time.
         vp_mat = proj_mat @ view_mat
+        self._current_view_mat = view_mat
         # -3. Environment model (glTF 3D scene, very back) -background layer only
         if self._env_model_visible and self._env_model_prims:
             self._render_env_model(mgl_fbo, vp_mat, view_mat)
@@ -10000,6 +10086,8 @@ class OpenXRViewerCore:
 
         self._init_glfw()
         self._init_moderngl()
+        if hasattr(self, '_init_dark_room'):
+            self._init_dark_room()
 
         self._preview_only_mode = False
         try:
@@ -10668,6 +10756,8 @@ class OpenXRViewerCore:
         self._curved_border_verts_params = None
 
         self._release_env_model_resources()
+        if hasattr(self, '_release_dark_room_resources'):
+            self._release_dark_room_resources()
 
         # Release controller model GL resources
         for prims in (self._ctrl_prims_l, self._ctrl_prims_r):

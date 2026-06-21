@@ -1045,8 +1045,10 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         self._env_model_visible = False
 
 
-    def _generate_default_room(self):
+    def _generate_default_room(self, target_list=None):
         """Generate a simple room (floor, 4 walls, ceiling) procedurally."""
+        if target_list is None:
+            target_list = self._env_model_prims
         W, H, D = 4.0, 3.0, 4.0
         import numpy as np
         faces = []
@@ -1073,7 +1075,7 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                  (tan_vbo, '4f', 'in_tangent')],
                 ibo,
             )
-            self._env_model_prims.append({
+            target_list.append({
                 'vao': vao, 'vbo': vbo, 'tan_vbo': tan_vbo, 'ibo': ibo,
                 'tex_key': None, 'tri_count': 2, 'color': color,
                 'base_color': np.array(color, dtype=np.float32),
@@ -1101,8 +1103,34 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                 'tex_scale': np.array([1.0, 1.0], dtype=np.float32),
                 'tex_rotation': 0.0,
             })
-        self._env_model_visible = True
-        print(f'[OpenXRViewer] Default room generated ({len(faces)} faces)')
+        if target_list is self._env_model_prims:
+            self._env_model_visible = True
+            print(f'[OpenXRViewer] Default room generated ({len(faces)} faces)')
+        else:
+            print(f'[OpenXRViewer] Dark-room geometry built ({len(faces)} faces)')
+
+
+    def _init_dark_room(self):
+        """Build the always-available procedural dark room."""
+        self._dark_room_prims = []
+        try:
+            self._generate_default_room(self._dark_room_prims)
+        except Exception as exc:
+            print(f"[OpenXRViewer] _init_dark_room failed: {exc}")
+            self._dark_room_prims = []
+
+
+    def _release_dark_room_resources(self):
+        """Release the procedural dark-room GL resources."""
+        for prim in getattr(self, '_dark_room_prims', []) or []:
+            for key in ('vao', 'vbo', 'tan_vbo', 'ibo'):
+                obj = prim.get(key)
+                if obj is not None:
+                    try:
+                        obj.release()
+                    except Exception:
+                        pass
+        self._dark_room_prims = []
 
 
     def _init_env_model(self):
@@ -1173,8 +1201,88 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         return True
 
 
+    def _screen_effect_model(self, width, height, z_offset=0.0, y_offset=0.0):
+        sx = width / 2.0
+        sy = height / 2.0
+        cy = math.cos(self.screen_yaw)
+        sy_ = math.sin(self.screen_yaw)
+        cp = math.cos(self.screen_pitch)
+        sp = math.sin(self.screen_pitch)
+        cr = math.cos(self.screen_roll)
+        sr = math.sin(self.screen_roll)
+        rot_y = np.array([[cy, 0, sy_, 0], [0, 1, 0, 0], [-sy_, 0, cy, 0], [0, 0, 0, 1]], dtype='f4')
+        rot_x = np.array([[1, 0, 0, 0], [0, cp, -sp, 0], [0, sp, cp, 0], [0, 0, 0, 1]], dtype='f4')
+        rot_z = np.array([[cr, -sr, 0, 0], [sr, cr, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype='f4')
+        scale = np.diag([sx, sy, 1.0, 1.0]).astype('f4')
+        trans = np.eye(4, dtype='f4')
+        trans[0, 3] = self.screen_pan_x
+        trans[1, 3] = self.screen_pan_y + y_offset
+        trans[2, 3] = -self.screen_distance + z_offset
+        return trans @ rot_y @ rot_x @ rot_z @ scale
+
+
+    def _render_glow(self, mgl_fbo, vp_mat):
+        intensity = float(getattr(self, '_glow_intensity', 0.0)) * float(getattr(self, '_glow_intensity_multiplier', 0.0))
+        if intensity <= 0.0 or self.screen_height is None:
+            return
+        if getattr(self, '_screen_curved', False):
+            return
+        if getattr(self, '_glow_prog', None) is None or getattr(self, '_glow_vao', None) is None:
+            return
+
+        self._advance_glow_color()
+        screen_long = max(self.screen_width, self.screen_height)
+        glow_scale = screen_long / max(float(getattr(self, '_glow_ref_screen', 2.4)), 1e-6)
+        glow_width = float(getattr(self, '_glow_width_m', 0.50)) * glow_scale
+        glow_range = glow_width * 0.75
+        glow_margin = glow_range
+        glow_w = self.screen_width + 2.0 * glow_margin
+        glow_h = self.screen_height + 2.0 * glow_margin
+        inner_w = self.screen_width / glow_w
+        inner_h = self.screen_height / glow_h
+        uv_glow_range = glow_range / max(glow_w, glow_h, 1e-6)
+
+        self.ctx.depth_mask = False
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.ctx.enable(moderngl.BLEND)
+        self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
+        model = self._screen_effect_model(glow_w, glow_h, z_offset=-0.002)
+        mvp = vp_mat @ model
+        self._glow_prog['u_mvp'].write(mvp.T.astype('f4').tobytes())
+        self._glow_prog['u_screen_half'].value = (inner_w * 0.5, inner_h * 0.5)
+        self._glow_prog['u_glow_color'].value = tuple(getattr(self, '_glow_color', (0.30, 0.55, 1.0)))
+        self._glow_prog['u_glow_inv_range'].value = 1.0 / max(uv_glow_range, 1e-6)
+        self._glow_prog['u_glow_inv_density_range'].value = 1.0 / max(uv_glow_range * 0.75, 1e-6)
+        self._glow_prog['u_glow_intensity'].value = intensity
+        self._glow_vao.render(moderngl.TRIANGLE_STRIP)
+        self.ctx.disable(moderngl.BLEND)
+        self.ctx.depth_mask = True
+        self.ctx.enable(moderngl.DEPTH_TEST)
+
+
     def _render_screen_background_effects(self, mgl_fbo, vp_mat):
-        return None
+        env_active = bool(getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', []))
+        passthrough_active = getattr(self, '_bg_color_idx', 0) == 1
+        dark_room_prims = getattr(self, '_dark_room_prims', []) or []
+        if dark_room_prims and not env_active and not passthrough_active and getattr(self, '_bg_color_idx', 0) == 0:
+            saved_prims = self._env_model_prims
+            saved_visible = self._env_model_visible
+            saved_active = getattr(self, '_active_environment', None)
+            try:
+                self._env_model_prims = dark_room_prims
+                self._env_model_visible = True
+                self._active_environment = 'Dark Room'
+                view_mat = getattr(self, '_current_view_mat', None)
+                if view_mat is not None:
+                    self._render_env_model(mgl_fbo, vp_mat, view_mat)
+                    mgl_fbo.use()
+                    glClear(GL_DEPTH_BUFFER_BIT)
+            finally:
+                self._env_model_prims = saved_prims
+                self._env_model_visible = saved_visible
+                self._active_environment = saved_active
+        elif not env_active and not passthrough_active:
+            self._render_glow(mgl_fbo, vp_mat)
 
     def _render_screen_foreground_effects(self, mgl_fbo, vp_mat):
         return None

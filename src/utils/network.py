@@ -28,6 +28,7 @@ def is_cn_ip():
 
 def configure_huggingface_endpoint():
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
     if is_cn_ip():
         os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
     else:

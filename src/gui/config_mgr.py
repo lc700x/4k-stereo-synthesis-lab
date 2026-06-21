@@ -101,14 +101,24 @@ class GUIConfigMixin:
         saved_env = cfg.get("Environment Model", DEFAULTS.get("Environment Model", "None"))
         self.env_key = saved_env if saved_env in self.env_model_keys else (self.env_model_keys[0] if self.env_model_keys else "None")
         self.env_model_dd.value = environment_display_label(self.env_key, self.locale, self.env_model_display_names)
-        self.torch_compile_cb.value = cfg.get("torch.compile", False)
-        self.tensorrt_cb.value = cfg.get("TensorRT", False)
+        self.torch_compile_cb.value = cfg.get("torch.compile")
+        if self.torch_compile_cb.value is None:
+            self.torch_compile_cb.value = False
+        trt_val = cfg.get("TensorRT")
+        if trt_val is not None:
+            self.tensorrt_cb.value = trt_val
         self.recompile_trt_cb.value = cfg.get("Recompile TensorRT", DEFAULTS["Recompile TensorRT"])
-        self.migraphx_cb.value = cfg.get("MIGraphX", False)
+        mgx_val = cfg.get("MIGraphX")
+        if mgx_val is not None:
+            self.migraphx_cb.value = mgx_val
         self.recompile_migraphx_cb.value = cfg.get("Recompile MIGraphX", DEFAULTS["Recompile MIGraphX"])
-        self.coreml_cb.value = cfg.get("CoreML", False)
+        cml_val = cfg.get("CoreML")
+        if cml_val is not None:
+            self.coreml_cb.value = cml_val
         self.recompile_coreml_cb.value = cfg.get("Recompile CoreML", DEFAULTS["Recompile CoreML"])
-        self.openvino_cb.value = cfg.get("OpenVINO", False)
+        ov_val = cfg.get("OpenVINO")
+        if ov_val is not None:
+            self.openvino_cb.value = ov_val
         self.recompile_openvino_cb.value = cfg.get("Recompile OpenVINO", DEFAULTS["Recompile OpenVINO"])
         self.recompile_trt_cb.visible = self.tensorrt_cb.value and self.tensorrt_cb.visible
         self.recompile_migraphx_cb.visible = self.migraphx_cb.value and self.migraphx_cb.visible
@@ -168,6 +178,7 @@ class GUIConfigMixin:
         temporal_strength = self._parse_float(self.temporal_strength_dd.value, DEFAULTS["Temporal Strength"])
         scene_reset_threshold = self._parse_float(self.scene_reset_dd.value, DEFAULTS["Scene Reset Threshold"])
         foreground_scale = self._clamp_foreground_scale(self._parse_float(self.foreground_scale_dd.value, DEFAULTS["Foreground Scale"]))
+        accelerator_values, recompile_values = self._platform_accelerator_values()
 
         self._config.update({
             "Capture Mode": self.capture_mode_key,
@@ -213,14 +224,8 @@ class GUIConfigMixin:
             "Streamer Port": self._parse_int(self.stream_port_tf.value, DEFAULTS["Streamer Port"]),
             "Stream Quality": self._parse_int(self.stream_quality_dd.value, DEFAULTS["Stream Quality"]),
             "torch.compile": self.torch_compile_cb.value,
-            "TensorRT": self.tensorrt_cb.value,
-            "Recompile TensorRT": self.recompile_trt_cb.value,
-            "MIGraphX": self.migraphx_cb.value,
-            "Recompile MIGraphX": self.recompile_migraphx_cb.value,
-            "CoreML": self.coreml_cb.value,
-            "Recompile CoreML": self.recompile_coreml_cb.value,
-            "OpenVINO": self.openvino_cb.value,
-            "Recompile OpenVINO": self.recompile_openvino_cb.value,
+            **accelerator_values,
+            **recompile_values,
             "Capture Tool": self.capture_tool_dd.value,
             "Fill 16:9": self.fill_16_9_cb.value,
             "Fix Viewer Aspect": self.fix_aspect_cb.value,

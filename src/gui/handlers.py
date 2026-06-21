@@ -106,6 +106,7 @@ class GUIHandlerMixin:
                 self.capture_tool_dd.value = new_opts[0]
             self.capture_tool_dd.update()
         self._update_accelerator_visibility(device_label)
+        self.auto_enable_optimizers_based_on_device()
         self._fit_window_to_content()
 
     def _update_accelerator_visibility(self, device_label):
@@ -155,46 +156,119 @@ class GUIHandlerMixin:
             self.update_openvino_visibility_based_on_model(current_model)
 
     def _on_trt_toggle(self, e):
+        if e is not None:
+            self._config["TensorRT"] = bool(self.tensorrt_cb.value)
         self.recompile_trt_cb.visible = self.tensorrt_cb.value
         self._fit_window_to_content()
 
     def _on_coreml_toggle(self, e):
+        if e is not None:
+            self._config["CoreML"] = bool(self.coreml_cb.value)
         self.recompile_coreml_cb.visible = self.coreml_cb.value
         self._fit_window_to_content()
 
     def _on_openvino_toggle(self, e):
+        if e is not None:
+            self._config["OpenVINO"] = bool(self.openvino_cb.value)
         self.recompile_openvino_cb.visible = self.openvino_cb.value
         self._fit_window_to_content()
 
     def _on_migraphx_toggle(self, e):
+        if e is not None:
+            self._config["MIGraphX"] = bool(self.migraphx_cb.value)
         self.recompile_migraphx_cb.visible = self.migraphx_cb.value
         self._fit_window_to_content()
 
-    def auto_enable_optimizers_based_on_device(self):
-        device_label = self.device_dd.value
+    def _platform_accelerator_values(self, device_label=None, use_control_values=True):
+        device_label = device_label or self.device_dd.value or ""
         model_lower = (self.current_model_name or "").lower()
-        self.tensorrt_cb.value = False
-        self.migraphx_cb.value = False
-        self.coreml_cb.value = False
-        self.openvino_cb.value = False
-        if "CUDA" in device_label:
-            if devices_module.IS_ROCM:
-                should = not any(kw in model_lower for kw in DISABLE_MIGRAPHX_KEYWORDS)
-                self.migraphx_cb.value = should
-            else:
-                should = not any(kw in model_lower for kw in DISABLE_TRT_KEYWORDS)
-                self.tensorrt_cb.value = should
-            self.torch_compile_cb.value = True
+        values = {
+            "TensorRT": None,
+            "CoreML": None,
+            "OpenVINO": None,
+            "MIGraphX": None,
+        }
+        recompile_values = {
+            "Recompile TensorRT": False,
+            "Recompile CoreML": False,
+            "Recompile OpenVINO": False,
+            "Recompile MIGraphX": False,
+        }
+
+        active_key = None
+        recompile_key = None
+        active_cb = None
+        recompile_cb = None
+        disabled_by_model = False
+
+        if "CUDA" in device_label and devices_module.IS_ROCM:
+            active_key = "MIGraphX"
+            recompile_key = "Recompile MIGraphX"
+            active_cb = self.migraphx_cb
+            recompile_cb = self.recompile_migraphx_cb
+            disabled_by_model = any(kw in model_lower for kw in DISABLE_MIGRAPHX_KEYWORDS)
+        elif "CUDA" in device_label:
+            active_key = "TensorRT"
+            recompile_key = "Recompile TensorRT"
+            active_cb = self.tensorrt_cb
+            recompile_cb = self.recompile_trt_cb
+            disabled_by_model = any(kw in model_lower for kw in DISABLE_TRT_KEYWORDS)
         elif "MPS" in device_label:
-            should = not any(kw in model_lower for kw in DISABLE_COREML_KEYWORDS)
-            self.coreml_cb.value = should
+            active_key = "CoreML"
+            recompile_key = "Recompile CoreML"
+            active_cb = self.coreml_cb
+            recompile_cb = self.recompile_coreml_cb
+            disabled_by_model = any(kw in model_lower for kw in DISABLE_COREML_KEYWORDS)
         elif "XPU" in device_label:
-            should = not any(kw in model_lower for kw in DISABLE_OPENVINO_KEYWORDS)
-            self.openvino_cb.value = should
+            active_key = "OpenVINO"
+            recompile_key = "Recompile OpenVINO"
+            active_cb = self.openvino_cb
+            recompile_cb = self.recompile_openvino_cb
+            disabled_by_model = any(kw in model_lower for kw in DISABLE_OPENVINO_KEYWORDS)
+
+        if active_key is not None:
+            if disabled_by_model:
+                enabled = False
+            elif use_control_values:
+                enabled = bool(active_cb.value)
+            else:
+                saved_value = self._config.get(active_key)
+                enabled = (saved_value is None) or bool(saved_value)
+
+            values[active_key] = enabled
+            if enabled:
+                recompile_values[recompile_key] = bool(recompile_cb.value)
+
+        return values, recompile_values
+
+    def _apply_platform_accelerator_policy(self, update_controls=True):
+        values, recompile_values = self._platform_accelerator_values(use_control_values=False)
+        self._config.update(values)
+        self._config.update(recompile_values)
+
+        if update_controls:
+            self.tensorrt_cb.value = bool(values["TensorRT"])
+            self.coreml_cb.value = bool(values["CoreML"])
+            self.openvino_cb.value = bool(values["OpenVINO"])
+            self.migraphx_cb.value = bool(values["MIGraphX"])
+            self.recompile_trt_cb.value = recompile_values["Recompile TensorRT"]
+            self.recompile_coreml_cb.value = recompile_values["Recompile CoreML"]
+            self.recompile_openvino_cb.value = recompile_values["Recompile OpenVINO"]
+            self.recompile_migraphx_cb.value = recompile_values["Recompile MIGraphX"]
+
         self._on_trt_toggle(None)
-        self._on_migraphx_toggle(None)
         self._on_coreml_toggle(None)
         self._on_openvino_toggle(None)
+        self._on_migraphx_toggle(None)
+
+    def auto_enable_optimizers_based_on_device(self):
+        if (
+            "CUDA" in (self.device_dd.value or "")
+            and not devices_module.IS_ROCM
+            and self._config.get("torch.compile") is None
+        ):
+            self.torch_compile_cb.value = True
+        self._apply_platform_accelerator_policy()
 
     def update_tensorrt_visibility_based_on_model(self, model_name):
         if not model_name:

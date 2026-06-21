@@ -259,3 +259,30 @@ def test_vsync_uses_teammate_config_key_and_default():
     assert '"VSync": "垂直同步"' in localization_text
     assert '"tooltip_vsync"' in localization_text
     assert 'tooltip_local_vsync' not in localization_text
+
+
+def test_accelerator_policy_matches_teammate_config_semantics():
+    handlers_text = _file_text("handlers.py")
+    config_mgr_text = _file_text("config_mgr.py")
+
+    assert "def _platform_accelerator_values" in handlers_text
+    assert "def _apply_platform_accelerator_policy" in handlers_text
+    assert '"TensorRT": None' in handlers_text
+    assert '"CoreML": None' in handlers_text
+    assert '"OpenVINO": None' in handlers_text
+    assert '"MIGraphX": None' in handlers_text
+    assert "enabled = (saved_value is None) or bool(saved_value)" in handlers_text
+    assert 'and self._config.get("torch.compile") is None' in handlers_text
+    assert "self.auto_enable_optimizers_based_on_device()" in handlers_text
+    assert "accelerator_values, recompile_values = self._platform_accelerator_values()" in config_mgr_text
+    assert "**accelerator_values" in config_mgr_text
+    assert "**recompile_values" in config_mgr_text
+    assert '"TensorRT": self.tensorrt_cb.value' not in config_mgr_text
+    assert '"MIGraphX": self.migraphx_cb.value' not in config_mgr_text
+    assert '"CoreML": self.coreml_cb.value' not in config_mgr_text
+    assert '"OpenVINO": self.openvino_cb.value' not in config_mgr_text
+    assert 'trt_val = cfg.get("TensorRT")' in config_mgr_text
+    assert 'if trt_val is not None:' in config_mgr_text
+    assert 'mgx_val = cfg.get("MIGraphX")' in config_mgr_text
+    assert 'cml_val = cfg.get("CoreML")' in config_mgr_text
+    assert 'ov_val = cfg.get("OpenVINO")' in config_mgr_text

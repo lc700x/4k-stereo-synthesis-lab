@@ -1,7 +1,7 @@
 Capture Mode: Monitor
-Monitor Index: 3
+Monitor Index: none
 Window Title: ''
-Show FPS: true
+Show FPS: false
 Model List:
   Distill-Any-Depth-Small:
     resolutions:
@@ -291,63 +291,61 @@ Model List:
     - 392
     - 448
     - 518
+  depth-anything-indoor-large:
+    resolutions:
+    - 196
+    - 238
+    - 294
+    - 336
+    - 392
+    - 448
+    - 518
+  depth-anything-outdoor-large:
+    resolutions:
+    - 196
+    - 238
+    - 294
+    - 336
+    - 392
+    - 448
+    - 518
   DepthPro-Large:
     resolutions:
     - 1536
-Depth Model: Distill-Any-Depth-Base
-Depth Strength: 2.4
-Depth Quick: Enhanced
-Depth Resolution: 518
-Anti-aliasing: 1
-Depth Antialias Strength: 1.0
+Depth Model: Distill-Any-Depth-Small
+Depth Strength: 2.0
+Depth Resolution: 336
+Anti-aliasing: 2
 Foreground Scale: 0.5
 IPD: 0.064
-Convergence: 0.25
-Stereo Scale: 0.5
-Stereo Preset: cinema
-Stereo Quality: quality_4k
-Max Shift Ratio: 0.05
-Temporal: true
-Temporal Strength: 0.7
-Auto Scene Reset: true
-Scene Reset Threshold: 0.22
-Reset Cooldown Frames: 3
-Edge Dilation: 2
-Edge Threshold: 0.04
-Cross Eyed: false
-Anaglyph Method: red_cyan
+Convergence: 0.0
 Display Mode: Half-SBS
-FP16: false
-torch.compile: true
-TensorRT: true
+FP16: true
+torch.compile: null
+TensorRT: null
 Recompile TensorRT: false
-CoreML: false
+CoreML: null
 Recompile CoreML: false
+OpenVINO: null
 Recompile OpenVINO: false
+MIGraphX: null
+Recompile MIGraphX: false
 Computing Device: 0
-Language: CN
+Language: EN
 Run Mode: OpenXR Link
 XR Preview Window: false
-Local VSync: true
-Target FPS: 90
-Processing Resolution: Auto
-Upscaler: Auto
-Upscaler Sharpness: 0.0
+VSync: false
 Stream Protocol: HLS
 Streamer Port: 1122
 Stream Quality: 100
 Stream Key: live
-Stereo Mix: virtual-audio-capturer
+Stereo Mix: null
 CRF: 20
 Audio Delay: -0.15
 Controller Model: PICO
-Environment Model: None
+Environment Model: Default
 Lossless Scaling Support: false
-Capture Tool: WindowsCaptureCUDA
+Capture Tool: none
 Fill 16:9: true
 Fix Viewer Aspect: false
-Stereo Output: 1
-Advanced Stereo: true
-Advanced Device Options: false
-OpenVINO: false
-Synthetic View: quality_4k
+Stereo Output: null

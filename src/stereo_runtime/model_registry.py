@@ -83,6 +83,8 @@ DEFAULT_MODEL_SPECS: tuple[DepthModelSpec, ...] = (
     DepthModelSpec("depth-anything-small", "LiheYoung/depth-anything-small-hf", "depth-anything-v1"),
     DepthModelSpec("depth-anything-base", "LiheYoung/depth-anything-base-hf", "depth-anything-v1"),
     DepthModelSpec("depth-anything-large", "LiheYoung/depth-anything-large-hf", "depth-anything-v1"),
+    DepthModelSpec("depth-anything-indoor-large", "lc700x/depth-anything-indoor-large-hf", "depth-anything-v1"),
+    DepthModelSpec("depth-anything-outdoor-large", "lc700x/depth-anything-outdoor-large-hf", "depth-anything-v1"),
     DepthModelSpec("Distill-Any-Depth-Small", "xingyang1/Distill-Any-Depth-Small-hf", "distill-any-depth"),
     DepthModelSpec("Distill-Any-Depth-Base", "lc700x/Distill-Any-Depth-Base-hf", "distill-any-depth"),
     DepthModelSpec("Distill-Any-Depth-Large", "xingyang1/Distill-Any-Depth-Large-hf", "distill-any-depth"),

@@ -12,7 +12,9 @@ def test_default_registry_contains_d2s_models():
     assert registry.resolve_model_id("Distill-Any-Depth-Base") == "lc700x/Distill-Any-Depth-Base-hf"
     assert registry.resolve_model_id("DepthPro-Large") == "apple/DepthPro-hf"
     assert registry.resolve_model_id("depth-anything/DA3-BASE") == "depth-anything/DA3-BASE"
-    assert len(registry.names()) >= 40
+    assert registry.resolve_model_id("depth-anything-indoor-large") == "lc700x/depth-anything-indoor-large-hf"
+    assert registry.resolve_model_id("depth-anything-outdoor-large") == "lc700x/depth-anything-outdoor-large-hf"
+    assert len(registry.names()) >= 42
 
 
 def test_depth_runtime_config_resolves_model_dir_from_model_name():
@@ -53,6 +55,8 @@ def test_model_registry_is_d2s_model_mapping_source():
     assert "Distill-Any-Depth-Base" in names
     assert "Depth-Anything-V2-Large" in names
     assert "DA3-LARGE" in names
+    assert "depth-anything-indoor-large" in names
+    assert "depth-anything-outdoor-large" in names
     assert "DepthPro-Large" in names
 
 

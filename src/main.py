@@ -15,6 +15,8 @@ from app_runtime.runtime_callbacks import RuntimeCallbacks
 from streaming.rtmp import global_processes, rtmp_stream
 from viewer.window_utils import is_window_visible_on_screen, list_windows
 
+STOP_REQUEST_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "logs", "stop.request")
+
 context = create_runtime_context(
     file_path=__file__,
     settings=_get_settings(),
@@ -92,12 +94,30 @@ signal_handler = build_signal_handler(
 )
 register_signal_handlers(os_name=OS_NAME, signal_handler=signal_handler)
 
+
+def _watch_stop_request_file():
+    while not shutdown_event.is_set():
+        try:
+            if os.path.exists(STOP_REQUEST_FILE):
+                print("[Signal] Stop requested by GUI, shutting down gracefully...")
+                shutdown_event.set()
+                try:
+                    os.remove(STOP_REQUEST_FILE)
+                except Exception:
+                    pass
+                break
+        except Exception:
+            pass
+        time.sleep(0.1)
+
+
 def _set_rtmp_thread(thread):
     global rtmp_thread
     rtmp_thread = thread
 
 def main(mode="Viewer"):
     # Start capture and processing threads
+    threading.Thread(target=_watch_stop_request_file, name="StopRequestWatcher", daemon=True).start()
     threading.Thread(target=capture_loop, daemon=True).start()
     # Replace separate process_loop and depth_loop with combined thread
     threading.Thread(target=process_runtime_loop, daemon=True).start()

@@ -138,6 +138,18 @@ def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     assert "asyncio.create_task(self._pump_child_output(self.process))" in process_text
 
 
+def test_gui_stop_uses_stop_request_file_before_force_kill():
+    paths_text = _file_text("paths.py")
+    process_text = _file_text("process.py")
+    assert 'STOP_REQUEST_FILE = os.path.join(LOG_DIR, "stop.request")' in paths_text
+    assert "with open(STOP_REQUEST_FILE, \"w\", encoding=\"utf-8\")" in process_text
+    assert "await asyncio.wait_for(proc.wait(), timeout=1)" in process_text
+    assert "proc.kill()" in process_text
+    graceful_index = process_text.index("with open(STOP_REQUEST_FILE")
+    kill_index = process_text.index("proc.kill()", graceful_index)
+    assert graceful_index < kill_index
+
+
 def test_stereo_quality_dropdown_uses_localized_levels_but_saves_runtime_values():
     all_text = _all_text()
     handlers_text = _file_text("handlers.py")

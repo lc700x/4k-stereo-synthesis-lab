@@ -10,7 +10,7 @@ import traceback
 import flet as ft
 from utils import OS_NAME, DEFAULT_PORT, shutdown_event, read_yaml
 from .config import DEFAULTS, save_yaml
-from .paths import BASE_DIR, DIAG_LOG, LOG_DIR, LOG_FILE
+from .paths import BASE_DIR, DIAG_LOG, LOG_DIR, LOG_FILE, STOP_REQUEST_FILE
 from .capture_sources import get_primary_monitor_index, list_windows
 from .localization import UI_MESSAGES
 
@@ -233,6 +233,11 @@ class GUIProcessMixin:
                 return
             print(f"[Main] Initializing Desktop2Stereo {self.run_mode_key}...")
             shutdown_event.clear()
+            try:
+                if os.path.exists(STOP_REQUEST_FILE):
+                    os.remove(STOP_REQUEST_FILE)
+            except Exception:
+                pass
             child_args = [
                 sys.executable,
                 "-u",
@@ -355,21 +360,37 @@ class GUIProcessMixin:
                 proc = self.process
                 if proc and proc.returncode is None:
                     saved_pid = proc.pid
-                    proc.terminate()
+                    try:
+                        if OS_NAME == "Windows":
+                            os.makedirs(LOG_DIR, exist_ok=True)
+                            with open(STOP_REQUEST_FILE, "w", encoding="utf-8") as f:
+                                f.write(str(saved_pid))
+                        else:
+                            import signal
+                            os.killpg(os.getpgid(saved_pid), signal.SIGINT)
+                    except Exception:
+                        self._diag(f"graceful stop failed:\n{traceback.format_exc()}", error=True)
+                        try:
+                            proc.terminate()
+                        except Exception:
+                            self._diag(f"proc.terminate() failed:\n{traceback.format_exc()}", error=True)
                 self.process = None
 
             if saved_pid and proc:
+                exited_cleanly = False
                 try:
-                    await asyncio.wait_for(proc.wait(), timeout=5)
+                    await asyncio.wait_for(proc.wait(), timeout=1)
+                    exited_cleanly = True
                 except asyncio.TimeoutError:
+                    exited_cleanly = False
+                except Exception:
+                    self._diag(f"proc.wait() exception:\n{traceback.format_exc()}", error=True)
+                    exited_cleanly = True
+                if not exited_cleanly:
                     try:
                         proc.kill()
-                        await proc.wait()
                     except Exception:
                         pass
-                except Exception:
-                    pass
-                if self.run_mode_key == "RTMP Streamer":
                     try:
                         if OS_NAME == "Windows":
                             p = await asyncio.create_subprocess_exec(

@@ -522,7 +522,7 @@ class GUIHandlerMixin:
         self.run_mode_label.value = t["Run Mode:"]
         self.display_mode_label.value = t["Display Mode:"]
         self.xr_preview_cb.label = t.get("XR Preview Window", "XR画面预览窗口" if self.locale == "CN" else "XR Preview Window")
-        self.local_vsync_cb.label = t.get("Local VSync", "Local VSync")
+        self.local_vsync_cb.label = t.get("VSync", "VSync")
         self.target_fps_label.value = t.get("Capture FPS:", "Capture FPS:")
         target_fps_value = self._target_fps_from_display(self.target_fps_dd.value)
         self.target_fps_dd.options = [t["Auto"], "60", "72", "80", "90", "120"]
@@ -617,7 +617,7 @@ class GUIHandlerMixin:
             (self.capture_tool_dd, "tooltip_capture_tool"),
             (self.run_mode_dd, "tooltip_run_mode"),
             (self.display_mode_dd, "tooltip_display_mode"),
-            (self.local_vsync_cb, "tooltip_local_vsync"),
+            (self.local_vsync_cb, "tooltip_vsync"),
             (self.target_fps_dd, "tooltip_target_fps"),
             (self.ctrl_model_dd, "tooltip_ctrl_model"),
             (self.env_model_dd, "tooltip_env_model"),

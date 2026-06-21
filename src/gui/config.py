@@ -101,7 +101,7 @@ DEFAULTS = {
     "Language": "EN",
     "Run Mode": "OpenXR Link",
     "XR Preview Window": True,
-    "Local VSync": True,
+    "VSync": False,
     "Target FPS": 0,
     "Processing Resolution": "Auto",
     "Upscaler": "Off",

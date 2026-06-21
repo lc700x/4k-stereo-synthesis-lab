@@ -2606,7 +2606,7 @@ class StereoWindow:
                     glfw.swap_interval(1)
                     print(
                         f"[StereoWindow] Entered exclusive fullscreen "
-                        f"{full_w}x{full_h}@{refresh_rate}Hz for Local VSync"
+                        f"{full_w}x{full_h}@{refresh_rate}Hz for VSync"
                     )
                 else:
                     # Make the window undecorated and floating

@@ -67,7 +67,7 @@ def resolve_viewer_settings(settings: dict) -> ViewerSettings:
         target_fps=target_fps,
         fps=fps,
         fill_16_9=settings["Fill 16:9"],
-        local_vsync=settings.get("Local VSync", True),
+        local_vsync=settings["VSync"],
         upscaler=normalize_upscaler(settings.get("Upscaler", "Off")),
         upscaler_sharpness=normalize_upscaler_sharpness(settings.get("Upscaler Sharpness", 0.35)),
         language=language,

@@ -225,3 +225,24 @@ def test_shift_ratio_and_edge_threshold_options_are_dense():
     assert 'self.max_shift_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)]' in builders_text
     assert 'self.edge_threshold_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)]' in builders_text
     assert 'self.temporal_strength_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)]' in builders_text
+
+
+def test_vsync_uses_teammate_config_key_and_default():
+    config_text = _config_source().read_text(encoding="utf-8")
+    builders_text = _file_text("builders.py")
+    config_mgr_text = _file_text("config_mgr.py")
+    handlers_text = _file_text("handlers.py")
+    localization_text = _localization_source().read_text(encoding="utf-8")
+
+    assert '"VSync": False' in config_text
+    assert '"Local VSync"' not in config_text
+    assert 'label="VSync", value=DEFAULTS.get("VSync", False)' in builders_text
+    assert 'cfg.get("VSync", DEFAULTS["VSync"])' in config_mgr_text
+    assert '"VSync": self.local_vsync_cb.value' in config_mgr_text
+    assert '"Local VSync": self.local_vsync_cb.value' not in config_mgr_text
+    assert 'self.local_vsync_cb.label = t.get("VSync", "VSync")' in handlers_text
+    assert '(self.local_vsync_cb, "tooltip_vsync")' in handlers_text
+    assert '"VSync": "VSync"' in localization_text
+    assert '"VSync": "垂直同步"' in localization_text
+    assert '"tooltip_vsync"' in localization_text
+    assert 'tooltip_local_vsync' not in localization_text

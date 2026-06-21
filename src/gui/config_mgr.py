@@ -60,7 +60,7 @@ class GUIConfigMixin:
                 cfg.get("Depth Strength", DEFAULTS["Depth Strength"]))))
         self.display_mode_dd.value = cfg.get("Display Mode", DEFAULTS["Display Mode"])
         self.xr_preview_cb.value = cfg.get("XR Preview Window", DEFAULTS["XR Preview Window"])
-        self.local_vsync_cb.value = cfg.get("Local VSync", DEFAULTS["Local VSync"])
+        self.local_vsync_cb.value = cfg.get("VSync", DEFAULTS["VSync"])
         self.advanced_device_cb.value = False
         self.upscaler_dd.options = self._upscaler_display_options()
         self.upscaler_dd.value = self._upscaler_to_display(cfg.get("Upscaler", DEFAULTS["Upscaler"]))
@@ -204,7 +204,7 @@ class GUIConfigMixin:
             "Language": self.locale,
             "Run Mode": self.run_mode_key,
             "XR Preview Window": self.xr_preview_cb.value,
-            "Local VSync": self.local_vsync_cb.value,
+            "VSync": self.local_vsync_cb.value,
             "Target FPS": self._target_fps_from_display(self.target_fps_dd.value),
             "Processing Resolution": self._config.get("Processing Resolution", DEFAULTS["Processing Resolution"]),
             "Upscaler": self._upscaler_from_display(self.upscaler_dd.value),

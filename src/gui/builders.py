@@ -391,7 +391,7 @@ class GUIBuilderMixin:
             on_select=self.on_device_change, min_width=S(180))
         self.showfps_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT, label="Show FPS")
         self.local_vsync_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT,
-            label="Local VSync", value=DEFAULTS.get("Local VSync", True))
+            label="VSync", value=DEFAULTS.get("VSync", False))
         self.target_fps_label = ft.Text("Capture FPS:", size=FONT_SIZE, width=S(130))
         self.target_fps_dd = CompactDropdown(options=["Auto", "60", "72", "80", "90", "120"],
             value="Auto", width=S(74))

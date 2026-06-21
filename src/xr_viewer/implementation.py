@@ -7863,9 +7863,9 @@ class OpenXRViewerCore:
         elif action is self._act_a_btn and hand_path_str == "/user/hand/right":
             pressed = pressed or self._emu_a
         elif action is self._act_left_stick_click and hand_path_str == "/user/hand/left":
-            pressed = pressed or self._emu_lsc
+            pressed = False if (self._emu_x or self._emu_y) else (pressed or self._emu_lsc)
         elif action is self._act_right_stick_click and hand_path_str == "/user/hand/right":
-            pressed = pressed or self._emu_rsc
+            pressed = False if (self._emu_a or self._emu_b) else (pressed or self._emu_rsc)
         return pressed
 
     def _read_bool_edge(self, action, hand_path_str, prev_state):

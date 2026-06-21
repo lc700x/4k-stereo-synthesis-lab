@@ -203,7 +203,7 @@ def runtime_config_from_d2s_settings(
         build_migraphx_graph=bool(settings.get("MIGraphX", False)),
         force_rebuild_migraphx=bool(settings.get("Recompile MIGraphX", False)),
         depth_strength=float(settings.get("Depth Strength", 2.0)),
-        convergence=float(settings.get("Convergence", 0.45)),
+        convergence=float(settings.get("Convergence", 0.0)),
         ipd=ipd_mm / 1000.0,
         max_shift_ratio=float(settings.get("Max Shift Ratio", 0.05)),
         ipd_mm=ipd_mm,

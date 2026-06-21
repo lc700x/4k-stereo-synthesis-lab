@@ -160,6 +160,16 @@ def test_runtime_config_from_d2s_settings_maps_migraphx_flags_before_tensorrt():
     assert depth_config.force_rebuild is True
 
 
+def test_runtime_config_from_d2s_settings_defaults_convergence_to_zero():
+    config = runtime_config_from_d2s_settings(
+        {"Depth Model": "Distill-Any-Depth-Base"},
+        cache_dir="./models",
+        device="cuda",
+    )
+
+    assert config.convergence == 0.0
+
+
 def test_runtime_config_from_d2s_settings_uses_dtype_auto_for_gui_fp16_flag():
     config = runtime_config_from_d2s_settings(
         {
@@ -210,7 +220,7 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
     assert stereo.ipd == 0.063
     assert stereo.ipd_mm == 63.0
     assert stereo.stereo_scale == 0.6
-    assert stereo.convergence == 0.45
+    assert stereo.convergence == 0.0
     assert stereo.temporal is False
     assert stereo.temporal_strength == 0.4
     assert stereo.auto_reset_temporal is False

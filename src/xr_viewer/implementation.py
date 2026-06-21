@@ -30,9 +30,9 @@ from OpenGL.GL import (
     glDeleteFramebuffers, glCheckFramebufferStatus,
     GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D,
     GL_FRAMEBUFFER_COMPLETE, GL_RGBA8,
-    glGenBuffers, glDeleteBuffers, glBindBuffer, glBufferData,
+    glGenBuffers, glDeleteBuffers, glBindBuffer, glBufferData, glBufferSubData,
     glBindTexture, glTexSubImage2D, glGenerateMipmap,
-    GL_PIXEL_UNPACK_BUFFER, GL_PIXEL_PACK_BUFFER, GL_DYNAMIC_DRAW, GL_STREAM_READ,
+    GL_PIXEL_UNPACK_BUFFER, GL_PIXEL_PACK_BUFFER, GL_DYNAMIC_DRAW, GL_STREAM_DRAW, GL_STREAM_READ,
     GL_RGB, GL_RED, GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_FLOAT,
     glDisable, glEnable, GL_FRAMEBUFFER_SRGB, GL_CULL_FACE,
     glFrontFace, GL_CW, GL_CCW,
@@ -3175,6 +3175,9 @@ class OpenXRViewerCore:
         # PBOs for the legacy GL-to-D3D11 fallback path.
         # Key: (eye_index, img_index) ->(pbo_id, w, h)
         self._d3d11_pbo_cache       = {}
+        self._cpu_pbo_color         = None
+        self._cpu_pbo_depth         = None
+        self._cpu_pbo_size          = (0, 0)
 
         # GPU interop state (NV_DX_interop2 or EXT_memory_object) for zero-copy
         self._interop_mode      = None   # 'nv_dx' | 'ext_mem' | None (PBO fallback)
@@ -5509,6 +5512,34 @@ class OpenXRViewerCore:
         self._pbo_texture_size = (w, h)
         print(f"[OpenXRViewer] GPU interop PBOs created ({BACKEND}) {w}x{h}")
 
+    def _init_cpu_pbos(self, w, h):
+        """Create unpack PBOs for CPU-path texture upload."""
+        if getattr(self, '_cpu_pbo_color', None) is not None:
+            try:
+                glDeleteBuffers(2, [self._cpu_pbo_color, self._cpu_pbo_depth])
+            except Exception:
+                pass
+        try:
+            ids = glGenBuffers(2)
+            self._cpu_pbo_color = int(ids[0])
+            self._cpu_pbo_depth = int(ids[1])
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._cpu_pbo_color)
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, w * h * 3, None, GL_STREAM_DRAW)
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._cpu_pbo_depth)
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, w * h * 4, None, GL_STREAM_DRAW)
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+            self._cpu_pbo_size = (w, h)
+            print(f"[OpenXRViewer] CPU-path PBOs created {w}x{h}")
+        except Exception as exc:
+            print(f"[OpenXRViewer] CPU PBO init failed, using direct upload: {exc}")
+            self._cpu_pbo_color = None
+            self._cpu_pbo_depth = None
+            self._cpu_pbo_size = (0, 0)
+            try:
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+            except Exception:
+                pass
+
     def _sample_glow_target_color(self, rgb, is_tensor):
         """Update glow target from a thin frame border with minimal CPU work."""
         try:
@@ -5645,7 +5676,7 @@ class OpenXRViewerCore:
             glBindTexture(GL_TEXTURE_2D, 0)
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
         else:
-            # CPU fallback
+            # CPU fallback - use PBO for async DMA when available.
             if hasattr(rgb, 'detach'):
                 rgb_np = (
                     rgb.permute(1, 2, 0).detach().contiguous()
@@ -5655,11 +5686,30 @@ class OpenXRViewerCore:
                 rgb_np = np.asarray(rgb, dtype=np.uint8)
             if depth_np is None:
                 depth_np = depth_gpu.cpu().numpy()
-            self.color_tex.write(rgb_np.astype('uint8', copy=False).tobytes())
-            glBindTexture(GL_TEXTURE_2D, self.color_tex.glo)
-            glGenerateMipmap(GL_TEXTURE_2D)
-            glBindTexture(GL_TEXTURE_2D, 0)
-            self.depth_tex.write(depth_np.tobytes())
+            rgb_bytes = rgb_np.astype('uint8', copy=False).tobytes()
+            depth_bytes = depth_np.tobytes()
+            cpu_pbo = getattr(self, '_cpu_pbo_color', None)
+            if cpu_pbo is not None and self._cpu_pbo_size == (w, h):
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._cpu_pbo_color)
+                glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, len(rgb_bytes), rgb_bytes)
+                glBindTexture(GL_TEXTURE_2D, self.color_tex.glo)
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
+                glGenerateMipmap(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, 0)
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._cpu_pbo_depth)
+                glBufferSubData(GL_PIXEL_UNPACK_BUFFER, 0, len(depth_bytes), depth_bytes)
+                glBindTexture(GL_TEXTURE_2D, self.depth_tex.glo)
+                glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_FLOAT, ctypes.c_void_p(0))
+                glBindTexture(GL_TEXTURE_2D, 0)
+                glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+            else:
+                if cpu_pbo is None or self._cpu_pbo_size != (w, h):
+                    self._init_cpu_pbos(w, h)
+                self.color_tex.write(rgb_bytes)
+                glBindTexture(GL_TEXTURE_2D, self.color_tex.glo)
+                glGenerateMipmap(GL_TEXTURE_2D)
+                glBindTexture(GL_TEXTURE_2D, 0)
+                self.depth_tex.write(depth_bytes)
             # No glGenerateMipmap for depth: keep DIBR sampling at full-res
             # to match viewer.py FullSBS numerics.
 
@@ -10979,6 +11029,16 @@ class OpenXRViewerCore:
             except Exception:
                 pass
         self._pbo_color = self._pbo_depth = None
+
+        if self._cpu_pbo_color is not None:
+            try:
+                glDeleteBuffers(2, [self._cpu_pbo_color, self._cpu_pbo_depth])
+            except Exception:
+                pass
+        self._cpu_pbo_color = None
+        self._cpu_pbo_depth = None
+        self._cpu_pbo_size = (0, 0)
+
         self._release_runtime_eye_pbos()
         self._release_runtime_eye_textures()
 
@@ -11104,4 +11164,3 @@ class OpenXRViewerCore:
 
 # Backward-compatible alias used by old imports.
 OpenXRViewerBase = OpenXRViewerCore
-

@@ -4,6 +4,7 @@
 
 from .implementation import *
 from .overlay import OverlayMixin
+from .render import _view_mat_inv
 
 
 class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
@@ -830,6 +831,20 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
 
 
     def _build_env_model_mat4(self):
+        return self._env_model_mat4()
+
+
+    def _env_model_mat4(self):
+        """Return model->world transform for the environment model, cached per frame."""
+        fc = getattr(self, '_frame_count', -1)
+        transform_key = (
+            tuple(float(v) for v in self._env_model_pos),
+            tuple(float(v) for v in self._env_model_rot),
+            tuple(float(v) for v in self._env_model_scale),
+        )
+        cached = getattr(self, '_cached_env_model_mat4_frame', -2)
+        if fc == cached and transform_key == getattr(self, '_cached_env_model_mat4_key', None):
+            return self._cached_env_model_mat4_val
         sx, sy, sz = [float(v) for v in self._env_model_scale]
         yaw, pitch, roll = [float(v) for v in self._env_model_rot]
         cy, sy_ = math.cos(yaw), math.sin(yaw)
@@ -852,7 +867,55 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                        [0.0, 0.0, 0.0, 1.0]], dtype=np.float32)
         trans = np.eye(4, dtype=np.float32)
         trans[:3, 3] = np.array(self._env_model_pos, dtype=np.float32)
-        return trans @ ry @ rx @ rz @ scale
+        model_mat = trans @ ry @ rx @ rz @ scale
+        self._cached_env_model_mat4_val = model_mat
+        self._cached_env_model_mat4_frame = fc
+        self._cached_env_model_mat4_key = transform_key
+        return model_mat
+
+
+    @staticmethod
+    def _prebake_prim_render_state(prim):
+        bc = prim.get('base_color')
+        ef = prim.get('emissive_factor')
+        to = prim.get('tex_offset')
+        ts = prim.get('tex_scale')
+        alpha_mode = prim.get('alpha_mode', 'OPAQUE')
+        rs = {
+            'bc': (float(bc[0]), float(bc[1]), float(bc[2])) if bc is not None else (1.0, 1.0, 1.0),
+            'ba': float(prim.get('base_alpha', 1.0)),
+            'rf': float(prim.get('roughness_factor', 1.0)),
+            'mf': float(prim.get('metallic_factor', 0.0)),
+            'ef': (float(ef[0]), float(ef[1]), float(ef[2])) if ef is not None else (0.0, 0.0, 0.0),
+            'unlit': 1 if prim.get('unlit', False) else 0,
+            'foliage': 1 if prim.get('foliage_mode', False) else 0,
+            'am': 0 if alpha_mode == 'OPAQUE' else (1 if alpha_mode == 'MASK' else 2),
+            'ac': float(prim.get('alpha_cutoff', 0.5)),
+            'blend': alpha_mode == 'BLEND',
+            'double_sided': bool(prim.get('double_sided', False)),
+            'to': (float(to[0]), float(to[1])) if to is not None else (0.0, 0.0),
+            'ts': (float(ts[0]), float(ts[1])) if ts is not None else (1.0, 1.0),
+            'tr': float(prim.get('tex_rotation', 0.0)),
+            'base_tc': int(prim.get('base_texcoord', 0)),
+            'tk': prim.get('tex_key'),
+            'render_mode': prim.get('render_mode', moderngl.TRIANGLES),
+            'ns': float(prim.get('normal_scale', 1.0)),
+            'os': float(prim.get('occlusion_strength', 1.0)),
+            'normal_tc': int(prim.get('normal_texcoord', 0)),
+            'occlusion_tc': int(prim.get('occlusion_texcoord', 0)),
+            'mr_tc': int(prim.get('mr_texcoord', 0)),
+            'emissive_tc': int(prim.get('emissive_texcoord', 0)),
+        }
+        for uniform, tex_id_key in (
+            ('normal', 'normal_tex_id'),
+            ('occlusion', 'occlusion_tex_id'),
+            ('mr', 'mr_tex_id'),
+            ('emissive', 'emissive_tex_id'),
+        ):
+            tex_id = int(prim.get(tex_id_key, -1))
+            sampler = prim.get(f'{uniform}_sampler')
+            rs[f'{uniform}_key'] = gltf_texture_cache_key('env', tex_id, sampler) if tex_id >= 0 else None
+        prim['_rs'] = rs
 
 
     def _transform_env_point(self, point, model_mat):
@@ -975,7 +1038,7 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                     tuple(float(x) for x in pd.get('tex_scale', np.array([1.0, 1.0], dtype=np.float32))[:2]),
                     float(pd.get('tex_rotation', 0.0)),
                 )
-                self._env_model_prims.append({
+                prim = {
                     'vao': vao, 'vbo': vbo, 'tan_vbo': tan_vbo, 'ibo': ibo,
                     'tex_key': tex_key,
                     'render_mode': gltf_primitive_mode_to_moderngl(pd.get('primitive_mode', 4)),
@@ -1010,7 +1073,9 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                     'tex_scale': pd.get('tex_scale', np.array([1.0, 1.0], dtype=np.float32)),
                     'tex_rotation': pd.get('tex_rotation', 0.0),
                     'material_key': material_key,
-                })
+                }
+                self._prebake_prim_render_state(prim)
+                self._env_model_prims.append(prim)
             if self._env_shading_mode != 'preview':
                 self._env_model_prims.sort(key=lambda prim: prim.get('material_key', ()))
             if baked_lightmap:
@@ -1075,7 +1140,7 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                  (tan_vbo, '4f', 'in_tangent')],
                 ibo,
             )
-            target_list.append({
+            prim = {
                 'vao': vao, 'vbo': vbo, 'tan_vbo': tan_vbo, 'ibo': ibo,
                 'tex_key': None, 'tri_count': 2, 'color': color,
                 'base_color': np.array(color, dtype=np.float32),
@@ -1102,7 +1167,9 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                 'tex_offset': np.array([0.0, 0.0], dtype=np.float32),
                 'tex_scale': np.array([1.0, 1.0], dtype=np.float32),
                 'tex_rotation': 0.0,
-            })
+            }
+            self._prebake_prim_render_state(prim)
+            target_list.append(prim)
         if target_list is self._env_model_prims:
             self._env_model_visible = True
             print(f'[OpenXRViewer] Default room generated ({len(faces)} faces)')
@@ -1338,8 +1405,8 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
             return
         perf_t0 = time.perf_counter() if self._env_perf_log else 0.0
 
-        model_mat = self._build_env_model_mat4().astype('f4')
-        view_inv = np.linalg.inv(view_mat)
+        model_mat = self._env_model_mat4()
+        view_inv = _view_mat_inv(view_mat)
         cam_pos = view_inv[:3, 3].astype('f4')
 
         self._env_prog['u_mvp'].write(vp_mat.astype('f4').T.tobytes())
@@ -1428,9 +1495,11 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         opaque_prims = []
         blend_prims = []
         for prim in self._env_model_prims:
-            base_alpha = float(prim.get('base_alpha', 1.0))
-            alpha_mode = prim.get('alpha_mode', 'OPAQUE')
-            if alpha_mode == 'BLEND':
+            rs = prim.get('_rs')
+            if rs is None:
+                self._prebake_prim_render_state(prim)
+                rs = prim.get('_rs', {})
+            if rs.get('blend', False):
                 blend_prims.append(prim)
             else:
                 opaque_prims.append(prim)
@@ -1447,30 +1516,25 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
             blend_prims.sort(key=_blend_sort_key, reverse=True)
 
         for prim in opaque_prims + blend_prims:
-            base_color = prim.get('base_color', np.array([1.0, 1.0, 1.0], dtype=np.float32))
-            base_alpha = float(prim.get('base_alpha', 1.0))
-            alpha_mode = prim.get('alpha_mode', 'OPAQUE')
-            if prim.get('double_sided', False):
+            rs = prim.get('_rs')
+            if rs is None:
+                continue
+            if rs['double_sided']:
                 self.ctx.disable(moderngl.CULL_FACE)
             else:
                 self.ctx.enable(moderngl.CULL_FACE)
 
-            self._env_prog['u_base_color_factor'].value = (
-                float(base_color[0]), float(base_color[1]), float(base_color[2])
-            )
-            self._env_prog['u_base_alpha'].value = base_alpha
-            self._env_prog['u_roughness'].value = float(prim.get('roughness_factor', 1.0))
-            self._env_prog['u_metallic'].value = float(prim.get('metallic_factor', 0.0))
-            emissive = prim.get('emissive_factor', np.array([0.0, 0.0, 0.0], dtype=np.float32))
-            self._env_prog['u_emissive_factor'].value = (
-                float(emissive[0]), float(emissive[1]), float(emissive[2])
-            )
-            self._env_prog['u_unlit'].value = 1 if prim.get('unlit', False) else 0
-            self._env_prog['u_foliage_mode'].value = 1 if prim.get('foliage_mode', False) else 0
-            self._env_prog['u_alpha_mode'].value = 0 if alpha_mode == 'OPAQUE' else (1 if alpha_mode == 'MASK' else 2)
-            self._env_prog['u_alpha_cutoff'].value = float(prim.get('alpha_cutoff', 0.5))
+            self._env_prog['u_base_color_factor'].value = rs['bc']
+            self._env_prog['u_base_alpha'].value = rs['ba']
+            self._env_prog['u_roughness'].value = rs['rf']
+            self._env_prog['u_metallic'].value = rs['mf']
+            self._env_prog['u_emissive_factor'].value = rs['ef']
+            self._env_prog['u_unlit'].value = rs['unlit']
+            self._env_prog['u_foliage_mode'].value = rs['foliage']
+            self._env_prog['u_alpha_mode'].value = rs['am']
+            self._env_prog['u_alpha_cutoff'].value = rs['ac']
 
-            if alpha_mode == 'BLEND':
+            if rs['blend']:
                 self.ctx.enable(moderngl.BLEND)
                 self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
                 self.ctx.depth_mask = False
@@ -1478,13 +1542,11 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                 self.ctx.disable(moderngl.BLEND)
                 self.ctx.depth_mask = True
 
-            tex_offset = prim.get('tex_offset', np.array([0.0, 0.0], dtype=np.float32))
-            tex_scale = prim.get('tex_scale', np.array([1.0, 1.0], dtype=np.float32))
-            self._env_prog['u_tex_offset'].value = (float(tex_offset[0]), float(tex_offset[1]))
-            self._env_prog['u_tex_scale'].value = (float(tex_scale[0]), float(tex_scale[1]))
-            self._env_prog['u_tex_rotation'].value = float(prim.get('tex_rotation', 0.0))
-            self._env_prog['u_base_texcoord'].value = int(prim.get('base_texcoord', 0))
-            tex_key = prim.get('tex_key')
+            self._env_prog['u_tex_offset'].value = rs['to']
+            self._env_prog['u_tex_scale'].value = rs['ts']
+            self._env_prog['u_tex_rotation'].value = rs['tr']
+            self._env_prog['u_base_texcoord'].value = rs['base_tc']
+            tex_key = rs['tk']
             if tex_key and tex_key in self._env_model_tex_cache:
                 self._env_model_tex_cache[tex_key].use(location=3)
                 self._env_prog['u_use_texture'].value = 1
@@ -1492,15 +1554,13 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                 self._env_prog['u_use_texture'].value = 0
 
             if not fast_env:
-                for uniform, tex_id_key, location in (
-                    ('normal', 'normal_tex_id', 4),
-                    ('occlusion', 'occlusion_tex_id', 5),
-                    ('mr', 'mr_tex_id', 6),
-                    ('emissive', 'emissive_tex_id', 7),
+                for uniform, location in (
+                    ('normal', 4),
+                    ('occlusion', 5),
+                    ('mr', 6),
+                    ('emissive', 7),
                 ):
-                    tex_id = prim.get(tex_id_key, -1)
-                    sampler = prim.get(f'{uniform}_sampler')
-                    cache_key = gltf_texture_cache_key('env', tex_id, sampler) if tex_id >= 0 else None
+                    cache_key = rs[f'{uniform}_key']
                     use_name = f'u_use_{uniform}_tex'
                     if cache_key and cache_key in self._env_model_tex_cache:
                         self._env_model_tex_cache[cache_key].use(location=location)
@@ -1508,13 +1568,13 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
                     else:
                         self._env_prog[use_name].value = 0
 
-                self._env_prog['u_normal_scale'].value = float(prim.get('normal_scale', 1.0))
-                self._env_prog['u_occlusion_strength'].value = float(prim.get('occlusion_strength', 1.0))
-                self._env_prog['u_normal_texcoord'].value = int(prim.get('normal_texcoord', 0))
-                self._env_prog['u_occlusion_texcoord'].value = int(prim.get('occlusion_texcoord', 0))
-                self._env_prog['u_mr_texcoord'].value = int(prim.get('mr_texcoord', 0))
-                self._env_prog['u_emissive_texcoord'].value = int(prim.get('emissive_texcoord', 0))
-            prim['vao'].render(prim.get('render_mode', moderngl.TRIANGLES))
+                self._env_prog['u_normal_scale'].value = rs['ns']
+                self._env_prog['u_occlusion_strength'].value = rs['os']
+                self._env_prog['u_normal_texcoord'].value = rs['normal_tc']
+                self._env_prog['u_occlusion_texcoord'].value = rs['occlusion_tc']
+                self._env_prog['u_mr_texcoord'].value = rs['mr_tc']
+                self._env_prog['u_emissive_texcoord'].value = rs['emissive_tc']
+            prim['vao'].render(rs['render_mode'])
 
         self.ctx.disable(moderngl.CULL_FACE)
         self.ctx.disable(moderngl.BLEND)
@@ -1573,6 +1633,9 @@ def _smoke_test(viewer_cls):
         viewer.cleanup()
 
 
-if __name__ == "__main__":
+def _run_standalone_test():
     _smoke_test(OpenXRViewer)
 
+
+if __name__ == "__main__":
+    _run_standalone_test()

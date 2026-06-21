@@ -18,6 +18,18 @@ except ImportError:  # pyopenxr is optional at import time.
 
 from .constants import _DXGI_FORMAT_R8G8B8A8_UNORM
 
+
+def _view_mat_inv(view_mat):
+    """Fast inverse of a rigid-body view matrix."""
+    rot = view_mat[:3, :3]
+    trans = view_mat[:3, 3]
+    rot_t = rot.T
+    inv = np.eye(4, dtype=np.float32)
+    inv[:3, :3] = rot_t
+    inv[:3, 3] = -(rot_t @ trans)
+    return inv
+
+
 def _read_glb_chunks(data):
     magic = struct.unpack_from('<I', data, 0)[0]
     if magic != 0x46546C67:

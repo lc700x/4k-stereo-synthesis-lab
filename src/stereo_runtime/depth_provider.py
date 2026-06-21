@@ -14,6 +14,13 @@ DISTILL_ANY_DEPTH_BASE_NAME = "Distill-Any-Depth-Base"
 DISTILL_ANY_DEPTH_BASE_MODEL_ID = "lc700x/Distill-Any-Depth-Base-hf"
 DISTILL_ANY_DEPTH_BASE_RESOLUTION = 518
 DISTILL_ANY_DEPTH_PATCH_SIZE = 14
+INFINIDEPTH_PATCH_SIZE = 16
+INFINIDEPTH_ENCODERS = {
+    "lc700x/infinidepth-small": "vits16",
+    "lc700x/infinidepth-smallplus": "vits16plus",
+    "lc700x/infinidepth-base": "vitb16",
+    "lc700x/infinidepth-large": "vitl16",
+}
 
 
 @dataclass(frozen=True)
@@ -123,6 +130,37 @@ def _normalize_depth(depth: torch.Tensor) -> torch.Tensor:
     amin = flat.amin(dim=-1).view(depth.shape[0], 1, 1, 1)
     amax = flat.amax(dim=-1).view(depth.shape[0], 1, 1, 1)
     return ((depth - amin) / (amax - amin).clamp_min(1e-6)).clamp(0, 1)
+
+
+def _is_infinidepth_model(model_id: str) -> bool:
+    return "infinidepth" in str(model_id).lower()
+
+
+def _infinidepth_encoder_for_model(model_id: str) -> str:
+    return INFINIDEPTH_ENCODERS.get(str(model_id).strip().lower(), "vitl16")
+
+
+def _resolve_hf_model_file(
+    model_id: str,
+    cache_dir: str | Path,
+    *,
+    local_files_only: bool = False,
+    force_download: bool = False,
+) -> str:
+    from huggingface_hub import hf_hub_download
+
+    for filename in ("model.safetensors", "model.pt", "model.ckpt"):
+        try:
+            return hf_hub_download(
+                repo_id=model_id,
+                filename=filename,
+                cache_dir=str(cache_dir),
+                local_files_only=local_files_only,
+                force_download=force_download,
+            )
+        except Exception as exc:
+            last_error = exc
+    raise RuntimeError(f"unable to resolve InfiniDepth weights for {model_id!r}") from last_error
 
 
 class DistillAnyDepthBase518:
@@ -356,8 +394,119 @@ class GenericAutoDepthProvider:
         return DepthProfileResult(depth, preprocess_ms, model_ms, postprocess_ms)
 
 
+class InfiniDepthProvider:
+    def __init__(
+        self,
+        *,
+        model_id: str,
+        model_name: str | None = None,
+        device: str | torch.device = "cuda",
+        cache_dir: str | Path | None = None,
+        dtype: torch.dtype | None = None,
+        depth_resolution: int = DISTILL_ANY_DEPTH_BASE_RESOLUTION,
+        local_files_only: bool = False,
+        force_download: bool = False,
+        depth_upsample: DepthUpsampleMode = "bilinear",
+        depth_upsample_edge_strength: float = 0.35,
+    ) -> None:
+        self.model_id = model_id
+        self.model_name = model_name or model_id.rsplit("/", 1)[-1]
+        self.device = torch.device(device)
+        self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
+        self.dtype = dtype or (torch.float16 if self.device.type == "cuda" else torch.float32)
+        self.depth_resolution = int(depth_resolution)
+        self.encoder = _infinidepth_encoder_for_model(model_id)
+        self.local_files_only = bool(local_files_only)
+        self.force_download = bool(force_download)
+        self.depth_upsample = depth_upsample
+        self.depth_upsample_edge_strength = float(depth_upsample_edge_strength)
+        self.info = DepthProviderInfo(
+            provider="models.InfiniDepth.api.InfiniDepthModel",
+            model_name=self.model_name,
+            model_id=self.model_id,
+            depth_resolution=self.depth_resolution,
+            cache_dir=str(self.cache_dir),
+            load_mode="local_files_only" if self.local_files_only else "online_force_download" if self.force_download else "online",
+            depth_backend="pytorch_cuda" if self.device.type == "cuda" else "pytorch_cpu",
+            runtime="infinidepth",
+        )
+        self._model = None
+
+    def load(self):
+        if self._model is not None:
+            return self._model
+
+        from models.InfiniDepth.api import InfiniDepthModel
+
+        model_path = _resolve_hf_model_file(
+            self.model_id,
+            self.cache_dir,
+            local_files_only=self.local_files_only,
+            force_download=self.force_download,
+        )
+        model = InfiniDepthModel(model_path=model_path, encoder=self.encoder)
+        self._model = model.to(self.device, dtype=self.dtype).eval()
+        return self._model
+
+    def predict(self, rgb: torch.Tensor) -> torch.Tensor:
+        return self.predict_profile(rgb).depth
+
+    def predict_profile(self, rgb: torch.Tensor) -> DepthProfileResult:
+        import time
+
+        def sync() -> None:
+            if self.device.type == "cuda" and torch.cuda.is_available():
+                torch.cuda.synchronize()
+
+        sync()
+        start = time.perf_counter()
+        rgb = ensure_bchw(rgb, name="rgb").to(self.device).float().clamp(0, 1)
+        _, _, height, width = rgb.shape
+        input_h, input_w = _model_input_size(
+            height,
+            width,
+            self.depth_resolution,
+            INFINIDEPTH_PATCH_SIZE,
+        )
+
+        tensor = F.interpolate(
+            rgb,
+            size=(input_h, input_w),
+            mode="bicubic" if self.device.type == "cuda" else "bilinear",
+            align_corners=False,
+            antialias=True if self.device.type == "cuda" else False,
+        ).to(self.dtype)
+        sync()
+        preprocess_ms = (time.perf_counter() - start) * 1000.0
+
+        model = self.load()
+        use_autocast = self.device.type == "cuda" and self.dtype == torch.float16
+        sync()
+        start = time.perf_counter()
+        with torch.inference_mode(), torch.autocast(device_type=self.device.type, enabled=use_autocast):
+            predicted = model.predict_depth(tensor, fp32=self.dtype != torch.float16)
+        sync()
+        model_ms = (time.perf_counter() - start) * 1000.0
+
+        start = time.perf_counter()
+        depth = ensure_b1hw(predicted)
+        depth = _normalize_depth(depth)
+        depth = upsample_depth(
+            depth,
+            height,
+            width,
+            rgb=rgb,
+            mode=self.depth_upsample,
+            edge_strength=self.depth_upsample_edge_strength,
+        )
+        sync()
+        postprocess_ms = (time.perf_counter() - start) * 1000.0
+        return DepthProfileResult(depth, preprocess_ms, model_ms, postprocess_ms)
+
+
 TorchDepthProvider = DistillAnyDepthBase518
 GenericTorchDepthProvider = GenericAutoDepthProvider
+InfiniDepthTorchProvider = InfiniDepthProvider
 
 
 def _normalization_tensors_for_model(model_id: str, device: torch.device, dtype: torch.dtype) -> tuple[torch.Tensor, torch.Tensor]:
@@ -518,6 +667,18 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
 
     if backend in {"distill_base_518", "pytorch_cuda", "pytorch"}:
         if cfg.model_id != DISTILL_ANY_DEPTH_BASE_MODEL_ID:
+            if _is_infinidepth_model(cfg.model_id):
+                return InfiniDepthProvider(
+                    model_id=cfg.model_id,
+                    model_name=cfg.model_name,
+                    device=device,
+                    cache_dir=cfg.cache_dir,
+                    depth_resolution=cfg.depth_resolution,
+                    local_files_only=cfg.local_files_only,
+                    force_download=cfg.force_download,
+                    depth_upsample=cfg.depth_upsample,
+                    depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
+                )
             return GenericAutoDepthProvider(
                 model_id=cfg.model_id,
                 model_name=cfg.model_name,

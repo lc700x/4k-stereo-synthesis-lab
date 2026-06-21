@@ -1,5 +1,5 @@
 Capture Mode: Monitor
-Monitor Index: none
+Monitor Index: 3
 Window Title: ''
 Show FPS: false
 Model List:
@@ -312,29 +312,47 @@ Model List:
   DepthPro-Large:
     resolutions:
     - 1536
-Depth Model: Distill-Any-Depth-Small
-Depth Strength: 2.0
-Depth Resolution: 336
-Anti-aliasing: 2
+Depth Model: Distill-Any-Depth-Base
+Depth Strength: 2.4
+Depth Quick: Enhanced
+Depth Resolution: 518
+Anti-aliasing: 1
+Depth Antialias Strength: 1.0
 Foreground Scale: 0.5
 IPD: 0.064
-Convergence: 0.0
+Convergence: 0.25
+Stereo Scale: 0.5
+Stereo Preset: cinema
+Stereo Quality: quality_4k
+Max Shift Ratio: 0.05
+Temporal: true
+Temporal Strength: 0.7
+Auto Scene Reset: true
+Scene Reset Threshold: 0.22
+Reset Cooldown Frames: 3
+Edge Dilation: 2
+Edge Threshold: 0.04
+Cross Eyed: false
+Anaglyph Method: red_cyan
 Display Mode: Half-SBS
-FP16: true
-torch.compile: null
-TensorRT: null
+FP16: false
+torch.compile: true
+TensorRT: true
 Recompile TensorRT: false
 CoreML: null
 Recompile CoreML: false
-OpenVINO: null
-Recompile OpenVINO: false
 MIGraphX: null
 Recompile MIGraphX: false
+Recompile OpenVINO: false
 Computing Device: 0
-Language: EN
+Language: CN
 Run Mode: OpenXR Link
 XR Preview Window: false
 VSync: false
+Target FPS: 0
+Processing Resolution: Auto
+Upscaler: 'Off'
+Upscaler Sharpness: 0.35
 Stream Protocol: HLS
 Streamer Port: 1122
 Stream Quality: 100
@@ -343,9 +361,12 @@ Stereo Mix: null
 CRF: 20
 Audio Delay: -0.15
 Controller Model: PICO
-Environment Model: Default
+Environment Model: Cinema
 Lossless Scaling Support: false
-Capture Tool: none
+Capture Tool: WindowsCaptureCUDA
 Fill 16:9: true
 Fix Viewer Aspect: false
-Stereo Output: null
+Stereo Output: 2
+Local VSync: true
+OpenVINO: null
+Synthetic View: quality_4k

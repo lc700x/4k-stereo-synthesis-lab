@@ -44,6 +44,24 @@ def test_frame_size_from_eye_uses_height_width_shape_for_array_like():
     assert frame_size_from_eye(eye) == (1280, 720)
 
 
+def test_load_openxr_viewer_uses_environment_split_for_named_environment(monkeypatch):
+    fake_base_viewer = object()
+    fake_environment_viewer = object()
+    monkeypatch.setitem(
+        sys.modules,
+        "xr_viewer.base",
+        types.SimpleNamespace(OPENXR_AVAILABLE=True, OpenXRViewer=fake_base_viewer),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "xr_viewer.environment",
+        types.SimpleNamespace(OPENXR_AVAILABLE=True, OpenXRViewer=fake_environment_viewer),
+    )
+
+    assert load_openxr_viewer("Cinema") is fake_environment_viewer
+    assert load_openxr_viewer("none") is fake_base_viewer
+
+
 def test_load_openxr_viewer_raises_when_runtime_unavailable(monkeypatch):
     fake_base = types.SimpleNamespace(OPENXR_AVAILABLE=False, OpenXRViewer=object)
     monkeypatch.setitem(sys.modules, "xr_viewer.base", fake_base)

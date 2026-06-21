@@ -33,6 +33,24 @@ def test_resolve_model_dir_uses_huggingface_cache_name():
     assert str(path).replace("\\", "/") == "cache-root/models--owner--repo-name"
 
 
+def test_da3_registry_uses_correct_huggingface_repo_revisions():
+    registry = ModelRegistry.default()
+
+    assert registry.resolve_model_id("DA3-SMALL") == "depth-anything/DA3-SMALL"
+    assert registry.resolve_model_id("DA3-BASE") == "depth-anything/DA3-BASE"
+    assert registry.resolve_model_id("DA3-LARGE") == "depth-anything/DA3-LARGE-1.1"
+    assert registry.resolve_model_id("DA3-GIANT") == "depth-anything/DA3-GIANT-1.1"
+    assert registry.resolve_model_id("DA3NESTED-GIANT-LARGE") == "depth-anything/DA3NESTED-GIANT-LARGE-1.1"
+    assert registry.resolve_model_id("DA3MONO-LARGE") == "depth-anything/DA3MONO-LARGE"
+
+
+def test_da3_model_dir_uses_resolved_repo_id():
+    config = DepthRuntimeConfig(model_id="DA3-LARGE", cache_dir="./models")
+
+    assert config.resolved_model_id == "depth-anything/DA3-LARGE-1.1"
+    assert str(config.model_path).replace("\\", "/").endswith("models/models--depth-anything--DA3-LARGE-1.1")
+
+
 def test_depth_runtime_config_passes_trt_build_options():
     config = DepthRuntimeConfig(
         model_id="Distill-Any-Depth-Base",

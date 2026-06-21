@@ -121,9 +121,21 @@ def test_noisy_third_party_console_output_is_filtered():
     assert "[warmup] same version" in text
     filter_index = text.index("if _is_noisy_console_output(data):")
     console_write_index = text.index("self.original.write(data)", filter_index)
-    diag_write_index = text.index("with open(DIAG_LOG", filter_index)
+    log_write_index = text.index("with open(LOG_FILE", filter_index)
     assert "return len(data or \"\")" in text[filter_index:console_write_index]
-    assert filter_index < console_write_index < diag_write_index
+    assert filter_index < console_write_index < log_write_index
+
+
+def test_gui_uses_single_rolling_log_for_gui_and_child_output():
+    paths_text = _file_text("paths.py")
+    process_text = _file_text("process.py")
+    assert 'LOG_FILE = os.path.join(LOG_DIR, "desktop2stereo.log")' in paths_text
+    assert "DIAG_LOG = LOG_FILE" in paths_text
+    assert 'stdout=asyncio.subprocess.PIPE' in process_text
+    assert 'stderr=asyncio.subprocess.STDOUT' in process_text
+    assert 'child_env["PYTHONIOENCODING"] = "utf-8"' in process_text
+    assert "async def _pump_child_output" in process_text
+    assert "asyncio.create_task(self._pump_child_output(self.process))" in process_text
 
 
 def test_stereo_quality_dropdown_uses_localized_levels_but_saves_runtime_values():

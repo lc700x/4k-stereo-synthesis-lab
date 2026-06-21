@@ -6,10 +6,11 @@ import time
 import asyncio
 import ctypes
 import subprocess
+import traceback
 import flet as ft
 from utils import OS_NAME, DEFAULT_PORT, shutdown_event, read_yaml
 from .config import DEFAULTS, save_yaml
-from .paths import BASE_DIR, DIAG_LOG
+from .paths import BASE_DIR, DIAG_LOG, LOG_DIR, LOG_FILE
 from .capture_sources import get_primary_monitor_index, list_windows
 from .localization import UI_MESSAGES
 
@@ -29,9 +30,30 @@ def _is_noisy_console_output(data):
 
 
 def _setup_console_logging():
-    """Redirect stdout/stderr to also write to the diag log file."""
+    """Mirror stdout/stderr to the single rolling log file."""
     import datetime
-    os.makedirs(os.path.dirname(DIAG_LOG), exist_ok=True)
+    import threading
+
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+    try:
+        for name in os.listdir(LOG_DIR):
+            path = os.path.join(LOG_DIR, name)
+            if os.path.isfile(path) and os.path.abspath(path) != os.path.abspath(LOG_FILE):
+                try:
+                    os.remove(path)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    try:
+        with open(LOG_FILE, "w", encoding="utf-8") as f:
+            f.write(f"=== Desktop2Stereo log started {datetime.datetime.now().isoformat(timespec='seconds')} ===\n")
+    except Exception:
+        pass
+
+    lock = threading.Lock()
 
     class _TeeStream:
         def __init__(self, original, label):
@@ -41,23 +63,38 @@ def _setup_console_logging():
         def write(self, data):
             if _is_noisy_console_output(data):
                 return len(data or "")
-            self.original.write(data)
-            if data and data.strip():
-                try:
-                    ts = datetime.datetime.now().strftime("%H:%M:%S")
-                    with open(DIAG_LOG, "a", encoding="utf-8") as f:
+            try:
+                self.original.write(data)
+            except Exception:
+                pass
+            if not data:
+                return len(data or "")
+            try:
+                ts = datetime.datetime.now().strftime("%H:%M:%S")
+                with lock:
+                    with open(LOG_FILE, "a", encoding="utf-8") as f:
                         for line in data.splitlines():
-                            stripped = line.strip()
+                            stripped = line.rstrip()
                             if stripped:
                                 f.write(f"[{ts}] [{self.label}] {stripped}\n")
-                except Exception:
-                    pass
+            except Exception:
+                pass
+            return len(data or "")
 
         def flush(self):
-            self.original.flush()
+            try:
+                self.original.flush()
+            except Exception:
+                pass
 
         def isatty(self):
-            return self.original.isatty()
+            try:
+                return self.original.isatty()
+            except Exception:
+                return False
+
+        def fileno(self):
+            return self.original.fileno()
 
     sys.stdout = _TeeStream(sys.stdout, "out")
     sys.stderr = _TeeStream(sys.stderr, "err")
@@ -103,12 +140,21 @@ class GUIProcessMixin:
         self.stop_btn.disabled = not running
         self._safe_update(self.run_btn, self.stop_btn)
 
-    def _diag(self, msg):
+    def _diag(self, msg, error=False):
         import datetime
-        os.makedirs(os.path.dirname(DIAG_LOG), exist_ok=True)
-        line = f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [diag] {msg}"
-        with open(DIAG_LOG, "a", encoding="utf-8") as f:
-            f.write(line + "\n")
+        os.makedirs(LOG_DIR, exist_ok=True)
+        try:
+            with open(LOG_FILE, "a", encoding="utf-8") as f:
+                f.write(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [diag] {msg}\n")
+        except Exception:
+            pass
+        if error:
+            try:
+                original = getattr(sys.stdout, "original", sys.stdout)
+                original.write(f"[diag] {msg}\n")
+                original.flush()
+            except Exception:
+                pass
 
     # ── save & run ──
 
@@ -185,17 +231,35 @@ class GUIProcessMixin:
                 self._cancel_starting = False
                 self._diag("cancelled, return")
                 return
-            print(f"[Main] Initializing Desktop2Stereo {self.run_mode_key}…")
+            print(f"[Main] Initializing Desktop2Stereo {self.run_mode_key}...")
             shutdown_event.clear()
+            child_args = [
+                sys.executable,
+                "-u",
+                "-X",
+                "faulthandler",
+                os.path.join(BASE_DIR, "main.py"),
+            ]
+            child_env = os.environ.copy()
+            child_env["PYTHONIOENCODING"] = "utf-8"
             if OS_NAME == "Windows":
                 self.process = await asyncio.create_subprocess_exec(
-                    sys.executable, os.path.join(BASE_DIR, "main.py"),
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP)
+                    *child_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+                    env=child_env,
+                )
             else:
                 self.process = await asyncio.create_subprocess_exec(
-                    sys.executable, os.path.join(BASE_DIR, "main.py"),
-                    start_new_session=True)
-            self._diag(f"process started, pid={self.process.pid}")
+                    *child_args,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.STDOUT,
+                    start_new_session=True,
+                    env=child_env,
+                )
+            self._diag(f"process started, pid={self.process.pid}, log={LOG_FILE}")
+            asyncio.create_task(self._pump_child_output(self.process))
             self.set_status(UI_MESSAGES[self.locale]["Running"], key="Running")
             self.page.update()
             asyncio.create_task(self._monitor_process_task())
@@ -213,10 +277,29 @@ class GUIProcessMixin:
             self._config["Stereo Preset"] = "cinema"
             save_yaml(os.path.join(BASE_DIR, "settings.yaml"), self._config)
         except Exception as e:
+            self._diag(f"_countdown_and_run failed:\n{traceback.format_exc()}", error=True)
             self.set_status(UI_MESSAGES[self.locale]["err_start_failed"].format(e))
             self.page.update()
         finally:
             self._starting = False
+
+    async def _pump_child_output(self, proc):
+        try:
+            stream = proc.stdout
+            if stream is None:
+                return
+            while True:
+                raw = await stream.readline()
+                if not raw:
+                    break
+                try:
+                    text = raw.decode("utf-8", errors="replace").rstrip("\r\n")
+                except Exception:
+                    text = repr(raw)
+                if text:
+                    print(text)
+        except Exception as e:
+            self._diag(f"_pump_child_output exception: {e}\n{traceback.format_exc()}", error=True)
 
     async def _monitor_process_task(self):
         proc = self.process
@@ -228,7 +311,7 @@ class GUIProcessMixin:
             await proc.wait()
             self._diag(f"proc.wait returned, rc={proc.returncode}")
         except Exception as e:
-            self._diag(f"proc.wait() exception: {e}")
+            self._diag(f"proc.wait() exception: {e}", error=True)
         finally:
             self._diag(f"finally: process is proc={self.process is proc}, returncode={proc.returncode}")
             if self.process is proc:
@@ -236,6 +319,7 @@ class GUIProcessMixin:
             self._starting = False
             code = proc.returncode if proc else None
             if code and code != 0:
+                self._diag(f"child exited rc={code}; see {LOG_FILE} for details", error=True)
                 self.set_status(UI_MESSAGES[self.locale]["exited_with_code"].format(code))
             else:
                 self.set_status(UI_MESSAGES[self.locale]["Stopped"], key="Stopped")

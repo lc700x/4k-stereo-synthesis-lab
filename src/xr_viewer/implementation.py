@@ -6629,6 +6629,201 @@ class OpenXRViewerCore:
         self._yaw_offset   = 0.0
         self._pitch_offset = 0.0
 
+    def _clear_screen_grab_anchors(self):
+        """Drop stale grip anchors after a screen teleport/reset."""
+        self._screen_grab_local_l = None
+        self._screen_grab_local_r = None
+        self._screen_grab_grip_l = None
+        self._screen_grab_grip_r = None
+        self._kb_grab_local_l = None
+        self._kb_grab_local_r = None
+
+    def _screen_pose_mat4(self):
+        """Screen rigid transform without width/height scale."""
+        cy = math.cos(self.screen_yaw)
+        sy_ = math.sin(self.screen_yaw)
+        cp = math.cos(self.screen_pitch)
+        sp = math.sin(self.screen_pitch)
+        cr = math.cos(self.screen_roll)
+        sr = math.sin(self.screen_roll)
+        rot_y = np.array([[cy, 0, sy_, 0], [0, 1, 0, 0], [-sy_, 0, cy, 0], [0, 0, 0, 1]], dtype='f4')
+        rot_x = np.array([[1, 0, 0, 0], [0, cp, -sp, 0], [0, sp, cp, 0], [0, 0, 0, 1]], dtype='f4')
+        rot_z = np.array([[cr, -sr, 0, 0], [sr, cr, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype='f4')
+        trans = np.eye(4, dtype='f4')
+        trans[0, 3] = self.screen_pan_x
+        trans[1, 3] = self.screen_pan_y
+        trans[2, 3] = -self.screen_distance
+        return trans @ rot_y @ rot_x @ rot_z
+
+    def _decompose_env_model_mat4(self, mat):
+        """Store an environment model matrix back into position, rotation, and scale."""
+        mat = np.asarray(mat, dtype=np.float64)
+        self._env_model_pos = [float(mat[0, 3]), float(mat[1, 3]), float(mat[2, 3])]
+        rot_scale = mat[:3, :3].copy()
+        scale = [float(np.linalg.norm(rot_scale[:, i])) for i in range(3)]
+        for i, s in enumerate(scale):
+            if s > 1e-9:
+                rot_scale[:, i] /= s
+        pitch = math.asin(max(-1.0, min(1.0, -float(rot_scale[1, 2]))))
+        yaw = math.atan2(float(rot_scale[0, 2]), float(rot_scale[2, 2]))
+        roll = math.atan2(float(rot_scale[1, 0]), float(rot_scale[1, 1]))
+        self._env_model_rot = [yaw, pitch, roll]
+        self._env_model_scale = scale
+        if hasattr(self, '_cached_env_model_mat4_frame'):
+            self._cached_env_model_mat4_frame = -1
+
+    def _move_env_with_screen_delta(self, old_screen_mat):
+        """When a locked room screen is reset, apply the same rigid delta to the room."""
+        if not self._environment_screen_locked() or old_screen_mat is None:
+            return
+        try:
+            new_screen_mat = self._screen_pose_mat4().astype('f8')
+            delta = new_screen_mat @ np.linalg.inv(old_screen_mat.astype('f8'))
+            env_new = delta @ self._build_env_model_mat4().astype('f8')
+            self._decompose_env_model_mat4(env_new)
+        except Exception as exc:
+            print(f"[OpenXRViewer] screen/env lock transform failed: {exc}")
+
+    def _reset_locked_environment_to_profile(self, show_border=False):
+        """Restore a locked room's calibrated environment/screen pose."""
+        if not getattr(self, '_active_environment', None):
+            return False
+        return self._apply_profile_screen_layout(show_border=show_border)
+
+    def _kb_restore_cached_position(self, cached):
+        """Restore keyboard position cached before an environment switch."""
+        self._keyboard_pan_x = float(cached['pan_x'])
+        self._keyboard_pan_y = float(cached['pan_y'])
+        self._keyboard_distance = float(cached['distance'])
+        self._keyboard_width = float(cached.get('width', self.screen_width * 0.75))
+        self._keyboard_yaw = float(cached.get('yaw', 0.0))
+        self._keyboard_pitch = float(cached.get('pitch', 0.0))
+
+    def _tick_screen_anim(self, dt):
+        """Advance an optional screen reset animation target."""
+        if getattr(self, '_anim_target_pan_x', None) is None and getattr(self, '_anim_target_roll', None) is None:
+            return
+        k = 6.0
+        alpha = 1.0 - math.exp(-k * max(dt, 1e-4))
+
+        def _lerp(a, b):
+            return a + alpha * (b - a)
+
+        def _lerp_angle(a, b):
+            d = (b - a + math.pi) % (2 * math.pi) - math.pi
+            return a + alpha * d
+
+        self.screen_pan_x = _lerp(self.screen_pan_x, self._anim_target_pan_x)
+        self.screen_pan_y = _lerp(self.screen_pan_y, self._anim_target_pan_y)
+        self.screen_distance = _lerp(self.screen_distance, self._anim_target_distance)
+        self.screen_yaw = _lerp_angle(self.screen_yaw, self._anim_target_yaw)
+        self.screen_pitch = _lerp_angle(self.screen_pitch, self._anim_target_pitch)
+        self.screen_roll = _lerp_angle(self.screen_roll, self._anim_target_roll)
+        close = (
+            abs(self.screen_pan_x - self._anim_target_pan_x) < 0.001
+            and abs(self.screen_pan_y - self._anim_target_pan_y) < 0.001
+            and abs(self.screen_distance - self._anim_target_distance) < 0.001
+            and abs((self.screen_yaw - self._anim_target_yaw + math.pi) % (2 * math.pi) - math.pi) < 0.0002
+            and abs((self.screen_pitch - self._anim_target_pitch + math.pi) % (2 * math.pi) - math.pi) < 0.0002
+            and abs((self.screen_roll - self._anim_target_roll + math.pi) % (2 * math.pi) - math.pi) < 0.0002
+        )
+        if close:
+            self.screen_pan_x = self._anim_target_pan_x
+            self.screen_pan_y = self._anim_target_pan_y
+            self.screen_distance = self._anim_target_distance
+            self.screen_yaw = self._anim_target_yaw
+            self.screen_pitch = self._anim_target_pitch
+            self.screen_roll = self._anim_target_roll
+            self._anim_target_pan_x = None
+            self._anim_target_pan_y = None
+            self._anim_target_distance = None
+            self._anim_target_yaw = None
+            self._anim_target_pitch = None
+            self._anim_target_roll = None
+
+    def _reset_screen_to_gaze(self, show_border=False):
+        """Snap the screen to two meters in front of current head gaze."""
+        reset_dist = 2.0
+        old_screen_mat = self._screen_pose_mat4() if self._environment_screen_locked() else None
+        self._reset_orientation_offsets()
+        self._clear_screen_grab_anchors()
+        self._anim_target_pan_x = None
+        if self._head_pos_w is not None and self._head_fwd_w is not None:
+            hx, hy, hz = self._head_pos_w
+            fx, fy, fz = self._head_fwd_w
+            flen = math.sqrt(fx * fx + fy * fy + fz * fz)
+            if flen > 1e-4:
+                fx /= flen
+                fy /= flen
+                fz /= flen
+            else:
+                fx, fy, fz = 0.0, 0.0, -1.0
+            tx = hx + fx * reset_dist
+            ty = hy + fy * reset_dist
+            tz = hz + fz * reset_dist
+            horiz = math.sqrt(fx * fx + fz * fz)
+            yaw = math.atan2(-fx, -fz) if horiz > 1e-4 else self.screen_yaw
+            pitch = math.asin(max(-0.999, min(0.999, fy)))
+            cy = math.cos(yaw)
+            sy_ = math.sin(yaw)
+            cp = math.cos(pitch)
+            sp = math.sin(pitch)
+            x1 = cy * tx - sy_ * tz
+            y1 = ty
+            z1 = sy_ * tx + cy * tz
+            self.screen_pan_x = x1
+            self.screen_pan_y = cp * y1 + sp * z1
+            self.screen_distance = -(-sp * y1 + cp * z1)
+            self.screen_yaw = yaw
+            self.screen_pitch = pitch
+            self.screen_roll = 0.0
+        else:
+            self.screen_distance = reset_dist
+            self.screen_pan_x = 0.0
+            self.screen_pan_y = float(self._initial_head_y)
+            self.screen_pitch = 0.0
+            self.screen_yaw = 0.0
+            self.screen_roll = 0.0
+        self._move_env_with_screen_delta(old_screen_mat)
+        if show_border:
+            self._border_alpha = 1.0
+            self._border_idle_t = time.perf_counter()
+        if self._keyboard_visible:
+            self._anchor_keyboard_below_screen()
+
+    def _reset_screen_direction(self):
+        """Turn the screen to face current head gaze while preserving distance."""
+        if self._head_pos_w is None or self._head_fwd_w is None:
+            return
+        old_screen_mat = self._screen_pose_mat4() if self._environment_screen_locked() else None
+        hx, hy, hz = self._head_pos_w
+        fx, fy, fz = self._head_fwd_w
+        flen = math.sqrt(fx * fx + fy * fy + fz * fz)
+        if flen > 1e-4:
+            fx /= flen
+            fy /= flen
+            fz /= flen
+        else:
+            fx, fy, fz = 0.0, 0.0, -1.0
+        dx = self.screen_pan_x - hx
+        dy = self.screen_pan_y - hy
+        dz = -self.screen_distance - hz
+        dist = math.sqrt(dx * dx + dy * dy + dz * dz)
+        self._reset_orientation_offsets()
+        self._clear_screen_grab_anchors()
+        self._anim_target_pan_x = None
+        self.screen_pan_x = hx + fx * dist
+        self.screen_pan_y = hy + fy * dist
+        self.screen_distance = -(hz + fz * dist)
+        self.screen_yaw = math.atan2(-fx, -fz)
+        self.screen_pitch = math.asin(max(-0.999, min(0.999, fy)))
+        self.screen_roll = 0.0
+        self._move_env_with_screen_delta(old_screen_mat)
+        self._border_alpha = 1.0
+        self._border_idle_t = time.perf_counter()
+        if self._keyboard_visible:
+            self._anchor_keyboard_below_screen()
+
     def _apply_preset(self, index):
         """Apply screen preset: size, distance, and reposition to face the user."""
         if not self._screen_presets:
@@ -6636,6 +6831,7 @@ class OpenXRViewerCore:
         index = int(index) % len(self._screen_presets)
         name, width_m, distance_m = self._screen_presets[index]
         self._reset_orientation_offsets()
+        self._clear_screen_grab_anchors()
         self.screen_width = float(width_m)
         self._screen_ref_size = float(width_m)
         self.screen_height = None
@@ -6881,10 +7077,13 @@ class OpenXRViewerCore:
         Called at session start and by the Y button.
         """
         if self._apply_profile_screen_layout(show_border=show_border):
+            self._clear_screen_grab_anchors()
             return
 
         RESET_DIST = 2.0
+        old_screen_mat = self._screen_pose_mat4() if self._environment_screen_locked() else None
         self._reset_orientation_offsets()
+        self._clear_screen_grab_anchors()
         self.screen_width     = 2.4
         self._screen_ref_size = 2.4
         self.screen_height    = None
@@ -6919,6 +7118,7 @@ class OpenXRViewerCore:
         if show_border:
             self._border_alpha  = 1.0
             self._border_idle_t = time.perf_counter()
+        self._move_env_with_screen_delta(old_screen_mat)
         if self._keyboard_visible:
             self._anchor_keyboard_below_screen()
 
@@ -7132,6 +7332,10 @@ class OpenXRViewerCore:
         if abs(loc_x) <= OVERLAY_W / 2.0 and abs(loc_y) <= OVERLAY_H / 2.0:
             return max(0.01, t - 0.005)
         return BEAM_MAX
+
+    def _overlay_panel_hit(self, ctrl_pos, fwd_w):
+        """Return whether the controller ray hits the FPS/status panel."""
+        return self._overlay_panel_hit_dist(ctrl_pos, fwd_w) < 5.0
 
     # Controller pose smoothing for stable cursor/laser aiming
     @staticmethod
@@ -7892,6 +8096,58 @@ class OpenXRViewerCore:
         self.ctx.depth_mask = True
 
 
+    def _render_border(self, mgl_fbo, vp_mat):
+        """Render a thin screen border slightly larger than the desktop quad."""
+        if self.screen_height is None:
+            return
+        alpha = float(getattr(self, '_border_alpha', 0.0))
+        if alpha <= 0.0 or self._border_prog is None or self._border_vao is None:
+            return
+        color = (0.3, 0.7, 1.0, alpha) if self._grabbed else (0.75, 0.75, 0.75, alpha * 0.9)
+        border = self.screen_width / 300.0
+
+        mgl_fbo.use()
+        self.ctx.enable(moderngl.BLEND)
+        self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+
+        if self._screen_curved and self._curved_border_vao is not None:
+            bw = self.screen_width + 2.0 * border
+            bh = self.screen_height + 2.0 * border
+            params = (bw, bh, self.screen_distance, self.screen_pan_x,
+                      self.screen_pan_y, self.screen_yaw, self.screen_pitch)
+            if self._curved_border_verts_params != params:
+                border_verts = self._build_curved_screen_verts(
+                    width_override=bw, height_override=bh, dist_offset=0.001,
+                )
+                self._curved_border_vbo.write(border_verts.tobytes())
+                self._curved_border_verts_params = params
+            self._curved_border_prog['u_mvp'].write(vp_mat.T.tobytes())
+            self._curved_border_prog['u_color'].value = color
+            self._curved_border_vao.render(moderngl.TRIANGLE_STRIP, vertices=(48 + 1) * 2)
+        else:
+            sx = self.screen_width / 2.0 + border
+            sy = self.screen_height / 2.0 + border
+            cy = math.cos(self.screen_yaw)
+            sy_ = math.sin(self.screen_yaw)
+            cp = math.cos(self.screen_pitch)
+            sp = math.sin(self.screen_pitch)
+            cr = math.cos(self.screen_roll)
+            sr = math.sin(self.screen_roll)
+            rot_y = np.array([[cy, 0, sy_, 0], [0, 1, 0, 0], [-sy_, 0, cy, 0], [0, 0, 0, 1]], dtype='f4')
+            rot_x = np.array([[1, 0, 0, 0], [0, cp, -sp, 0], [0, sp, cp, 0], [0, 0, 0, 1]], dtype='f4')
+            rot_z = np.array([[cr, -sr, 0, 0], [sr, cr, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype='f4')
+            scale = np.diag([sx, sy, 1.0, 1.0]).astype('f4')
+            trans = np.eye(4, dtype='f4')
+            trans[0, 3] = self.screen_pan_x
+            trans[1, 3] = self.screen_pan_y
+            trans[2, 3] = -self.screen_distance - 0.001
+            mvp = vp_mat @ trans @ rot_y @ rot_x @ rot_z @ scale
+            self._border_prog['u_mvp'].write(mvp.T.astype('f4').tobytes())
+            self._border_prog['u_color'].value = color
+            self._border_vao.render(moderngl.TRIANGLE_STRIP)
+
+        self.ctx.disable(moderngl.BLEND)
+
     def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):
         """Render one eye's parallax view into the swapchain FBO using world-space MVP.
 
@@ -7945,6 +8201,9 @@ class OpenXRViewerCore:
 
         # Optional screen effects behind the desktop quad (normal viewer only).
         self._render_screen_background_effects(mgl_fbo, vp_mat)
+
+        # Screen border behind the desktop quad.
+        self._render_border(mgl_fbo, vp_mat)
 
         # Main screen
         mgl_fbo.use()
@@ -8462,6 +8721,21 @@ class OpenXRViewerCore:
                 return i, t
         return None, None
 
+    def _pre_snap_overlay_ray(self, is_left, aim_mat, grip_mat):
+        """Return the overlay-test ray before screen-edge snapping is applied."""
+        sm_pos, sm_fw = self._get_smoothed_ray(is_left)
+        if sm_pos is None:
+            raw_pos = (grip_mat[:3, 3] + grip_mat[:3, 1] * 0.020).astype('f8') if grip_mat is not None else aim_mat[:3, 3].astype('f8')
+            fw = -aim_mat[:3, 2].astype('f8')
+            return raw_pos + fw * 0.11, fw
+        right = aim_mat[:3, 0].astype('f8')
+        ang = math.radians(12)
+        ca, sa = math.cos(ang), math.sin(ang)
+        k = right / (np.linalg.norm(right) + 1e-10)
+        fw = sm_fw * ca + np.cross(k, sm_fw) * sa + k * np.dot(k, sm_fw) * (1 - ca)
+        raw_pos = (grip_mat[:3, 3] + grip_mat[:3, 1] * 0.020).astype('f8') if grip_mat is not None else aim_mat[:3, 3].astype('f8')
+        return raw_pos + fw * 0.11, fw
+
     def _handle_cursor(self):
         """Move the Windows mouse cursor when a controller laser is pointing at the screen.
 
@@ -8580,7 +8854,8 @@ class OpenXRViewerCore:
                 hit_l = None
             else:
                 self._kb_hover_l = None
-            ov_dist_l = self._overlay_panel_hit_dist(cp, fw)
+            ov_cp_l, ov_fw_l = self._pre_snap_overlay_ray(True, self._aim_mat_l, self._grip_mat_l)
+            ov_dist_l = self._overlay_panel_hit_dist(ov_cp_l, ov_fw_l)
             ov_hit_l = ov_dist_l < 5.0
             if ov_hit_l and hit_l is not None and ov_dist_l < hit_l[2]:
                 hit_l = None
@@ -8604,7 +8879,8 @@ class OpenXRViewerCore:
                 hit_r = None
             else:
                 self._kb_hover_r = None
-            ov_dist_r = self._overlay_panel_hit_dist(cp, fw)
+            ov_cp_r, ov_fw_r = self._pre_snap_overlay_ray(False, self._aim_mat_r, self._grip_mat_r)
+            ov_dist_r = self._overlay_panel_hit_dist(ov_cp_r, ov_fw_r)
             ov_hit_r = ov_dist_r < 5.0
             if ov_hit_r and hit_r is not None and ov_dist_r < hit_r[2]:
                 hit_r = None

@@ -3014,6 +3014,8 @@ class OpenXRViewerCore:
         self._brand_osd_alpha     = 0.0
         self._brand_osd_show_t    = -999.0
         self._brand_osd_last_name = None
+        self._ov_ltrig_held       = False
+        self._ov_rtrig_held       = False
 
         # Multi-brand controller models
         import os as _os

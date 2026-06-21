@@ -54,6 +54,12 @@ except ImportError:
     OPENXR_AVAILABLE = False
     print("[OpenXRViewer] pyopenxr not installed. Run: pip install pyopenxr")
 
+from .constants import KB_CURSOR_PRIORITY_BIAS, KB_CURSOR_RELEASE_GRACE
+from .input import (
+    _TOUCH_AVAILABLE, _TOUCH_CONTACT_ID_LEFT, _TOUCH_CONTACT_ID_RIGHT,
+    _TOUCH_PINCH_SPREAD_GAIN, _touch_injector,
+)
+
 
 
 def _openxr_app_api_version():
@@ -2796,13 +2802,34 @@ class OpenXRViewerCore:
         # Mouse cursor control
         self._cursor_uv_l         = None  # (u,v,t) where left laser hits screen, or None
         self._cursor_uv_r         = None  # (u,v,t) where right laser hits screen, or None
+        self._overlay_hit_l       = False # left laser hits FPS overlay panel
+        self._overlay_hit_r       = False # right laser hits FPS overlay panel
         self._cursor_ctrl         = None  # 'left' | 'right' | None -active cursor controller
         # Smoothed UV -exponential moving average tames hand tremor so the cursor
         # doesn't jitter or skip pixels at long laser distances. Reset when the active
         # controller changes so we don't drag the cursor across the screen on swap.
         self._cursor_smooth_uv    = None
+        self._KB_RELEASE_GRACE    = KB_CURSOR_RELEASE_GRACE
+        self._kb_cursor_owned_t_l = 0.0
+        self._kb_cursor_owned_t_r = 0.0
         self._left_btn_down       = False # left mouse button held (right trigger)
         self._right_btn_down      = False # right mouse button held (left trigger)
+
+        # Per-hand desktop pixel positions for the Windows multi-touch injector.
+        self._touch_px_l       = (0, 0)
+        self._touch_px_r       = (0, 0)
+        self._touch_valid_l    = False
+        self._touch_valid_r    = False
+        self._touch_smooth_l   = None
+        self._touch_smooth_r   = None
+        self._touch_state_l    = 'idle'
+        self._touch_state_r    = 'idle'
+        self._touch_trig_prev_l = 0.0
+        self._touch_trig_prev_r = 0.0
+        self._cursor_click_ts_l  = 0.0
+        self._cursor_click_ts_r  = 0.0
+        self._cursor_trig_prev_l = 0.0
+        self._cursor_trig_prev_r = 0.0
 
         # Target monitor for cursor mapping (multi-monitor support)
         self._target_mon_rect = None  # cached (left, top, width, height) in virtual-desktop pixels
@@ -8064,6 +8091,8 @@ class OpenXRViewerCore:
             if (time.perf_counter() - self._phys_mouse_last_move) < PHYS_TIMEOUT:
                 self._cursor_ctrl = None
                 self._cursor_smooth_uv = None
+                self._touch_valid_l = False
+                self._touch_valid_r = False
                 return
             # Throttle GetCursorPos to every ~50ms (3-4 frames at 72Hz) -
             # per-frame polling is wasteful; physical mouse detection doesn't need sub-frame precision.
@@ -8083,78 +8112,154 @@ class OpenXRViewerCore:
             if (time.perf_counter() - self._phys_mouse_last_move) < PHYS_TIMEOUT:
                 self._cursor_ctrl = None
                 self._cursor_smooth_uv = None
+                self._touch_valid_l = False
+                self._touch_valid_r = False
                 return
 
-        # If keyboard is visible and a controller's laser hits a key, suppress
-        # screen cursor for that specific controller (per-controller priority).
-        kb_claim_l = False
-        kb_claim_r = False
-        if self._keyboard_visible:
-            for is_left, _aim_mat, _grip_mat, _pos_attr, _quat_attr in [
-                (True,  self._aim_mat_l, self._grip_mat_l,
-                 "_smooth_ray_origin_l", "_smooth_ray_quat_l"),
-                (False, self._aim_mat_r, self._grip_mat_r,
-                 "_smooth_ray_origin_r", "_smooth_ray_quat_r"),
-            ]:
-                if _aim_mat is None:
-                    continue
-                _cp, _fw = _beam_origin_dir(_aim_mat, _grip_mat, _pos_attr, _quat_attr)
-                if self._keyboard_laser_hit(_cp, _fw)[0] is not None:
-                    if is_left:
-                        kb_claim_l = True
-                    else:
-                        kb_claim_r = True
-
         hit_l = hit_r = None
+        ov_hit_l = ov_hit_r = False
+        ltrig_now = self._read_float_action(self._act_left_trigger,  "/user/hand/left")
+        rtrig_now = self._read_float_action(self._act_right_trigger, "/user/hand/right")
+        cp_l = fw_l = cp_r = fw_r = None
         if self._aim_mat_l is not None:
             cp, fw = _beam_origin_dir(self._aim_mat_l, self._grip_mat_l,
                                     "_smooth_ray_origin_l", "_smooth_ray_quat_l")
-            if not kb_claim_l:
-                hit_l = self._laser_screen_hit_uv(cp, fw)
+            cp_l, fw_l = cp, fw
+            kb_dist_l = self._keyboard_laser_hit_dist(cp, fw)
+            hit_l = self._laser_screen_hit_uv(cp, fw)
+            sc_dist_l = hit_l[2] if hit_l is not None else float('inf')
+            kb_actually_hit_l = kb_dist_l < 30.0
+            typing_lock_l = (
+                self._keyboard_visible
+                and kb_actually_hit_l
+                and (self._kb_held_key_l is not None or ltrig_now >= 0.55)
+            )
+            if typing_lock_l or (kb_actually_hit_l and kb_dist_l <= (sc_dist_l + KB_CURSOR_PRIORITY_BIAS)):
+                self._kb_cursor_owned_t_l = time.perf_counter()
+                hit_l = None
+            elif self._keyboard_visible and (time.perf_counter() - self._kb_cursor_owned_t_l) < self._KB_RELEASE_GRACE:
+                hit_l = None
+            else:
+                self._kb_hover_l = None
+            ov_dist_l = self._overlay_panel_hit_dist(cp, fw)
+            ov_hit_l = ov_dist_l < 5.0
+            if ov_hit_l and hit_l is not None and ov_dist_l < hit_l[2]:
+                hit_l = None
         if self._aim_mat_r is not None:
             cp, fw = _beam_origin_dir(self._aim_mat_r, self._grip_mat_r,
                                     "_smooth_ray_origin_r", "_smooth_ray_quat_r")
-            if not kb_claim_r:
-                hit_r = self._laser_screen_hit_uv(cp, fw)
+            cp_r, fw_r = cp, fw
+            kb_dist_r = self._keyboard_laser_hit_dist(cp, fw)
+            hit_r = self._laser_screen_hit_uv(cp, fw)
+            sc_dist_r = hit_r[2] if hit_r is not None else float('inf')
+            kb_actually_hit_r = kb_dist_r < 30.0
+            typing_lock_r = (
+                self._keyboard_visible
+                and kb_actually_hit_r
+                and (self._kb_held_key_r is not None or rtrig_now >= 0.55)
+            )
+            if typing_lock_r or (kb_actually_hit_r and kb_dist_r <= (sc_dist_r + KB_CURSOR_PRIORITY_BIAS)):
+                self._kb_cursor_owned_t_r = time.perf_counter()
+                hit_r = None
+            elif self._keyboard_visible and (time.perf_counter() - self._kb_cursor_owned_t_r) < self._KB_RELEASE_GRACE:
+                hit_r = None
+            else:
+                self._kb_hover_r = None
+            ov_dist_r = self._overlay_panel_hit_dist(cp, fw)
+            ov_hit_r = ov_dist_r < 5.0
+            if ov_hit_r and hit_r is not None and ov_dist_r < hit_r[2]:
+                hit_r = None
 
         self._cursor_uv_l = hit_l if hit_l else None   # (u, v, t) or None
         self._cursor_uv_r = hit_r if hit_r else None   # (u, v, t) or None
+        self._overlay_hit_l = ov_hit_l
+        self._overlay_hit_r = ov_hit_r
+
+        try:
+            mon_left, mon_top, mon_w, mon_h = self._get_target_monitor_rect()
+        except Exception:
+            mon_left = mon_top = 0
+            mon_w = mon_h = 0
+
+        def _uv_to_px(uv):
+            if uv is None or mon_w <= 0 or mon_h <= 0:
+                return None
+            u, v = float(uv[0]), float(uv[1])
+            return (mon_left + int(u * mon_w), mon_top + int((1.0 - v) * mon_h))
+
+        def _edge_px(cp, fw):
+            if cp is None or fw is None or mon_w <= 0 or mon_h <= 0:
+                return None
+            uv = self._laser_plane_uv(cp, fw)
+            if uv is None:
+                return None
+            u = max(0.0, min(1.0, float(uv[0])))
+            v = max(0.0, min(1.0, float(uv[1])))
+            return (mon_left + int(u * mon_w), mon_top + int((1.0 - v) * mon_h))
+
+        touch_l = _uv_to_px(hit_l)
+        touch_r = _uv_to_px(hit_r)
+        if touch_l is not None:
+            self._touch_px_l = touch_l
+            self._touch_valid_l = True
+        else:
+            edge_l = _edge_px(cp_l, fw_l)
+            if edge_l is not None:
+                self._touch_px_l = edge_l
+            self._touch_valid_l = False
+        if touch_r is not None:
+            self._touch_px_r = touch_r
+            self._touch_valid_r = True
+        else:
+            edge_r = _edge_px(cp_r, fw_r)
+            if edge_r is not None:
+                self._touch_px_r = edge_r
+            self._touch_valid_r = False
         self._ray_prev_uv_l = self._cursor_uv_l
         self._ray_prev_uv_r = self._cursor_uv_r
 
-        # Pick active controller -right always wins when both lasers hit screen.
-        # Avoids ping-ponging: once a controller takes over, the other can't steal.
-        prev_ctrl = self._cursor_ctrl
-        if hit_r:
-            ctrl, u, v = 'right', hit_r[0], hit_r[1]
+        now_pc = time.perf_counter()
+        press_threshold = 0.55
+        if hit_l and ltrig_now >= press_threshold and self._cursor_trig_prev_l < press_threshold:
+            self._cursor_click_ts_l = now_pc
+        if hit_r and rtrig_now >= press_threshold and self._cursor_trig_prev_r < press_threshold:
+            self._cursor_click_ts_r = now_pc
+        self._cursor_trig_prev_l = ltrig_now
+        self._cursor_trig_prev_r = rtrig_now
+
+        if hit_l and hit_r:
+            if self._cursor_click_ts_r > self._cursor_click_ts_l:
+                ctrl = 'right'
+            elif self._cursor_click_ts_l > self._cursor_click_ts_r:
+                ctrl = 'left'
+            else:
+                ctrl = self._cursor_ctrl if self._cursor_ctrl in ('left', 'right') else 'right'
+        elif hit_r:
+            ctrl = 'right'
         elif hit_l:
-            ctrl, u, v = 'left', hit_l[0], hit_l[1]
+            ctrl = 'left'
         else:
             self._cursor_ctrl = None
             self._cursor_smooth_uv = None   # reset so next entry doesn't drag
             return
 
+        if ctrl != self._cursor_ctrl:
+            self._cursor_smooth_uv = None
         self._cursor_ctrl = ctrl
-        # Reset the smoother on controller swap so we don't slide diagonally to the
-        # new pointer location.
-        if prev_ctrl != ctrl or self._cursor_smooth_uv is None:
-            self._cursor_smooth_uv = (u, v)
-        else:
-            ALPHA = 0.35   # EMA cursor smoothing -low lag, filters jitter
-            su, sv = self._cursor_smooth_uv
-            su += ALPHA * (u - su)
-            sv += ALPHA * (v - sv)
-            self._cursor_smooth_uv = (su, sv)
+        u, v = (hit_r[0], hit_r[1]) if ctrl == 'right' else (hit_l[0], hit_l[1])
+        self._cursor_smooth_uv = (u, v)
 
         su, sv = self._cursor_smooth_uv
-        mon_left, mon_top, mon_w, mon_h = self._get_target_monitor_rect()
+        if mon_w <= 0 or mon_h <= 0:
+            mon_left, mon_top, mon_w, mon_h = self._get_target_monitor_rect()
         px = mon_left + int(su * mon_w)
         py = mon_top + int((1.0 - sv) * mon_h)
         # Always track the VR cursor position so the physical-mouse detector
         # doesn't falsely fire when grip ends and the cursor resumes moving.
         self._vr_cursor_screen_pos = (px, py)
-        # Suppress cursor movement while gripping -user is manipulating the screen
-        if not self._grabbed:
+        # Suppress cursor movement while gripping or while a two-contact touch gesture is active.
+        both_touch_down = (self._touch_state_l == 'down' and self._touch_state_r == 'down')
+        if not self._grabbed and not both_touch_down:
             _set_cursor_pos(px, py)
 
     def _send_arrow(self, value, neg_dir, pos_dir):
@@ -8191,37 +8296,173 @@ class OpenXRViewerCore:
                 setattr(self, neg_attr, False)
 
     def _handle_triggers(self):
-        """Map controller triggers to mouse clicks and drag.
+        """Map controller triggers to Windows multi-touch contacts first, with mouse fallback."""
+        PRESS_THRESH = 0.55
+        RELEASE_THRESH = 0.30
+        HOLD_TIME = 0.22
 
-        Three-state machine per trigger: idle -> pressed -> dragging.
-        Left trigger  ->RIGHT mouse button (click / hold)
-        Right trigger ->LEFT  mouse button (click / hold)
-        """
-        # Suppress mouse clicks while gripping -user is manipulating the screen
         if self._grabbed:
+            if _TOUCH_AVAILABLE and _touch_injector is not None:
+                if self._touch_state_l == 'down':
+                    _touch_injector.set(
+                        _TOUCH_CONTACT_ID_LEFT,
+                        self._touch_px_l[0],
+                        self._touch_px_l[1],
+                        want_down=False,
+                    )
+                    self._touch_state_l = 'idle'
+                    self._touch_smooth_l = None
+                if self._touch_state_r == 'down':
+                    _touch_injector.set(
+                        _TOUCH_CONTACT_ID_RIGHT,
+                        self._touch_px_r[0],
+                        self._touch_px_r[1],
+                        want_down=False,
+                    )
+                    self._touch_state_r = 'idle'
+                    self._touch_smooth_r = None
+                _touch_injector.flush()
+            self._touch_trig_prev_l = self._read_float_action(
+                self._act_left_trigger, "/user/hand/left"
+            )
+            self._touch_trig_prev_r = self._read_float_action(
+                self._act_right_trigger, "/user/hand/right"
+            )
             return
-        PRESS_THRESH   = 0.55   # rising edge
-        RELEASE_THRESH = 0.30   # falling edge (hysteresis)
-        HOLD_TIME      = 0.22   # seconds trigger must stay held to enter drag mode
 
         now = self._frame_now
-        lt  = self._read_float_action(self._act_left_trigger,  "/user/hand/left")
-        rt  = self._read_float_action(self._act_right_trigger, "/user/hand/right")
+        lt = self._read_float_action(self._act_left_trigger, "/user/hand/left")
+        rt = self._read_float_action(self._act_right_trigger, "/user/hand/right")
 
-        left_on_kb  = self._kb_hover_l is not None
+        ov_claim_l = False
+        ov_claim_r = False
+        if self._fps_overlay_visible:
+            for hit_overlay, trig_now, is_left in (
+                (self._overlay_hit_l, lt, True),
+                (self._overlay_hit_r, rt, False),
+            ):
+                trig_prev_held = self._ov_ltrig_held if is_left else self._ov_rtrig_held
+                if hit_overlay and trig_now >= PRESS_THRESH and not trig_prev_held:
+                    self._help_panel_visible = not self._help_panel_visible
+                if is_left:
+                    self._ov_ltrig_held = hit_overlay and trig_now >= PRESS_THRESH
+                    if hit_overlay:
+                        ov_claim_l = True
+                else:
+                    self._ov_rtrig_held = hit_overlay and trig_now >= PRESS_THRESH
+                    if hit_overlay:
+                        ov_claim_r = True
+
+        left_on_kb = self._kb_hover_l is not None
         right_on_kb = self._kb_hover_r is not None
+        left_kb_typing = self._kb_held_key_l is not None
+        right_kb_typing = self._kb_held_key_r is not None
 
-        left_laser_usable  = (not left_on_kb and
-                            (self._cursor_uv_l is not None or
-                            self._cursor_ctrl == 'left'))
-        right_laser_usable = (not right_on_kb and
-                            (self._cursor_uv_r is not None or
-                            self._cursor_ctrl == 'right'))
+        if _TOUCH_AVAILABLE and _touch_injector is not None:
+            touch_updates = []
+            for (trig, valid, px_attr, smooth_attr, state_attr, trig_prev_attr,
+                 contact_id, ov_claim, on_kb, kb_typing) in (
+                (lt, self._touch_valid_l, '_touch_px_l', '_touch_smooth_l',
+                 '_touch_state_l', '_touch_trig_prev_l',
+                 _TOUCH_CONTACT_ID_LEFT, ov_claim_l, left_on_kb, left_kb_typing),
+                (rt, self._touch_valid_r, '_touch_px_r', '_touch_smooth_r',
+                 '_touch_state_r', '_touch_trig_prev_r',
+                 _TOUCH_CONTACT_ID_RIGHT, ov_claim_r, right_on_kb, right_kb_typing),
+            ):
+                state = getattr(self, state_attr)
+                raw_px = getattr(self, px_attr)
+                trig_prev = getattr(self, trig_prev_attr)
+                kb_claim = on_kb or kb_typing
+
+                if state == 'down':
+                    want_down = trig > RELEASE_THRESH and not ov_claim and not kb_claim
+                else:
+                    want_down = (
+                        trig >= PRESS_THRESH
+                        and trig_prev < PRESS_THRESH
+                        and valid
+                        and not ov_claim
+                        and not kb_claim
+                    )
+
+                touch_updates.append({
+                    'want_down': want_down,
+                    'state': state,
+                    'raw_px': raw_px,
+                    'smooth_attr': smooth_attr,
+                    'state_attr': state_attr,
+                    'trig_prev_attr': trig_prev_attr,
+                    'contact_id': contact_id,
+                    'trig': trig,
+                })
+
+            if (len(touch_updates) == 2
+                    and touch_updates[0]['want_down']
+                    and touch_updates[1]['want_down']
+                    and _TOUCH_PINCH_SPREAD_GAIN > 1.0):
+                try:
+                    mon_left, mon_top, mon_w, mon_h = self._get_target_monitor_rect()
+                except Exception:
+                    mon_left = mon_top = mon_w = mon_h = 0
+
+                def _clamp_px(x, y):
+                    if mon_w > 0 and mon_h > 0:
+                        x = max(mon_left, min(mon_left + mon_w - 1, x))
+                        y = max(mon_top, min(mon_top + mon_h - 1, y))
+                    return int(round(x)), int(round(y))
+
+                p0 = touch_updates[0]['raw_px']
+                p1 = touch_updates[1]['raw_px']
+                cx = (float(p0[0]) + float(p1[0])) * 0.5
+                cy = (float(p0[1]) + float(p1[1])) * 0.5
+                gain = float(_TOUCH_PINCH_SPREAD_GAIN)
+                touch_updates[0]['raw_px'] = _clamp_px(
+                    cx + (float(p0[0]) - cx) * gain,
+                    cy + (float(p0[1]) - cy) * gain,
+                )
+                touch_updates[1]['raw_px'] = _clamp_px(
+                    cx + (float(p1[0]) - cx) * gain,
+                    cy + (float(p1[1]) - cy) * gain,
+                )
+
+            for upd in touch_updates:
+                want_down = upd['want_down']
+                state = upd['state']
+                raw_px = upd['raw_px']
+                smooth_attr = upd['smooth_attr']
+                state_attr = upd['state_attr']
+                trig_prev_attr = upd['trig_prev_attr']
+                contact_id = upd['contact_id']
+                trig = upd['trig']
+
+                if want_down:
+                    _touch_injector.set(contact_id, raw_px[0], raw_px[1], want_down=True)
+                    setattr(self, smooth_attr, raw_px)
+                    setattr(self, state_attr, 'down')
+                else:
+                    if state == 'down':
+                        _touch_injector.set(contact_id, raw_px[0], raw_px[1], want_down=False)
+                    setattr(self, smooth_attr, None)
+                    setattr(self, state_attr, 'idle')
+
+                setattr(self, trig_prev_attr, trig)
+
+            _touch_injector.flush()
+            if _touch_injector.available:
+                return
+
+        left_laser_usable = (
+            not left_on_kb and not ov_claim_l
+            and (self._cursor_uv_l is not None or self._cursor_ctrl == 'left')
+        )
+        right_laser_usable = (
+            not right_on_kb and not ov_claim_r
+            and (self._cursor_uv_r is not None or self._cursor_ctrl == 'right')
+        )
 
         any_l_drag = False
         any_r_drag = False
 
-        # -- Right trigger ->LEFT mouse button --
         if right_laser_usable:
             if self._rtrig_state == 'idle':
                 if rt >= PRESS_THRESH:
@@ -8246,7 +8487,6 @@ class OpenXRViewerCore:
         else:
             self._rtrig_state = 'idle'
 
-        # -- Left trigger ->RIGHT mouse button --
         if left_laser_usable:
             if self._ltrig_state == 'idle':
                 if lt >= PRESS_THRESH:
@@ -8271,7 +8511,6 @@ class OpenXRViewerCore:
         else:
             self._ltrig_state = 'idle'
 
-        # Release mouse buttons when triggers leave drag state
         if not any_l_drag and self._right_btn_down:
             _send_mouse_flags(_MOUSEEVENTF_RIGHTUP)
             self._right_btn_down = False

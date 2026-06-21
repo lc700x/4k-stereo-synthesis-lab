@@ -2584,6 +2584,13 @@ class OpenXRViewerCore:
         self._view_pose_index = 0
         self._lighting_presets = []
         self._lighting_preset_index = 0
+        self._active_environment = None
+        self._settings_sync_dirty = False
+        self._settings_sync_save_t = 0.0
+        self._last_persisted_depth_ratio = float(depth_ratio)
+        self._glow_intensity = float(kwargs.get('glow_intensity', 0.65))
+        self._glow_width_m = float(kwargs.get('glow_width', 0.16))
+        self._glow_intensity_multiplier = float(kwargs.get('glow_intensity_multiplier', 0.0))
         self._screen_light_intensity = float(kwargs.get('screen_light_intensity', 3.5))
         self._env_model_path = None
         self._env_model_prims = []        # list of {'vao', 'vbo', 'ibo', 'tex_key', 'tri_count'}
@@ -9758,6 +9765,12 @@ class OpenXRViewerCore:
             if not (self._keyboard_visible or self._grabbed or grip_l):
                 self._accum_scroll(rx, ry, dt)
 
+        if not screen_locked and (self._grabbed or self._resizing or grip_l or grip_r):
+            if hasattr(self, '_persist_screen_state'):
+                self._persist_screen_state()
+        if hasattr(self, '_flush_runtime_settings_if_idle'):
+            self._flush_runtime_settings_if_idle()
+
         # Rebuild keyboard geometry if width changed
         if (self._keyboard_visible and self._keyboard_tex is not None
                 and abs(self._keyboard_width - self._kb_last_build_width) > 0.001):
@@ -10496,6 +10509,8 @@ class OpenXRViewerCore:
     # Cleanup
     def cleanup(self):
         """Release all OpenXR and OpenGL resources."""
+        if hasattr(self, '_persist_runtime_settings'):
+            self._persist_runtime_settings()
         self._set_render_active(False)
         self._set_idle_active(False)
         if sys.platform == "win32" and self._saved_dclick_time is not None:

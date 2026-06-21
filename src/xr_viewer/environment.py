@@ -105,6 +105,7 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
             profile = {}
 
         self._environment_model = selected
+        self._active_environment = None if selected.lower() == 'default' else selected
         self._env_profile = profile
         self._env_model_path = glb_path
 
@@ -258,9 +259,171 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         fill_lights = preset.get('env_fill_lights', preset.get('fallback_lights'))
         if isinstance(fill_lights, list):
             self._env_fill_lights = fill_lights
+        for key, attr in (
+            ('glow_intensity', '_glow_intensity'),
+            ('glow_width', '_glow_width_m'),
+            ('glow_intensity_multiplier', '_glow_intensity_multiplier'),
+        ):
+            if key in preset:
+                try:
+                    setattr(self, attr, float(preset[key]))
+                except (TypeError, ValueError):
+                    pass
         if log:
             name = preset.get('name', f'Preset {getattr(self, "_lighting_preset_index", 0)}')
             print(f"[OpenXRViewer] Lighting preset: {name}")
+        return True
+
+
+    def _settings_path(self):
+        return os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'settings.yaml')
+
+
+    def _persist_setting(self, key, value):
+        try:
+            import yaml
+            from utils import read_yaml as _read_yaml
+            path = self._settings_path()
+            data = _read_yaml(path) if os.path.isfile(path) else {}
+            if not isinstance(data, dict):
+                data = {}
+            data[key] = value
+            with open(path, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+        except Exception as exc:
+            print(f"[OpenXRViewer] _persist_setting({key!r}) failed: {exc}")
+
+
+    def _persist_active_environment(self):
+        current = (getattr(self, '_environment_model', '') or '').strip()
+        if current.lower() in ('default', 'default glow', 'default with glow'):
+            val = current
+        elif getattr(self, '_active_environment', None):
+            val = self._active_environment
+        else:
+            val = 'Default'
+        self._persist_setting('Environment Model', val)
+
+
+    def _settings_snapshot(self):
+        current = (getattr(self, '_environment_model', '') or '').strip()
+        if current.lower() in ('default', 'default glow', 'default with glow'):
+            env_val = current
+        elif getattr(self, '_active_environment', None):
+            env_val = self._active_environment
+        elif current:
+            env_val = current
+        else:
+            env_val = 'Default'
+        ctrl_val = getattr(self, '_current_brand', None) or getattr(self, '_controller_model', 'pico')
+        return {
+            'Controller Model': ctrl_val,
+            'Environment Model': env_val,
+            'Depth Strength': round(float(getattr(self, 'depth_ratio', 1.0)), 4),
+        }
+
+
+    def _persist_runtime_settings(self):
+        """Save GUI-facing runtime settings without touching render-only state."""
+        try:
+            import yaml
+            from utils import read_yaml as _read_yaml
+            path = self._settings_path()
+            data = _read_yaml(path) if os.path.isfile(path) else {}
+            if not isinstance(data, dict):
+                data = {}
+            data.update(self._settings_snapshot())
+            with open(path, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+            self._last_persisted_depth_ratio = float(getattr(self, 'depth_ratio', 1.0))
+            self._settings_sync_dirty = False
+        except Exception as exc:
+            print(f"[OpenXRViewer] _persist_runtime_settings failed: {exc}")
+
+
+    def _mark_runtime_settings_dirty(self):
+        self._settings_sync_dirty = True
+        self._settings_sync_save_t = time.perf_counter()
+
+
+    def _flush_runtime_settings_if_idle(self, delay=0.5):
+        if not getattr(self, '_settings_sync_dirty', False):
+            return
+        if time.perf_counter() - getattr(self, '_settings_sync_save_t', 0.0) >= delay:
+            self._persist_runtime_settings()
+
+
+    def _builtin_profile_path(self):
+        return os.path.join(self._environment_root, '.builtin_default.json')
+
+
+    def _persist_screen_state(self):
+        """Save Default-environment screen layout to .builtin_default.json."""
+        if self._environment_screen_locked():
+            return
+        if getattr(self, '_active_environment', None) is not None:
+            return
+        state = {
+            'width': round(float(self.screen_width), 4),
+            'distance': round(float(self.screen_distance), 4),
+            'pan_x': round(float(self.screen_pan_x), 4),
+            'pan_y': round(float(self.screen_pan_y), 4),
+            'yaw': round(float(self.screen_yaw), 6),
+            'pitch': round(float(self.screen_pitch), 6),
+            'curved': bool(self._screen_curved),
+            'preset_index': int(self._preset_index),
+        }
+        builtin_path = self._builtin_profile_path()
+        try:
+            profile = {}
+            if os.path.isfile(builtin_path):
+                with open(builtin_path, 'r', encoding='utf-8-sig') as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    profile = loaded
+            profile['screen_state'] = state
+            with open(builtin_path, 'w', encoding='utf-8') as f:
+                json.dump(profile, f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            print(f"[OpenXRViewer] _persist_screen_state failed: {exc}")
+
+
+    def _restore_screen_state(self):
+        """Load Default-environment screen layout from .builtin_default.json."""
+        if self._environment_screen_locked():
+            return False
+        if getattr(self, '_active_environment', None) is not None:
+            return False
+        state = None
+        builtin_path = self._builtin_profile_path()
+        try:
+            if os.path.isfile(builtin_path):
+                with open(builtin_path, 'r', encoding='utf-8-sig') as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    state = loaded.get('screen_state')
+        except Exception:
+            pass
+        if not isinstance(state, dict):
+            try:
+                from utils import read_yaml as _read_yaml
+                cfg = _read_yaml(self._settings_path())
+                state = cfg.get('Screen State')
+            except Exception:
+                pass
+        if not isinstance(state, dict):
+            return False
+        self.screen_width = float(state.get('width', self.screen_width))
+        self._screen_ref_size = self.screen_width
+        self.screen_height = None
+        self.screen_distance = float(state.get('distance', self.screen_distance))
+        self.screen_pan_x = float(state.get('pan_x', self.screen_pan_x))
+        self.screen_pan_y = float(state.get('pan_y', self.screen_pan_y))
+        self.screen_yaw = float(state.get('yaw', self.screen_yaw))
+        self.screen_pitch = float(state.get('pitch', self.screen_pitch))
+        self._screen_curved = bool(state.get('curved', False))
+        self._preset_index = int(state.get('preset_index', self._preset_index))
+        print(f"[OpenXRViewer] Restored screen state: {state.get('width')}m, dist={state.get('distance')}, curved={state.get('curved')}")
         return True
 
 
@@ -277,14 +440,25 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
 
 
     def _cycle_light_from_x(self):
-        """Toggle room lighting presets when available; otherwise report unavailable."""
+        """Toggle lighting preset, or Default glow when no preset exists."""
         if self._cycle_lighting_preset():
+            if getattr(self, '_active_environment', None) is None:
+                self._save_glow_to_builtin_profile()
+            else:
+                self._persist_runtime_settings()
             return True
         if self._environment_screen_locked():
             print("[OpenXRViewer] Light toggle unavailable for this environment")
             return False
-        print("[OpenXRViewer] Glow toggle unavailable in this viewer")
-        return False
+        current = float(getattr(self, '_glow_intensity_multiplier', 0.0))
+        if current > 0.0:
+            self._glow_intensity_multiplier = 0.0
+            print("[OpenXRViewer] Glow: off")
+        else:
+            self._glow_intensity_multiplier = 1.5
+            print("[OpenXRViewer] Glow: on")
+        self._save_glow_to_builtin_profile()
+        return True
 
 
     def _cycle_view_pose(self):
@@ -296,6 +470,18 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         self._view_pose_profile = poses[self._view_pose_index]
         if isinstance(getattr(self, '_env_profile', None), dict):
             self._env_profile['view_pose_index'] = self._view_pose_index
+        env_name = getattr(self, '_active_environment', None) or getattr(self, '_environment_model', None)
+        if env_name and str(env_name).strip().lower() not in ('default', 'default glow', 'default with glow', 'none'):
+            profile_path = os.path.join(self._environment_root, str(env_name), 'profile.json')
+            try:
+                with open(profile_path, 'r', encoding='utf-8-sig') as f:
+                    profile = json.load(f)
+                if isinstance(profile.get('view_poses'), list):
+                    profile['view_pose_index'] = self._view_pose_index
+                    with open(profile_path, 'w', encoding='utf-8') as f:
+                        json.dump(profile, f, indent=2, ensure_ascii=False)
+            except Exception as exc:
+                print(f"[OpenXRViewer] Failed to save view_pose_index: {exc}")
         self._xr_profile_space_applied = False
         views = getattr(self, '_last_located_views', None)
         if views:
@@ -310,6 +496,25 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
     def _env_uses_view_pose_cycle(self):
         """Return whether the active profile has multiple usable view poses."""
         return len(getattr(self, '_view_pose_profiles', []) or []) >= 2
+
+
+    def _save_glow_to_builtin_profile(self):
+        """Write glow settings into .builtin_default.json for the Default env."""
+        builtin_path = self._builtin_profile_path()
+        try:
+            profile = {}
+            if os.path.isfile(builtin_path):
+                with open(builtin_path, 'r', encoding='utf-8-sig') as f:
+                    loaded = json.load(f)
+                if isinstance(loaded, dict):
+                    profile = loaded
+            profile['glow_intensity'] = float(getattr(self, '_glow_intensity', 0.65))
+            profile['glow_width'] = float(getattr(self, '_glow_width_m', 0.16))
+            profile['glow_intensity_multiplier'] = float(getattr(self, '_glow_intensity_multiplier', 0.0))
+            with open(builtin_path, 'w', encoding='utf-8') as f:
+                json.dump(profile, f, indent=2, ensure_ascii=False)
+        except Exception as exc:
+            print(f"[OpenXRViewer] _save_glow_to_builtin_profile failed: {exc}")
 
 
     def _passthrough_green_index(self):
@@ -446,6 +651,35 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         pos = [round(float(v), 4) for v in desired_head[:3, 3]]
         print(f"[OpenXRViewer] Applied profile view_pose to XrSpace: position={pos}")
         return True
+
+
+    def _reset_xr_space_to_identity(self):
+        """Reset XR reference space offset to identity."""
+        if self._xr_session is None or self._xr_ref_space_type is None:
+            return
+        current = getattr(self, '_xr_space_pose_in_ref', np.eye(4, dtype=np.float32))
+        if np.allclose(current, np.eye(4)):
+            return
+        try:
+            new_space = xr.create_reference_space(
+                self._xr_session,
+                xr.ReferenceSpaceCreateInfo(
+                    reference_space_type=self._xr_ref_space_type,
+                    pose_in_reference_space=xr.Posef(),
+                ),
+            )
+        except Exception as exc:
+            print(f"[OpenXRViewer] Failed to reset XR space: {exc}")
+            return
+        old_space = self._xr_space
+        self._xr_space = new_space
+        self._xr_space_pose_in_ref = np.eye(4, dtype=np.float32)
+        if old_space is not None:
+            try:
+                xr.destroy_space(old_space)
+            except Exception:
+                pass
+        print("[OpenXRViewer] XR space reset to identity")
 
 
     def _recenter_profile_view_pose(self):
@@ -901,15 +1135,26 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
             return False
 
         print(f"[OpenXRViewer] Switching environment to: {model_name}")
+        if getattr(self, '_seat_adjust_active', False):
+            self._exit_seat_adjust_mode(save=False)
+        if not self._environment_screen_locked():
+            self._persist_screen_state()
         self._release_env_model_resources()
         self._environment_model = model_name
+        self._kb_cached_position = None
         self._configure_environment_profile()
         self._configure_profile_view_layout()
         self._init_env_model()
         self._apply_profile_screen_layout(show_border=True)
         self._xr_profile_space_applied = False
-        if not self._recenter_profile_view_pose():
-            self._reset_screen_to_default(show_border=True)
+        views = getattr(self, '_last_located_views', None)
+        if views:
+            self._apply_profile_view_pose_to_xr_space(views)
+        if not self._environment_screen_locked():
+            self._reset_xr_space_to_identity()
+            if not self._restore_screen_state():
+                self._reset_screen_to_default(show_border=True)
+        self._persist_runtime_settings()
         return True
 
 

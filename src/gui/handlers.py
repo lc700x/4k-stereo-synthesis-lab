@@ -592,7 +592,7 @@ class GUIHandlerMixin:
         _set_tooltip(self.window_dd, t["tooltip_window"])
         for ctrl, key in [
             (self.depth_model_dd, "tooltip_depth_model"),
-            (self.model_size_dd, "tooltip_depth_model"),
+            (self.model_size_dd, "tooltip_model_size"),
             (self.depth_res_dd, "tooltip_depth_res"),
             (self.convergence_dd, "tooltip_convergence"),
             (self.depth_strength_dd, "tooltip_depth_strength"),

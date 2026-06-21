@@ -227,6 +227,19 @@ def test_shift_ratio_and_edge_threshold_options_are_dense():
     assert 'self.temporal_strength_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)]' in builders_text
 
 
+def test_model_backbone_size_dropdown_has_own_tooltip():
+    config_text = _config_source().read_text(encoding="utf-8")
+    handlers_text = _file_text("handlers.py")
+    localization_text = _localization_source().read_text(encoding="utf-8")
+
+    assert '_MODEL_SIZES = ["Small", "SmallPlus", "Base", "Large", "Giant"]' in config_text
+    assert 'family_to_sizes[family].sort(key=lambda s: _SIZE_ORDER.get(s, 99))' in config_text
+    assert '(self.model_size_dd, "tooltip_model_size")' in handlers_text
+    assert '(self.model_size_dd, "tooltip_depth_model")' not in handlers_text
+    assert '"tooltip_model_size": "Model backbone size"' in localization_text
+    assert '"tooltip_model_size": "模型骨架大小"' in localization_text
+
+
 def test_vsync_uses_teammate_config_key_and_default():
     config_text = _config_source().read_text(encoding="utf-8")
     builders_text = _file_text("builders.py")

@@ -1810,6 +1810,12 @@ uniform float u_fill_light_range0;
 uniform vec3 u_fill_light_pos1;
 uniform vec3 u_fill_light_color1;
 uniform float u_fill_light_range1;
+uniform int u_screen_light_enabled;
+uniform vec3 u_screen_light_pos;
+uniform vec3 u_screen_light_normal;
+uniform vec2 u_screen_light_half_size;
+uniform vec3 u_screen_light_color;
+uniform float u_screen_light_intensity;
 uniform float u_env_exposure;
 uniform float u_env_gamma;
 uniform float u_emissive_strength;
@@ -2003,6 +2009,34 @@ void main() {
                        toFill1 / fillDist1,
                        u_fill_light_color1,
                        softRangeAttenuation(fillDist1, u_fill_light_range1));
+    }
+
+    // Cinema bias light from the virtual screen.
+    if (u_screen_light_enabled == 1) {
+        vec3 S_to_P = v_position - u_screen_light_pos;
+        float d = length(S_to_P);
+        vec3 L_s = S_to_P / max(d, 0.001);
+        float front = smoothstep(0.0, 0.3, dot(u_screen_light_normal, L_s));
+        if (front > 0.0) {
+            float NdotL_s = max(dot(N, -L_s), 0.0);
+            if (NdotL_s > 0.0) {
+                float half_diag = length(u_screen_light_half_size);
+                float r0 = max(half_diag * 2.0, 0.50);
+                float attn = (r0 * r0) / (d * d + r0 * r0);
+                float area = 4.0 * u_screen_light_half_size.x * u_screen_light_half_size.y;
+                float r_near = max(half_diag * 0.5, 0.10);
+                float area_term = area / (PI * max(d * d, r_near * r_near));
+                float halo_free = smoothstep(
+                    max(half_diag * 0.35, 0.75),
+                    max(half_diag * 0.95, 1.75),
+                    d
+                );
+                vec3 E_s = u_screen_light_color
+                           * u_screen_light_intensity
+                           * front * NdotL_s * attn * area_term * halo_free;
+                Lo += diffuse * E_s * PI;
+            }
+        }
     }
 
     // Ambient / baked lightmap

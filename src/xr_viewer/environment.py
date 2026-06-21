@@ -176,6 +176,16 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
         if isinstance(fill_lights, list):
             self._env_fill_lights = fill_lights
 
+        presets = profile.get('lighting_presets')
+        self._lighting_presets = [p for p in presets if isinstance(p, dict)] if isinstance(presets, list) else []
+        try:
+            self._lighting_preset_index = int(profile.get('lighting_preset_index', 0))
+        except (TypeError, ValueError):
+            self._lighting_preset_index = 0
+        if self._lighting_presets:
+            self._lighting_preset_index %= len(self._lighting_presets)
+            self._apply_lighting_preset(self._lighting_presets[self._lighting_preset_index], log=False)
+
         baked_lightmap = profile.get('baked_lightmap', profile.get('baked', None))
         baked_label = f" baked_lightmap={bool(baked_lightmap)}" if baked_lightmap is not None else ""
         print(
@@ -212,6 +222,118 @@ class OpenXRViewer(OpenXRViewerCore, OverlayMixin):
     def _screen_profile_value(self, key, default=None):
         screen = getattr(self, '_screen_profile', {}) or {}
         return screen.get(key, default)
+
+
+    def _apply_lighting_preset(self, preset, log=True):
+        """Apply one profile lighting preset at runtime."""
+        if not isinstance(preset, dict):
+            return False
+        for key, attr in (
+            ('env_exposure', '_env_exposure'),
+            ('env_gamma', '_env_gamma'),
+            ('env_emissive_strength', '_env_emissive_strength'),
+            ('env_khr_light_scale', '_env_khr_light_scale'),
+            ('khr_light_scale', '_env_khr_light_scale'),
+            ('screen_light_intensity', '_screen_light_intensity'),
+        ):
+            if key in preset:
+                try:
+                    setattr(self, attr, float(preset[key]))
+                except (TypeError, ValueError):
+                    pass
+        for key, attr in (
+            ('env_ambient_color', '_env_ambient_color'),
+            ('ambient_color', '_env_ambient_color'),
+            ('env_head_light_color', '_env_head_light_color'),
+            ('head_light_color', '_env_head_light_color'),
+            ('env_directional_color', '_env_fallback_dir_color'),
+            ('directional_color', '_env_fallback_dir_color'),
+        ):
+            value = preset.get(key)
+            if isinstance(value, (list, tuple)) and len(value) >= 3:
+                try:
+                    setattr(self, attr, (float(value[0]), float(value[1]), float(value[2])))
+                except (TypeError, ValueError):
+                    pass
+        fill_lights = preset.get('env_fill_lights', preset.get('fallback_lights'))
+        if isinstance(fill_lights, list):
+            self._env_fill_lights = fill_lights
+        if log:
+            name = preset.get('name', f'Preset {getattr(self, "_lighting_preset_index", 0)}')
+            print(f"[OpenXRViewer] Lighting preset: {name}")
+        return True
+
+
+    def _cycle_lighting_preset(self):
+        """Cycle through lighting_presets in the current profile."""
+        presets = getattr(self, '_lighting_presets', []) or []
+        if not presets:
+            return False
+        self._lighting_preset_index = (int(getattr(self, '_lighting_preset_index', 0)) + 1) % len(presets)
+        if isinstance(getattr(self, '_env_profile', None), dict):
+            self._env_profile['lighting_preset_index'] = self._lighting_preset_index
+        self._apply_lighting_preset(presets[self._lighting_preset_index])
+        return True
+
+
+    def _cycle_light_from_x(self):
+        """Toggle room lighting presets when available; otherwise report unavailable."""
+        if self._cycle_lighting_preset():
+            return True
+        if self._environment_screen_locked():
+            print("[OpenXRViewer] Light toggle unavailable for this environment")
+            return False
+        print("[OpenXRViewer] Glow toggle unavailable in this viewer")
+        return False
+
+
+    def _cycle_view_pose(self):
+        """Cycle through multi-seat view_poses in the active environment profile."""
+        poses = getattr(self, '_view_pose_profiles', []) or []
+        if len(poses) < 2:
+            return False
+        self._view_pose_index = (int(getattr(self, '_view_pose_index', 0)) + 1) % len(poses)
+        self._view_pose_profile = poses[self._view_pose_index]
+        if isinstance(getattr(self, '_env_profile', None), dict):
+            self._env_profile['view_pose_index'] = self._view_pose_index
+        self._xr_profile_space_applied = False
+        views = getattr(self, '_last_located_views', None)
+        if views:
+            self._apply_profile_view_pose_to_xr_space(views)
+        self._seat_adjust_osd_dirty = True
+        self._seat_adjust_osd_show_t = time.perf_counter()
+        name = self._view_pose_profile.get('name', f'View {self._view_pose_index + 1}')
+        print(f"[OpenXRViewer] View pose: {name} ({self._view_pose_index + 1}/{len(poses)})")
+        return True
+
+
+    def _env_uses_view_pose_cycle(self):
+        """Return whether the active profile has multiple usable view poses."""
+        return len(getattr(self, '_view_pose_profiles', []) or []) >= 2
+
+
+    def _passthrough_green_index(self):
+        for idx, color in enumerate(_BG_COLORS):
+            try:
+                if color[1] >= 0.5 and color[0] <= 0.05 and color[2] <= 0.25:
+                    return idx
+            except (TypeError, IndexError):
+                pass
+        return 1 if len(_BG_COLORS) > 1 else 0
+
+
+    def _toggle_passthrough_backdrop(self):
+        """Toggle green passthrough backdrop without unloading the room."""
+        green_idx = self._passthrough_green_index()
+        if self._bg_color_idx == green_idx and self._prev_bg_color_idx is not None:
+            self._bg_color_idx = self._prev_bg_color_idx
+            self._prev_bg_color_idx = None
+            print("[OpenXRViewer] Passthrough backdrop: off")
+        else:
+            if self._prev_bg_color_idx is None:
+                self._prev_bg_color_idx = self._bg_color_idx
+            self._bg_color_idx = green_idx
+            print("[OpenXRViewer] Passthrough backdrop: on")
 
 
     def _environment_screen_locked(self):

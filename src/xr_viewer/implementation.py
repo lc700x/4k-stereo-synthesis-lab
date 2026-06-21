@@ -2582,6 +2582,8 @@ class OpenXRViewerCore:
         self._view_pose_profile = {}
         self._view_pose_profiles = []
         self._view_pose_index = 0
+        self._lighting_presets = []
+        self._lighting_preset_index = 0
         self._screen_light_intensity = float(kwargs.get('screen_light_intensity', 3.5))
         self._env_model_path = None
         self._env_model_prims = []        # list of {'vao', 'vbo', 'ibo', 'tex_key', 'tri_count'}
@@ -3051,6 +3053,7 @@ class OpenXRViewerCore:
         self._curved_border_verts_params = None
         # Background color cycling (left thumbstick click)
         self._bg_color_idx    = 0       # index into _BG_COLORS
+        self._prev_bg_color_idx = None  # previous backdrop before passthrough green
 
         # Cached XrPath handles -populated by _init_controller_actions to avoid
         # calling xr.string_to_path on every frame (it's a round-trip into the runtime).
@@ -9833,30 +9836,48 @@ class OpenXRViewerCore:
             self._y_long_fired = False
         if y_now and not self._y_long_fired:
             if time.perf_counter() - self._y_press_t >= Y_LONG:
-                if not self._switch_environment_model():
+                if screen_locked and self._env_uses_view_pose_cycle():
+                    if not self._cycle_view_pose():
+                        self._cycle_lighting_preset()
+                elif not self._switch_environment_model():
                     self._cycle_screen_preset()
                 self._y_long_fired = True
         if not y_now and self._y_last and not self._y_long_fired:
-            if not self._apply_preset(3):
+            if screen_locked:
+                self._reset_seating_vertical()
+            elif not self._apply_preset(3):
                 self._reset_screen_to_default(show_border=True)
         self._y_last = y_now
 
-        # X (left): short press -> toggle virtual keyboard; long press cycles background.
-        X_LONG = 0.6
+        # X (left): short press -> toggle virtual keyboard; long hold -> lighting or passthrough.
+        X_LIGHT_HOLD = 1.0
+        X_PASSTHROUGH_HOLD = 4.0
         x_now = self._read_bool_action(self._act_x_btn, "/user/hand/left")
         if x_now and not self._x_last:
             self._x_press_t = time.perf_counter()
             self._x_long_fired = False
+            self._x_light_fired = False
         if x_now and not getattr(self, '_x_long_fired', False):
-            if time.perf_counter() - getattr(self, '_x_press_t', 0.0) >= X_LONG:
-                self._bg_color_idx = (self._bg_color_idx + 1) % len(_BG_COLORS)
+            held = time.perf_counter() - getattr(self, '_x_press_t', 0.0)
+            if held >= X_PASSTHROUGH_HOLD:
+                self._toggle_passthrough_backdrop()
                 self._x_long_fired = True
-        if not x_now and self._x_last and not getattr(self, '_x_long_fired', False):
-            self._keyboard_visible = not self._keyboard_visible
-            if self._keyboard_visible:
-                if self._keyboard_tex is None:
-                    self._init_keyboard()
-                self._anchor_keyboard_below_screen()
+                self._x_light_fired = True
+        if not x_now and self._x_last:
+            held = time.perf_counter() - getattr(self, '_x_press_t', 0.0)
+            if not getattr(self, '_x_long_fired', False):
+                if held >= X_LIGHT_HOLD:
+                    if not self._cycle_light_from_x():
+                        self._bg_color_idx = (self._bg_color_idx + 1) % len(_BG_COLORS)
+                    self._x_light_fired = True
+                else:
+                    self._keyboard_visible = not self._keyboard_visible
+                    if self._keyboard_visible:
+                        if self._keyboard_tex is None:
+                            self._init_keyboard()
+                        self._anchor_keyboard_below_screen()
+        elif not x_now:
+            self._x_light_fired = False
 
         self._x_last = x_now
         # Thumbstick clicks: grip held ->depth/visual, no grip ->keyboard shortcuts

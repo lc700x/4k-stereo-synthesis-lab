@@ -264,6 +264,39 @@ def test_model_backbone_size_dropdown_has_own_tooltip():
     assert '"tooltip_model_size": "模型骨架大小"' in localization_text
 
 
+def test_model_backbone_size_dropdown_orders_sizes_by_teammate_policy():
+    import ast
+
+    source = _config_source().read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    wanted = {"_MODEL_SIZES", "_SIZE_ORDER", "parse_model_name", "build_family_size_map"}
+    selected = [
+        node
+        for node in tree.body
+        if isinstance(node, (ast.Assign, ast.FunctionDef))
+        and ((isinstance(node, ast.Assign) and any(getattr(target, "id", None) in wanted for target in node.targets)) or getattr(node, "name", None) in wanted)
+    ]
+    module = ast.Module(body=selected, type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace = {}
+    exec(compile(module, str(_config_source()), "exec"), namespace)
+
+    assert namespace["parse_model_name"]("InfiniDepth-SmallPlus") == ("InfiniDepth", "SmallPlus")
+    assert namespace["parse_model_name"]("DA3NESTED-GIANT-LARGE") == ("DA3NESTED", "Giant-Large")
+
+    _, family_to_sizes = namespace["build_family_size_map"](
+        [
+            "Example-Large",
+            "Example-SmallPlus",
+            "Example-Giant",
+            "Example-Base",
+            "Example-Small",
+        ]
+    )
+
+    assert family_to_sizes["Example"] == ["Small", "SmallPlus", "Base", "Large", "Giant"]
+
+
 def test_vsync_uses_teammate_config_key_and_default():
     config_text = _config_source().read_text(encoding="utf-8")
     builders_text = _file_text("builders.py")

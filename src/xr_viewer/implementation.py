@@ -2530,7 +2530,16 @@ class OpenXRViewerCore:
             kwargs.get('openxr_runtime_eye_gpu_upload', os.environ.get('D2S_OPENXR_RUNTIME_EYE_GPU_UPLOAD', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')
         self._runtime_eye_gpu_logged = False
-        self._runtime_eye_texture_gpu_enabled = True
+        # The CUDA/GL *image* zero-copy path (register_image +
+        # cudaMemcpy2DToArray) only works for RGBA textures: a CUDA array has
+        # no 3-channel format, so uploading an RGB (3-byte) GL texture through
+        # it makes every row's stride mismatch and the image gets squeezed to
+        # the left with a black band on the right.  The runtime eye textures
+        # are RGB (see _ensure_runtime_eye_textures), so disable the image path
+        # and use the PBO path instead -- it is a linear buffer copy
+        # (register_buffer + memcpy_d2d + glTexSubImage2D GL_RGB) that is
+        # correct for 3-channel data and is still a GPU zero-copy upload.
+        self._runtime_eye_texture_gpu_enabled = False
         self._runtime_eye_texture_logged = False
         self._runtime_eye_cpu_logged = False
         self._runtime_eye_gpu_disabled_reason = None
@@ -6016,7 +6025,13 @@ class OpenXRViewerCore:
             self._ensure_runtime_eye_texture_resources(w, h)
             for idx, eye in enumerate(eyes):
                 resource = self._runtime_eye_texture_resources[idx]
-                self._cuda_gl.map_resource(resource)
+                # Image-registered resources (register_image) expose a CUDA
+                # array, not a linear pointer.  map_resource() also calls
+                # cudaGraphicsResourceGetMappedPointer, which fails with
+                # cudaErrorNotMappedAsPointer ("resource not mapped as
+                # pointer") on image resources.  Use the map-only helper and
+                # fetch the array via cudaGraphicsSubResourceGetMappedArray.
+                self._cuda_gl.map_graphics_resource(resource)
                 try:
                     array = self._cuda_gl.mapped_array(resource)
                     self._cuda_gl.memcpy_2d_to_array(array, eye.data_ptr(), w * 3, w * 3, h)

@@ -78,17 +78,26 @@ def render_openxr_stereo(
     config: OpenXRRenderConfig | None = None,
 ) -> OpenXRStereoResult:
     config = config or OpenXRRenderConfig()
-    left = render_openxr_eye(rgb, depth, eye_sign=-1.0, config=config)
-    right = render_openxr_eye(rgb, depth, eye_sign=1.0, config=config)
-    depth_matched = match_depth(depth, left.shape[-2], left.shape[-1])
-    shift_px = compute_shift_px(depth_matched, left.shape[-1], _shift_params(config))
+    # Compute the depth match, parallax shift, and RGB float conversion ONCE and
+    # share them across both eyes.  Previously each eye re-ran match_depth (a real
+    # F.interpolate when the depth model output is smaller than the RGB frame) and
+    # compute_shift_px, plus a third match/shift for the debug field -- 3x depth
+    # interpolation and 5x shift per frame.  The two eyes differ only by eye_sign
+    # (a sign flip applied inside warp_horizontal), so the matched depth and base
+    # shift are identical and can be reused.
+    rgb_bchw = ensure_bchw(rgb, name="rgb").float()
+    _, _, h, w = rgb_bchw.shape
+    depth_matched = match_depth(depth, h, w)
+    base_shift = compute_shift_px(depth_matched, w, _shift_params(config))
+    left = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=-1.0, config=config)
+    right = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=1.0, config=config)
     return OpenXRStereoResult(
         left_eye=left,
         right_eye=right,
         debug_info={
             "backend": "openxr_roll_adaptive_grid_sample",
             "screen_roll": float(config.screen_roll),
-            "shift_px": shift_px,
+            "shift_px": base_shift,
         },
     )
 
@@ -102,13 +111,30 @@ def render_openxr_eye(
 ) -> torch.Tensor:
     config = config or OpenXRRenderConfig()
     rgb = ensure_bchw(rgb, name="rgb").float()
+    _, _, h, w = rgb.shape
+    depth_matched = match_depth(depth, h, w)
+    return _render_eye_from_matched(rgb, depth_matched, eye_sign=eye_sign, config=config)
+
+
+def _render_eye_from_matched(
+    rgb: torch.Tensor,
+    depth_matched: torch.Tensor,
+    *,
+    eye_sign: float,
+    config: OpenXRRenderConfig,
+) -> torch.Tensor:
+    """Warp a single eye from a pre-matched depth map.
+
+    `rgb` must already be BCHW float and `depth_matched` already resized to
+    rgb's (h, w); both are computed once per frame and shared between eyes.
+    """
     b, _, h, w = rgb.shape
-    depth = match_depth(depth, h, w)
-    shift_px = compute_shift_px(depth, w, _shift_params(config)) * float(eye_sign)
+    base_shift = compute_shift_px(depth_matched, w, _shift_params(config))
 
     if config.screen_roll == 0.0:
-        return warp_horizontal(rgb, compute_shift_px(depth, w, _shift_params(config)), eye_sign=float(eye_sign))
+        return warp_horizontal(rgb, base_shift, eye_sign=float(eye_sign))
 
+    shift_px = base_shift * float(eye_sign)
     yy, xx = _base_grid_components(h, w, rgb.device, rgb.dtype)
     cos_r = math.cos(config.screen_roll)
     sin_r = math.sin(config.screen_roll)

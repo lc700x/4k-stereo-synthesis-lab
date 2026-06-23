@@ -52,6 +52,8 @@ class Desktop2StereoGUI(
         self._stopping = False
         self._labels_aligned = False
         self._status_key = ""
+        self._local_ip_cache = "127.0.0.1"
+        self._local_ip_task = None
 
     async def setup(self):
         _setup_console_logging()

@@ -310,8 +310,8 @@ class GUIBuilderMixin:
         # Row 5: Stereo runtime mode and quality
         self.stereo_preset_label = ft.Text("Stereo Mode:", size=FONT_SIZE, width=S(130))
         self.stereo_preset_dd = CompactDropdown(
-            options=["Cinema", "Game / Low Latency", "Still Image / HQ", "Debug / Export"],
-            value="Cinema", width=S(130), on_select=self.on_stereo_preset_change)
+            options=["Cinema / banlance", "Game / Low Latency", "Still Image / HQ", "Debug / Export"],
+            value="Cinema / banlance", width=S(130), on_select=self.on_stereo_preset_change)
         self.stereo_quality_label = ft.Text("Synthetic View:", size=FONT_SIZE, width=S(130))
         self.stereo_quality_dd = CompactDropdown(options=self._stereo_quality_options(),
             value=self._stereo_quality_to_display("quality_4k"), width=S(130))
@@ -443,9 +443,11 @@ class GUIBuilderMixin:
         self.env_model_keys = get_environment_model_options(return_keys=True)
         self.env_model_display_names = load_environment_display_names(self.env_model_keys)
         env_options = get_environment_model_options(self.locale)
-        self.env_key = DEFAULTS.get("Environment Model", "None")
+        self.env_key = DEFAULTS.get("Environment Model", "Default")
+        if str(self.env_key).strip().lower() == "none":
+            self.env_key = "Default"
         if self.env_key not in self.env_model_keys:
-            self.env_key = self.env_model_keys[0] if self.env_model_keys else "None"
+            self.env_key = self.env_model_keys[0] if self.env_model_keys else "Default"
         self.env_model_dd = CompactDropdown(
             options=[e for e in env_options],
             value=environment_display_label(self.env_key, self.locale, self.env_model_display_names),

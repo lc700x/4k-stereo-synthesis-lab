@@ -209,8 +209,8 @@ def test_stereo_preset_auto_option_removed():
     config_text = _config_source().read_text(encoding="utf-8")
     builders_text = _file_text("builders.py")
     assert '"Stereo Preset": "cinema"' in config_text
-    assert 'options=["Cinema", "Game / Low Latency", "Still Image / HQ", "Debug / Export"]' in builders_text
-    assert 'options=["Auto", "Cinema"' not in all_text
+    assert 'options=["Cinema / banlance", "Game / Low Latency", "Still Image / HQ", "Debug / Export"]' in builders_text
+    assert 'options=["Auto", "Cinema / banlance"' not in all_text
     assert '"Auto": "auto"' not in all_text
     assert '"自动": "auto"' not in all_text
 
@@ -362,3 +362,33 @@ def test_default_depth_resolution_prefers_518_except_infinidepth():
     assert 'preferred = 512 if "infinidepth" in str(model_name or "").lower() else DEFAULTS["Depth Resolution"]' in builders_text
     assert 'closest = min(resolutions, key=lambda x: abs(x - cur_num))' in builders_text
     assert '[322]' not in builders_text[builders_text.index("def update_depth_resolution_options"):]
+
+
+def test_reset_defaults_uses_base_model_and_nvidia_acceleration_defaults():
+    config_text = _config_source().read_text(encoding="utf-8")
+    process_text = _file_text("process.py")
+
+    assert "def default_base_depth_model" in config_text
+    assert 'FAMILY_SIZE_TO_MODEL.get((default_family, "Base"))' in config_text
+    assert 'if "Distill-Any-Depth-Base" in DEFAULT_MODEL_LIST:' in config_text
+    assert 'dynamic_defaults["Depth Model"] = default_base_depth_model()' in process_text
+    assert 'dynamic_defaults["XR Preview Window"] = False' in process_text
+    assert 'is_nvidia_cuda = "CUDA" in (current_device_label or "") and not devices_module.IS_ROCM' in process_text
+    assert 'dynamic_defaults["torch.compile"] = True' in process_text
+    assert 'dynamic_defaults["TensorRT"] = True' in process_text
+
+
+def test_stream_url_local_ip_detection_runs_async_after_gui_update():
+    handlers_text = _file_text("handlers.py")
+    gui_text = _file_text("gui.py")
+
+    assert "import asyncio" in handlers_text
+    assert "async def _refresh_local_ip_async" in handlers_text
+    assert "await asyncio.to_thread(get_local_ip)" in handlers_text
+    assert "def _schedule_local_ip_refresh" in handlers_text
+    assert "asyncio.create_task(self._refresh_local_ip_async())" in handlers_text
+    assert "def update_stream_url(self, e=None, resolve_ip=True):" in handlers_text
+    update_block = handlers_text[handlers_text.index("def update_stream_url"):handlers_text.index("def _on_stream_protocol_change")]
+    assert "get_local_ip()" not in update_block
+    assert 'self._local_ip_cache = "127.0.0.1"' in gui_text
+    assert "self._local_ip_task = None" in gui_text

@@ -35,6 +35,7 @@ def test_use_environment_viewer_requires_real_environment_name():
     assert not use_environment_viewer(None)
     assert not use_environment_viewer("")
     assert not use_environment_viewer(" none ")
+    assert use_environment_viewer("Default")
     assert use_environment_viewer("studio")
 
 
@@ -59,6 +60,7 @@ def test_load_openxr_viewer_uses_environment_split_for_named_environment(monkeyp
     )
 
     assert load_openxr_viewer("Cinema") is fake_environment_viewer
+    assert load_openxr_viewer("Default") is fake_environment_viewer
     assert load_openxr_viewer("none") is fake_base_viewer
 
 

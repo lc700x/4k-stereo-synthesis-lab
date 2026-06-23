@@ -1,5 +1,6 @@
 """GLSL shader sources for the OpenXR viewer."""
 
+# World-space vertex shader: applies MVP to place the quad in the scene
 _WORLD_VERT = """
 #version 330
 in vec2 in_position;
@@ -26,22 +27,146 @@ void main() {
 }
 """
 
-# Fullscreen swizzle blit: copies an RGBA texture into a target that the
-# compositor reads as BGRA. Used by the EXT_memory_object interop path when the
-# OpenXR runtime hands us a BGRA swapchain.
-_BLIT_FRAG = """
+_SCREEN_QUALITY_VERT = """
 #version 330
-uniform sampler2D u_src;
-uniform int u_swap_rb;
-in vec2 uv;
-out vec4 fragColor;
+in vec2 in_position;
+in vec2 in_uv;
+out vec2 uv;
 void main() {
-    vec4 c = texture(u_src, uv);
-    fragColor = (u_swap_rb != 0) ? c.bgra : c;
+    uv = in_uv;
+    gl_Position = vec4(in_position, 0.0, 1.0);
 }
 """
 
-# Solid-color vertex shader (no UV avoids GLSL optimizer stripping in_uv)
+_SCREEN_DOWNSAMPLE_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag_color;
+uniform sampler2D tex_color;
+uniform vec2 u_input_size;
+
+float sinc(float x) {
+    x = abs(x);
+    if (x < 1e-5) {
+        return 1.0;
+    }
+    float pix = 3.141592653589793 * x;
+    return sin(pix) / pix;
+}
+
+float lanczos2(float x) {
+    x = abs(x);
+    if (x >= 2.0) {
+        return 0.0;
+    }
+    return sinc(x) * sinc(x * 0.5);
+}
+
+void main() {
+    vec2 src_pos = uv * u_input_size - vec2(0.5);
+    vec2 base = floor(src_pos);
+    vec3 accum = vec3(0.0);
+    float weight_sum = 0.0;
+    for (int y = -1; y <= 2; ++y) {
+        for (int x = -1; x <= 2; ++x) {
+            vec2 sample_pos = base + vec2(float(x), float(y));
+            vec2 delta = src_pos - sample_pos;
+            float w = lanczos2(delta.x) * lanczos2(delta.y);
+            vec2 sample_uv = (sample_pos + vec2(0.5)) / u_input_size;
+            accum += texture(tex_color, clamp(sample_uv, vec2(0.0), vec2(1.0))).rgb * w;
+            weight_sum += w;
+        }
+    }
+    frag_color = vec4(clamp(accum / max(weight_sum, 1e-6), 0.0, 1.0), 1.0);
+}
+"""
+
+_SCREEN_RCAS_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag_color;
+uniform sampler2D tex_scene;
+uniform vec2 u_output_size;
+uniform float u_sharpness;
+
+float sat(float x) {
+    return clamp(x, 0.0, 1.0);
+}
+
+float rcp_safe(float x) {
+    return 1.0 / max(abs(x), 1e-6);
+}
+
+float luma2(vec3 c) {
+    return c.b * 0.5 + (c.r * 0.5 + c.g);
+}
+
+vec3 sample_scene(vec2 p) {
+    return texture(tex_scene, clamp(p, vec2(0.0), vec2(1.0))).rgb;
+}
+
+vec3 fsr_rcas(vec2 p) {
+    vec2 texel = 1.0 / u_output_size;
+    vec3 b = sample_scene(p + vec2(0.0, -texel.y));
+    vec3 d = sample_scene(p + vec2(-texel.x, 0.0));
+    vec3 e = sample_scene(p);
+    vec3 f = sample_scene(p + vec2(texel.x, 0.0));
+    vec3 h = sample_scene(p + vec2(0.0, texel.y));
+
+    float bL = luma2(b);
+    float dL = luma2(d);
+    float eL = luma2(e);
+    float fL = luma2(f);
+    float hL = luma2(h);
+    float nz = 0.25 * bL + 0.25 * dL + 0.25 * fL + 0.25 * hL - eL;
+    float lMax = max(max(max(bL, dL), max(eL, fL)), hL);
+    float lMin = min(min(min(bL, dL), min(eL, fL)), hL);
+    nz = sat(abs(nz) * rcp_safe(lMax - lMin));
+    nz = -0.5 * nz + 1.0;
+
+    vec3 mn4 = min(min(b, d), min(f, h));
+    vec3 mx4 = max(max(b, d), max(f, h));
+    vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1e-6));
+    vec3 hitMax = (vec3(1.0) - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3(-1e-6));
+    vec3 lobeRGB = max(-hitMin, hitMax);
+    float lobe = max(max(lobeRGB.r, lobeRGB.g), lobeRGB.b);
+    float rcasLimit = 0.25 - (1.0 / 16.0);
+
+    float sharpnessStops = mix(2.0, 0.0, sat(u_sharpness));
+    float con = exp2(-sharpnessStops);
+    lobe = max(-rcasLimit, min(lobe, 0.0)) * con * nz;
+    float rcpL = rcp_safe(4.0 * lobe + 1.0);
+    return clamp((lobe * b + lobe * d + lobe * h + lobe * f + e) * rcpL, 0.0, 1.0);
+}
+
+void main() {
+    frag_color = vec4(fsr_rcas(uv), 1.0);
+}
+"""
+
+_QUAD_COPY_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag_color;
+uniform sampler2D tex_source;
+uniform int u_flip_y;
+void main() {
+    vec2 p = (u_flip_y == 1) ? vec2(uv.x, 1.0 - uv.y) : uv;
+    frag_color = texture(tex_source, p);
+}
+"""
+
+_CURVED_COPY_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag_color;
+uniform sampler2D tex_color;
+void main() {
+    frag_color = texture(tex_color, vec2(uv.x, 1.0 - uv.y));
+}
+"""
+
+# Solid-color vertex shader (no UV -avoids GLSL optimizer stripping in_uv)
 _SOLID_VERT = """
 #version 330
 in vec2 in_position;
@@ -57,6 +182,65 @@ _SOLID_FRAG = """
 uniform vec4 u_color;
 out vec4 fragColor;
 void main() { fragColor = u_color; }
+"""
+
+# Brushed-metal border fragment shader
+_BORDER_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 fragColor;
+uniform vec3 u_color;
+uniform float u_alpha;
+uniform vec2 u_border_uv;    // border half-width in UV (x, y)
+void main() {
+    vec2 d = min(uv, 1.0 - uv);
+    if (d.x > u_border_uv.x && d.y > u_border_uv.y) discard;
+    float bx = 1.0 - d.x / u_border_uv.x;
+    float by = 1.0 - d.y / u_border_uv.y;
+    float bp = clamp(max(bx, by), 0.0, 1.0);
+    float bevel = (1.0 - smoothstep(0.0, 0.4, bp)) * 0.25;
+    float shade = mix(1.0, 0.5, bp * bp);
+    float brush = sin(uv.y * 3000.0 + uv.x * 500.0) * 0.015;
+    brush += sin(uv.y * 5000.0) * 0.008;
+    vec3 col = u_color * shade + vec3(bevel) + vec3(brush);
+    fragColor = vec4(col, u_alpha);
+}
+"""
+
+# Shadow fragment shader: soft ground shadow beneath the screen
+_SHADOW_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag_color;
+uniform float u_opacity;
+void main() {
+    vec2 centered = uv - 0.5;
+    float dist = length(centered);
+    // Gaussian falloff: darkest at center, smooth fade to edges
+    float shadow = exp(-dist * dist * 6.0);
+    shadow *= u_opacity;
+    vec2 shadow_edge = smoothstep(0.0, 0.08, uv) * smoothstep(1.0, 0.92, uv);
+    shadow *= min(shadow_edge.x, shadow_edge.y);
+    frag_color = vec4(0.0, 0.0, 0.0, shadow);
+}
+"""
+
+# Ground ambient light fragment shader: colored light pool cast by the screen
+_GROUND_FRAG = """
+#version 330
+in vec2 uv;
+out vec4 frag_color;
+uniform vec3 u_color;
+uniform float u_intensity;
+void main() {
+    vec2 dir = uv - vec2(0.5, 1.0);
+    float dist = length(dir);
+    float light = exp(-dist * dist * 3.0);
+    light *= u_intensity;
+    vec2 edge = smoothstep(0.0, 0.1, uv) * smoothstep(1.0, 0.9, uv);
+    light *= min(edge.x, edge.y);
+    frag_color = vec4(u_color * light, light);
+}
 """
 
 # 3D vertex shader for tapered rainbow beam
@@ -78,7 +262,7 @@ in float v_v;
 out vec4 fragColor;
 uniform float u_time;
 void main() {
-    // Rainbow gradient: blue→cyan→green→yellow→red, flowing from root to tip
+    // Rainbow gradient: blue->cyan->green->yellow->red, flowing from root to tip
     float t = fract(v_v + u_time * 0.4);
     vec3 col;
     if (t < 0.167)      col = mix(vec3(0.0,0.4,1.0), vec3(0.0,1.0,1.0), t/0.167);
@@ -91,6 +275,8 @@ void main() {
 }
 """
 
+# Curved-screen vertex shader: in_position is a world-space vec3 arc point (no model matrix).
+# UV is passed through normally.  vp_mat is the combined view-projection for the current eye.
 _CURVED_VERT = """
 #version 330
 in vec3 in_position;
@@ -138,9 +324,9 @@ uniform int u_use_texture;     // 0: use solid color, 1: sample texture
 uniform vec3 u_camera_pos;     // Camera world coordinates (= headset position)
 
 void main() {
+    vec2 t_uv = v_uv;  // alias (no transform for controllers)
     // Discard back faces (inner walls), keep only front faces (outer shell)
     if (!gl_FrontFacing) discard;
-
     vec3 N = normalize(v_normal);
     vec3 light_pos = u_camera_pos + vec3(0.0, 0.05, 0.0);
     vec3 L = normalize(light_pos - v_position);
@@ -149,12 +335,12 @@ void main() {
 
     vec3 baseColor;
     if (u_use_texture == 1) {
-        baseColor = texture(u_tex, v_uv).rgb * u_base_color_factor;
+        baseColor = texture(u_tex, t_uv).rgb * u_base_color_factor;
     } else {
         baseColor = u_base_color_factor;
     }
 
-    float diff = abs(dot(N, L));
+    float diff = max(dot(N, L), 0.0);
     vec3 diffuse = u_light_color * diff;
     vec3 ambient = u_ambient_color;
     float spec = pow(max(dot(N, H), 0.0), 32.0);
@@ -169,8 +355,10 @@ _ENV_VERT = """
 in vec3 in_position;
 in vec3 in_normal;
 in vec2 in_uv;
-in vec4 in_tangent;  // xyz + bitangent_sign (glTF §3.7.4)
+in vec2 in_uv1;
+in vec4 in_tangent;  // xyz + bitangent_sign (glTF spec 3.7.4)
 out vec2 v_uv;
+out vec2 v_uv1;
 out vec3 v_normal;
 out vec3 v_position;
 out vec3 v_tangent;
@@ -179,6 +367,7 @@ uniform mat4 u_mvp;
 uniform mat4 u_model;
 void main() {
     v_uv = in_uv;
+    v_uv1 = in_uv1;
     v_normal = mat3(transpose(inverse(u_model))) * in_normal;
     v_tangent = normalize(mat3(transpose(inverse(u_model))) * in_tangent.xyz);
     v_bitangent_sign = in_tangent.w;
@@ -191,6 +380,7 @@ void main() {
 _ENV_FRAG = """
 #version 330
 in vec2 v_uv;
+in vec2 v_uv1;
 in vec3 v_normal;
 in vec3 v_position;
 in vec3 v_tangent;
@@ -205,6 +395,7 @@ uniform sampler2D u_emissive_tex;  // emissive map (texture unit 7)
 uniform vec3 u_light_color;
 uniform vec3 u_ambient_color;
 uniform vec3 u_base_color_factor;
+uniform float u_base_alpha;
 uniform int u_use_texture;
 uniform int u_use_normal_tex;
 uniform float u_normal_scale;
@@ -219,45 +410,48 @@ uniform float u_alpha_cutoff;    // alphaMode=MASK discard threshold
 uniform int u_alpha_mode;        // 0=OPAQUE, 1=MASK, 2=BLEND
 uniform int u_use_mr_tex;        // 0: use uniform factors, 1: sample mr texture
 uniform int u_use_emissive_tex;  // 0: use factor only, 1: sample emissive texture
+uniform int u_normal_texcoord;
+uniform int u_occlusion_texcoord;
+uniform int u_mr_texcoord;
+uniform int u_emissive_texcoord;
+uniform int u_base_texcoord;
+uniform int u_baked_lightmap;    // 1: occlusion texture stores RGB baked lightmap on UV1
 uniform vec2 u_tex_offset;       // KHR_texture_transform offset
 uniform vec2 u_tex_scale;        // KHR_texture_transform scale
+uniform float u_tex_rotation;    // KHR_texture_transform rotation, radians
 uniform vec3 u_light_dir;        // KHR_lights_punctual directional light
 uniform vec3 u_light_intensity;  // light_color * intensity for directional light
-
-// Fill lights (viewer-side point lights with range attenuation)
-uniform int   u_fill_light_enabled0; // 0=skip, 1=evaluate
-uniform vec3  u_fill_light_pos0;
-uniform vec3  u_fill_light_color0;
+uniform vec3 u_fill_light_pos0;  // viewer-side or KHR punctual fill light
+uniform vec3 u_fill_light_color0;
 uniform float u_fill_light_range0;
-uniform int   u_fill_light_enabled1;
-uniform vec3  u_fill_light_pos1;
-uniform vec3  u_fill_light_color1;
+uniform vec3 u_fill_light_pos1;
+uniform vec3 u_fill_light_color1;
 uniform float u_fill_light_range1;
-
-// Post-processing controls
+uniform int u_screen_light_enabled;
+uniform vec3 u_screen_light_pos;
+uniform vec3 u_screen_light_normal;
+uniform vec3 u_screen_light_right;
+uniform vec3 u_screen_light_up;
+uniform vec2 u_screen_light_half_size;
+uniform vec3 u_screen_light_color;
+uniform vec3 u_screen_light_color_grid0;
+uniform vec3 u_screen_light_color_grid1;
+uniform vec3 u_screen_light_color_grid2;
+uniform vec3 u_screen_light_color_grid3;
+uniform vec3 u_screen_light_color_grid4;
+uniform vec3 u_screen_light_color_grid5;
+uniform float u_screen_light_intensity;
 uniform float u_env_exposure;
 uniform float u_env_gamma;
 uniform float u_emissive_strength;
-uniform float u_base_alpha;
-
-// --- Cinema "bias light" rectangular area light ----------------------------
-// The virtual screen acts as an emissive rectangular source (analogous to a
-// real TV's ambient bias light, e.g. Philips Hue Play behind a display).  We
-// follow the Meta Horizon lighting guidelines:
-//   * Emissive material + Area light (cf. Lighting Types table)
-//   * Lambertian diffuse response so transitions are GRADUAL (a key Meta
-//     guideline for VR comfort no harsh brightness flicker)
-//   * Forward 180° hemisphere only (light cannot wrap behind the screen)
-//   * Single fragment-shader light, no extra texture samples preserves the
-//     ≥90 FPS target Meta sets for VR.
-uniform int   u_screen_light_enabled;       // 0 = skip, 1 = evaluate
-uniform vec3  u_screen_light_pos;           // world-space rectangle centre
-uniform vec3  u_screen_light_normal;        // world-space forward (toward viewer)
-uniform vec2  u_screen_light_half_size;     // half-width / half-height (metres)
-uniform vec3  u_screen_light_color;         // sampled emissive colour (frame avg)
-uniform float u_screen_light_intensity;     // master multiplier (e.g. 1.5)
+uniform int u_shading_mode;       // 0=PBR, 1=preview diffuse
+uniform int u_foliage_mode;       // 1=use preview-like two-sided foliage lighting
 
 const float PI = 3.14159265359;
+
+vec2 uvForTexCoord(int texcoord) {
+    return (texcoord == 1) ? v_uv1 : v_uv;
+}
 
 // Fresnel-Schlick
 vec3 fresnelSchlick(float cosTheta, vec3 F0) {
@@ -283,14 +477,11 @@ float GeometrySmith(float NdotV, float NdotL, float roughness) {
     return GeometrySchlickGGX(NdotV, roughness) * GeometrySchlickGGX(NdotL, roughness);
 }
 
-// Reusable PBR evaluation for a single light source.
-// Extracts the inline Cook-Torrance GGX math so fill lights can share it
-// without duplicating the entire BRDF per light.
-vec3 pbrLight(vec3 N, vec3 V, vec3 baseColor, float metallic, float roughness,
-              vec3 L, vec3 lightColor, float attenuation) {
-    if (attenuation <= 0.0 || length(lightColor) <= 0.001) return vec3(0.0);
+vec3 pbrLight(vec3 N, vec3 V, vec3 baseColor, float metallic, float roughness, vec3 L, vec3 lightColor, float attenuation) {
     float NdotL = max(dot(N, L), 0.0);
-    if (NdotL <= 0.0) return vec3(0.0);
+    if (NdotL <= 0.0 || attenuation <= 0.0 || length(lightColor) <= 0.001) {
+        return vec3(0.0);
+    }
 
     vec3 H = normalize(L + V);
     float NdotV = max(dot(N, V), 0.001);
@@ -308,7 +499,6 @@ vec3 pbrLight(vec3 N, vec3 V, vec3 baseColor, float metallic, float roughness,
     return (diffuse + specular) * lightColor * NdotL * attenuation;
 }
 
-// Soft range attenuation: 1/(1 + 4*(d/r)^2) — cheap (2 muls, 1 add, 1 rcp).
 float softRangeAttenuation(float dist, float rangeMeters) {
     float r = max(rangeMeters, 0.001);
     float x = dist / r;
@@ -316,15 +506,21 @@ float softRangeAttenuation(float dist, float rangeMeters) {
 }
 
 void main() {
-    // KHR_texture_transform: compute transformed UV (glTF spec)
-    vec2 t_uv = v_uv * u_tex_scale + u_tex_offset;
-
-    // Compute texture alpha early for MASK discard and BLEND output.
-    float texAlpha = (u_use_texture == 1) ? texture(u_tex, t_uv).a : 1.0;
+    // KHR_texture_transform: scale, rotate, then offset on the selected base-color UV set.
+    vec2 src_base_uv = uvForTexCoord(u_base_texcoord);
+    vec2 scaled_uv = src_base_uv * u_tex_scale;
+    float c = cos(u_tex_rotation);
+    float s = sin(u_tex_rotation);
+    vec2 t_uv = vec2(
+        c * scaled_uv.x - s * scaled_uv.y,
+        s * scaled_uv.x + c * scaled_uv.y
+    ) + u_tex_offset;
+    vec2 base_uv = t_uv;
+    float texAlpha = (u_use_texture == 1) ? texture(u_tex, base_uv).a : 1.0;
     float materialAlpha = clamp(texAlpha * u_base_alpha, 0.0, 1.0);
 
     // alphaMode MASK: early discard (glTF spec 3.9.4)
-    if (u_alpha_mode == 1 && u_use_texture == 1) {
+    if (u_alpha_mode == 1) {
         if (materialAlpha < u_alpha_cutoff) discard;
     }
 
@@ -333,7 +529,7 @@ void main() {
 
     // Normal map perturbation (glTF MikkTSpace tangent)
     if (u_use_normal_tex == 1) {
-        vec3 nm = texture(u_normal_tex, t_uv).rgb * 2.0 - 1.0;
+        vec3 nm = texture(u_normal_tex, uvForTexCoord(u_normal_texcoord)).rgb * 2.0 - 1.0;
         nm.xy *= u_normal_scale;
         nm = normalize(nm);
         // Use TANGENT attribute if available, else Gram-Schmidt fallback
@@ -344,16 +540,34 @@ void main() {
 
     vec3 baseColor;
     if (u_use_texture == 1) {
-        baseColor = texture(u_tex, t_uv).rgb * u_base_color_factor;
+        baseColor = texture(u_tex, base_uv).rgb * u_base_color_factor;
     } else {
         baseColor = u_base_color_factor;
     }
 
+    if (u_shading_mode == 1) {
+        vec3 L_preview = normalize(u_camera_pos + vec3(0.0, 0.2, 0.0) - v_position);
+        float diff_preview = max(abs(dot(N, L_preview)), 0.12);
+        vec3 color_preview = baseColor * (u_ambient_color + u_light_color * diff_preview) * u_env_exposure;
+        float alpha = (u_alpha_mode == 2) ? materialAlpha : 1.0;
+        fragColor = vec4(color_preview, alpha);
+        return;
+    }
+
+    if (u_foliage_mode == 1) {
+        vec3 L_foliage = normalize(u_camera_pos + vec3(0.0, 0.2, 0.0) - v_position);
+        float diff_foliage = max(abs(dot(N, L_foliage)), 0.12);
+        vec3 color_foliage = baseColor * (u_ambient_color + u_light_color * diff_foliage) * u_env_exposure;
+        float alpha = (u_alpha_mode == 2) ? materialAlpha : 1.0;
+        fragColor = vec4(color_foliage, alpha);
+        return;
+    }
+
     float metallic = clamp(u_metallic, 0.0, 1.0);
     float roughness = clamp(u_roughness, 0.04, 1.0);
-    // metallicRoughnessTexture: B=metallic, G=roughness (glTF spec §3.9.4)
+    // metallicRoughnessTexture: B=metallic, G=roughness (glTF spec 3.9.4)
     if (u_use_mr_tex == 1) {
-        vec3 mr = texture(u_mr_tex, t_uv).rgb;
+        vec3 mr = texture(u_mr_tex, uvForTexCoord(u_mr_texcoord)).rgb;
         roughness = clamp(roughness * mr.g, 0.04, 1.0);
         metallic = clamp(metallic * mr.b, 0.0, 1.0);
     }
@@ -383,7 +597,7 @@ void main() {
 
     // KHR_materials_unlit: skip all lighting, output baseColor directly
     if (u_unlit == 1) {
-        float alpha = (u_alpha_mode == 2 || u_base_alpha < 0.999) ? materialAlpha : 1.0;
+        float alpha = (u_alpha_mode == 2) ? materialAlpha : 1.0;
         fragColor = vec4(baseColor, alpha);
         return;
     }
@@ -404,122 +618,108 @@ void main() {
         Lo += (d_d + s_d) * u_light_intensity * NdotL_d;
     }
 
-    // Fill light 0 (viewer-side point light with range attenuation)
-    if (u_fill_light_enabled0 == 1) {
-        vec3 toFill0 = u_fill_light_pos0 - v_position;
-        float fillDist0 = length(toFill0);
-        if (fillDist0 > 0.001) {
-            Lo += pbrLight(N, V, baseColor, metallic, roughness,
-                           toFill0 / fillDist0,
-                           u_fill_light_color0,
-                           softRangeAttenuation(fillDist0, u_fill_light_range0));
-        }
+    vec3 toFill0 = u_fill_light_pos0 - v_position;
+    float fillDist0 = length(toFill0);
+    if (fillDist0 > 0.001) {
+        Lo += pbrLight(N, V, baseColor, metallic, roughness,
+                       toFill0 / fillDist0,
+                       u_fill_light_color0,
+                       softRangeAttenuation(fillDist0, u_fill_light_range0));
     }
 
-    // Fill light 1
-    if (u_fill_light_enabled1 == 1) {
-        vec3 toFill1 = u_fill_light_pos1 - v_position;
-        float fillDist1 = length(toFill1);
-        if (fillDist1 > 0.001) {
-            Lo += pbrLight(N, V, baseColor, metallic, roughness,
-                           toFill1 / fillDist1,
-                           u_fill_light_color1,
-                           softRangeAttenuation(fillDist1, u_fill_light_range1));
-        }
+    vec3 toFill1 = u_fill_light_pos1 - v_position;
+    float fillDist1 = length(toFill1);
+    if (fillDist1 > 0.001) {
+        Lo += pbrLight(N, V, baseColor, metallic, roughness,
+                       toFill1 / fillDist1,
+                       u_fill_light_color1,
+                       softRangeAttenuation(fillDist1, u_fill_light_range1));
     }
 
-    // --- Cinema bias light (rectangular area light = the virtual screen) ---
-    // Closed-form-ish approximation: use the rectangle centre as a single
-    // representative point (Frostbite-style "most representative point" is
-    // overkill here env surfaces are far enough that a point approximation
-    // already matches a true rect to within a few %, while being ~10× cheaper
-    // than the integral).  Meta's guideline is "use real-time lights sparingly"
-    // and "minimize calculations" so we do exactly one area sample.
+    // Cinema bias light from the virtual screen.
     if (u_screen_light_enabled == 1) {
-        vec3  S_to_P  = v_position - u_screen_light_pos;       // from screen to frag
-        float d       = length(S_to_P);
-        vec3  L_s     = S_to_P / max(d, 0.001);                // direction screen to frag
-        // 1) FORWARD-HEMISPHERE TEST (screen front side only)
-        //    A real screen emits light only out of its front face, so we
-        //    require the fragment to lie in the screen's forward half-space
-        //    (dot(normal, screen->frag) > 0).  Use a smoothstep instead of
-        //    a hard step so the grazing-angle transition is gradual --
-        //    per Meta's lighting guideline, "avoid sudden changes in
-        //    brightness".  Zero lower bound: no light behind the screen
-        //    plane.  The 0.3 upper bound keeps the transition gradual
-        //    for surfaces nearly in-plane with the screen.
-        float front   = smoothstep(0.0, 0.3, dot(u_screen_light_normal, L_s));
+        vec3 S_to_P = v_position - u_screen_light_pos;
+        float d = length(S_to_P);
+        vec3 L_s = S_to_P / max(d, 0.001);
+        float front = smoothstep(0.0, 0.3, dot(u_screen_light_normal, L_s));
         if (front > 0.0) {
-            // 2) LAMBERTIAN cosine on the receiving surface
             float NdotL_s = max(dot(N, -L_s), 0.0);
             if (NdotL_s > 0.0) {
-                // 3) DISTANCE FALL-OFF with smooth windowing.  Pure 1/d is
-                //    physically correct but produces harsh hotspots near the
-                //    screen undesirable per Meta's "avoid harsh transitions"
-                //    rule.  We use the standard "windowed inverse square"
-                //    f(d) = (1 / (d + r))   where r is the falloff knee.
-                //    A LARGER r pushes the knee outward, so the light keeps
-                //    its strength further into the room before rolling off
-                //    (attn = 0.5 at d = r, 0.2 at d ≥2r, 0.1 at d ≥3r).
-                //    Tuned to ~2× the half-diagonal so a 2.4 m screen still
-                //    contributes meaningfully out to ~5 m, matching the
-                //    user-perceived "bias light" spread of a real OLED.
                 float half_diag = length(u_screen_light_half_size);
-                float r0        = max(half_diag * 2.0, 0.50);
-                float attn      = (r0 * r0) / (d * d + r0 * r0);
-                // 4) AREA scale.  A rectangle of area A subtends an apparent
-                //    solid angle that grows with A approximate this as
-                //    A / (PI * d) for the diffuse term (small-angle limit) and
-                //    clamp the near-field to avoid singularities (Meta:
-                //    smooth/comfortable response).  The near-field clamp uses
-                //    half_diag (not r0) so the close-up brightness is not
-                //    suppressed by the wider falloff knee chosen above.
-                float area      = 4.0 * u_screen_light_half_size.x
-                                       * u_screen_light_half_size.y;
-                float r_near    = max(half_diag * 0.5, 0.10);
+                float r0 = max(half_diag * 2.0, 0.50);
+                float attn = (r0 * r0) / (d * d + r0 * r0);
+                float area = 4.0 * u_screen_light_half_size.x * u_screen_light_half_size.y;
+                float r_near = max(half_diag * 0.5, 0.10);
                 float area_term = area / (PI * max(d * d, r_near * r_near));
-                // Suppress the close-in ring around the screen itself.
-                // Keeps spill on room objects, but avoids a visible halo
-                // hugging screen edge and nearby wall surfaces.
                 float halo_free = smoothstep(
                     max(half_diag * 0.35, 0.75),
                     max(half_diag * 0.95, 1.75),
                     d
                 );
-                // 5) Final radiance contribution.  Diffuse-only on the receiver
-                //    (kD * baseColor / PI is the Lambertian BRDF already
-                //    computed above; we reuse it for spectral neutrality with
-                //    the head-lamp path), then modulated by the screen colour
-                //    and a user-tunable intensity gain.
-                vec3  E_s = u_screen_light_color
-                              * u_screen_light_intensity
-                              * front * NdotL_s * attn * area_term * halo_free;
-                Lo += diffuse * E_s * PI;   // PI cancels the 1/PI in `diffuse`
+                vec2 screen_p = vec2(
+                    dot(S_to_P, u_screen_light_right) / max(u_screen_light_half_size.x, 0.001),
+                    dot(S_to_P, u_screen_light_up) / max(u_screen_light_half_size.y, 0.001)
+                );
+                vec2 grid_uv = clamp(screen_p * 0.5 + 0.5, vec2(0.0), vec2(1.0));
+                float gx = grid_uv.x * 2.0;
+                float gy = grid_uv.y;
+                float ix = (gx < 1.0) ? 0.0 : 1.0;
+                float tx = smoothstep(0.0, 1.0, (ix < 0.5) ? gx : (gx - 1.0));
+                float ty = smoothstep(0.0, 1.0, gy);
+                vec3 top_a = (ix < 0.5) ? u_screen_light_color_grid0 : u_screen_light_color_grid1;
+                vec3 top_b = (ix < 0.5) ? u_screen_light_color_grid1 : u_screen_light_color_grid2;
+                vec3 bot_a = (ix < 0.5) ? u_screen_light_color_grid3 : u_screen_light_color_grid4;
+                vec3 bot_b = (ix < 0.5) ? u_screen_light_color_grid4 : u_screen_light_color_grid5;
+                vec3 screen_col = mix(mix(bot_a, bot_b, tx), mix(top_a, top_b, tx), ty);
+                screen_col = mix(screen_col, u_screen_light_color, 0.18);
+                float vertical_soft = 1.0 - 0.12 * smoothstep(0.35, 1.30, abs(screen_p.y));
+                vec3 E_s = screen_col
+                           * u_screen_light_intensity
+                           * front * NdotL_s * attn * area_term * halo_free * vertical_soft;
+                Lo += diffuse * E_s * PI;
             }
         }
     }
 
-    // Ambient
+    // Ambient / baked lightmap
     float ao = 1.0;
-    if (u_use_occlusion_tex == 1) {
-        ao = mix(1.0, texture(u_occlusion_tex, t_uv).r, u_occlusion_strength);
+    vec3 bakedLight = vec3(1.0);
+    if (u_use_occlusion_tex == 1 && u_baked_lightmap == 0) {
+        ao = mix(1.0, texture(u_occlusion_tex, uvForTexCoord(u_occlusion_texcoord)).r, u_occlusion_strength);
+    } else if (u_use_occlusion_tex == 1 && u_baked_lightmap == 1) {
+        bakedLight = mix(vec3(1.0), texture(u_occlusion_tex, uvForTexCoord(u_occlusion_texcoord)).rgb, u_occlusion_strength);
     }
     vec3 ambient = u_ambient_color * baseColor * ao;
 
     vec3 emissive = u_emissive_factor;
     if (u_use_emissive_tex == 1) {
-        emissive *= texture(u_emissive_tex, t_uv).rgb;
+        emissive *= texture(u_emissive_tex, uvForTexCoord(u_emissive_texcoord)).rgb;
     }
     emissive *= u_emissive_strength;
 
-    vec3 color = (Lo + ambient + emissive) * u_env_exposure;
-    // HDR->LDR: Reinhard-like soft tonemap
+    vec3 color = ((Lo + ambient) * bakedLight + emissive) * u_env_exposure;
+    // HDR ->LDR: Reinhard-like soft tonemap
     color = color / (color + vec3(1.0));
     // Gamma correction
     color = pow(color, vec3(1.0 / max(u_env_gamma, 0.001)));
 
-    float alpha = (u_alpha_mode == 2 || u_base_alpha < 0.999) ? materialAlpha : 1.0;
+    float alpha = (u_alpha_mode == 2) ? materialAlpha : 1.0;
     fragColor = vec4(color, alpha);
+}
+"""
+
+# Fullscreen swizzle blit: copies an RGBA texture into a target that the
+# compositor reads as BGRA. Used by the EXT_memory_object interop path when the
+# OpenXR runtime hands us a BGRA swapchain.
+_BLIT_FRAG = """
+#version 330
+uniform sampler2D u_src;
+uniform int u_swap_rb;
+in vec2 uv;
+out vec4 fragColor;
+void main() {
+    vec4 c = texture(u_src, uv);
+    fragColor = (u_swap_rb != 0) ? c.bgra : c;
 }
 """
 
@@ -530,34 +730,25 @@ in vec2 uv;
 out vec4 frag_color;
 uniform vec2 u_screen_half;   // screen half-size in UV space
 uniform vec3 u_glow_color;
-uniform float u_glow_inv_range;
-uniform float u_glow_inv_density_range;
+uniform float u_glow_width;   // glow decay distance in UV space
+uniform float u_glow_extent;  // maximum outward glow distance in UV space
 uniform float u_glow_intensity;
 void main() {
     vec2 d = abs(uv - 0.5) - u_screen_half;
-    // Exterior distance to the screen rectangle (0 inside).
     vec2 edge = max(d, vec2(0.0));
-    float hi = max(edge.x, edge.y);
-    float lo = min(edge.x, edge.y);
-    float dist = hi + lo * 0.375;  // cheap length approximation for soft glow
+    float dist = length(edge);
     if (dist <= 0.001) {
         discard;
     }
-    // Finite cubic falloff avoids the old full-quad exp() + dither cost while
-    // keeping the visible bias-light shoulder close to the previous glow.
-    float x = clamp(1.0 - dist * u_glow_inv_range, 0.0, 1.0);
-    float glow = x * x * x * u_glow_intensity;
-    // Pixel density decays from 100% at the screen edge to 0% at
-    // 0.75 * glow_width. This creates a sparse sunshine-like tail and avoids
-    // blending lots of nearly invisible pixels.
-    float density = clamp(1.0 - dist * u_glow_inv_density_range, 0.0, 1.0);
-    vec2 p = fract(gl_FragCoord.xy * vec2(0.1031, 0.1030));
-    p += vec2(dot(p, p.yx + 33.33));
-    float grain = fract((p.x + p.y) * p.x);
-    if (grain > density) {
-        discard;
-    }
-    if (glow <= 0.001) {
+
+    float width = max(u_glow_width, 0.001);
+    float extent = max(u_glow_extent, width * 1.5);
+    float near_glow = exp(-dist / width);
+    float far_glow = exp(-dist / (width * 2.8)) * 0.42;
+    float wrap = 1.0 - smoothstep(extent * 0.76, extent, dist);
+    float corner_soften = 1.0 - 0.18 * smoothstep(0.0, extent, min(edge.x, edge.y));
+    float glow = (near_glow + far_glow) * wrap * corner_soften * u_glow_intensity;
+    if (glow <= 0.0001) {
         discard;
     }
     glow = min(glow, 1.0);

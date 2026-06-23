@@ -313,17 +313,17 @@ Model List:
     resolutions:
     - 1536
 Depth Model: Distill-Any-Depth-Base
-Depth Strength: 2.4
-Depth Quick: Enhanced
+Depth Strength: 2.5
+Depth Quick: Standard
 Depth Resolution: 518
-Anti-aliasing: 1
-Depth Antialias Strength: 1.0
-Foreground Scale: 0.5
-IPD: 0.064
-Convergence: 0.25
+Anti-aliasing: 2
+Depth Antialias Strength: 2.0
+Foreground Scale: 0.0
+IPD: 0.066
+Convergence: 0.0
 Stereo Scale: 0.5
 Stereo Preset: cinema
-Stereo Quality: quality_4k
+Stereo Quality: fast
 Max Shift Ratio: 0.05
 Temporal: true
 Temporal Strength: 0.7
@@ -361,12 +361,11 @@ Stereo Mix: null
 CRF: 20
 Audio Delay: -0.15
 Controller Model: PICO
-Environment Model: Cinema
+Environment Model: Default
 Lossless Scaling Support: false
 Capture Tool: WindowsCaptureCUDA
 Fill 16:9: true
 Fix Viewer Aspect: false
 Stereo Output: 2
-Local VSync: true
 OpenVINO: null
-Synthetic View: quality_4k
+Synthetic View: fast

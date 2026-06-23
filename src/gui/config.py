@@ -59,6 +59,23 @@ for name in DEFAULT_MODEL_LIST:
     FAMILY_SIZE_TO_MODEL[(f, s)] = name
 
 
+def default_base_depth_model():
+    """Return the reset-time Base model, preferring the default model family."""
+    if not DEFAULT_MODEL_LIST:
+        return ""
+    default_family, _ = parse_model_name(DEFAULT_MODEL_LIST[0])
+    same_family_base = FAMILY_SIZE_TO_MODEL.get((default_family, "Base"))
+    if same_family_base:
+        return same_family_base
+    if "Distill-Any-Depth-Base" in DEFAULT_MODEL_LIST:
+        return "Distill-Any-Depth-Base"
+    for name in DEFAULT_MODEL_LIST:
+        _, size = parse_model_name(name)
+        if size == "Base":
+            return name
+    return DEFAULT_MODEL_LIST[0]
+
+
 DEFAULTS = {
     "Capture Mode": "Monitor",
     "Monitor Index": 1,
@@ -114,7 +131,7 @@ DEFAULTS = {
     "CRF": 20,
     "Audio Delay": -0.15,
     "Controller Model": "PICO",
-    "Environment Model": "None",
+    "Environment Model": "Default",
     "Lossless Scaling Support": False,
     "Capture Tool": "none",
     "Fill 16:9": True,
@@ -126,18 +143,20 @@ DEFAULTS = {
 def discover_environment_keys():
     """Return canonical environment keys saved to settings.yaml."""
     env_base = os.path.join(BASE_DIR, "xr_viewer", "environments")
-    options = ["None"]
+    options = []
     if not os.path.isdir(env_base):
-        return options
-    if os.path.exists(os.path.join(env_base, "environment.glb")):
-        options.append("Default")
+        return ["Default"]
     room_dirs = []
     for name in os.listdir(env_base):
         room_dir = os.path.join(env_base, name)
-        if os.path.isdir(room_dir) and not name.startswith(".") and os.path.isfile(os.path.join(room_dir, "environment.glb")):
+        if not os.path.isdir(room_dir) or name.startswith("."):
+            continue
+        if os.path.isfile(os.path.join(room_dir, "profile.json")) or os.path.isfile(os.path.join(room_dir, "environment.glb")):
             room_dirs.append(name)
-    options.extend(sorted(room_dirs, key=str.lower))
-    return options
+    if os.path.exists(os.path.join(env_base, "environment.glb")) and "Default" not in room_dirs:
+        room_dirs.append("Default")
+    options.extend(sorted(room_dirs, key=lambda key: (key.lower() != "default", key.lower())))
+    return options or ["Default"]
 
 
 def load_environment_display_names(keys=None):
@@ -145,8 +164,6 @@ def load_environment_display_names(keys=None):
     env_base = os.path.join(BASE_DIR, "xr_viewer", "environments")
     names_by_key = {}
     for key in keys or discover_environment_keys():
-        if key in ("None", "Default"):
-            continue
         names = {}
         profile_path = os.path.join(env_base, key, "profile.json")
         try:
@@ -169,7 +186,7 @@ def load_environment_display_names(keys=None):
 def environment_display_label(key, lang="EN", names_by_key=None):
     """Map canonical environment key to the localized GUI label."""
     if key == "None":
-        return "None"
+        key = "Default"
     if key == "Default":
         return "默认" if lang == "CN" else "Default"
     names = (names_by_key or {}).get(key) or {}
@@ -186,9 +203,9 @@ def environment_key_from_label(label, lang="EN", keys=None, names_by_key=None):
     for key in keys:
         if key.lower() == text.lower():
             return key
-    if text.lower() == "默认":
+    if text.lower() in ("默认", "none"):
         return "Default"
-    return "None" if "None" in keys else (keys[0] if keys else "None")
+    return "Default" if "Default" in keys else (keys[0] if keys else "Default")
 
 
 def get_environment_model_options(lang="EN", return_keys=False):

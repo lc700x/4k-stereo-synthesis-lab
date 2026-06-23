@@ -1,0 +1,37 @@
+{
+  "display_name": {
+    "EN": "Default",
+    "CN": "默认"
+  },
+  "glb": null,
+  "dark_room_background": false,
+  "xr_render_scale": 1.0,
+  "env_render_quality": "fast",
+  "env_shading_mode": "preview",
+  "screen_quality_filter": false,
+  "screen_quality_sharpness": 0.35,
+  "screen_quality_oversample": 1.0,
+  "xr_quad_layer_enabled": false,
+  "xr_quad_layer_debug_offset": 0.0,
+  "xr_quad_layer_stereo_boost": 1.0,
+  "glow_intensity": 0.42,
+  "glow_width": 1.25,
+  "glow_intensity_multiplier": 1.65,
+  "lighting_preset_index": 1,
+  "lighting_presets": [
+    {
+      "name": "Glow Off",
+      "glow_intensity_multiplier": 0.0
+    },
+    {
+      "name": "Glow On",
+      "glow_intensity_multiplier": 1.65,
+      "glow_intensity": 0.42,
+      "glow_width": 1.25
+    }
+  ],
+  "screen_light_intensity": 3.5,
+  "screen_light_dynamic": true,
+  "screen_light_sample_interval": 3,
+  "screen_light_lerp": 0.35
+}

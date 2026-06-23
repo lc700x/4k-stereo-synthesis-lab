@@ -1,5 +1,6 @@
 import os
 import socket
+import threading
 
 import requests
 
@@ -36,11 +37,36 @@ def is_cn_ip():
     return not (google_ok and hf_ok)
 
 
-def configure_huggingface_endpoint():
+_HF_ENDPOINT_DEFAULT = "https://hf-mirror.com"
+_HF_ENDPOINT_PROBE_LOCK = threading.Lock()
+_HF_ENDPOINT_PROBE_STARTED = False
+
+
+def _set_huggingface_endpoint_from_probe():
+    endpoint = "https://hf-mirror.com" if is_cn_ip() else "https://huggingface.co"
+    os.environ["HF_ENDPOINT"] = endpoint
+
+
+def _start_huggingface_endpoint_probe_once():
+    global _HF_ENDPOINT_PROBE_STARTED
+    with _HF_ENDPOINT_PROBE_LOCK:
+        if _HF_ENDPOINT_PROBE_STARTED:
+            return
+        _HF_ENDPOINT_PROBE_STARTED = True
+    thread = threading.Thread(
+        target=_set_huggingface_endpoint_from_probe,
+        name="HFEndpointProbe",
+        daemon=True,
+    )
+    thread.start()
+
+
+def configure_huggingface_endpoint(async_probe=True):
     os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
     os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
-    if is_cn_ip():
-        os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-    else:
-        os.environ["HF_ENDPOINT"] = "https://huggingface.co"
-    return os.environ["HF_ENDPOINT"]
+    if not async_probe:
+        _set_huggingface_endpoint_from_probe()
+        return os.environ["HF_ENDPOINT"]
+    endpoint = os.environ.setdefault("HF_ENDPOINT", _HF_ENDPOINT_DEFAULT)
+    _start_huggingface_endpoint_probe_once()
+    return endpoint

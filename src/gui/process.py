@@ -9,7 +9,8 @@ import subprocess
 import traceback
 import flet as ft
 from utils import OS_NAME, DEFAULT_PORT, shutdown_event, read_yaml
-from .config import DEFAULTS, save_yaml
+from . import devices as devices_module
+from .config import DEFAULTS, default_base_depth_model, save_yaml
 from .paths import BASE_DIR, DIAG_LOG, LOG_DIR, LOG_FILE, STOP_REQUEST_FILE
 from .capture_sources import get_primary_monitor_index, list_windows
 from .localization import UI_MESSAGES
@@ -419,8 +420,14 @@ class GUIProcessMixin:
         current_device_label = self.device_dd.value
         current_device_idx = self.device_label_to_index.get(current_device_label, DEFAULTS["Computing Device"])
         current_primary = get_primary_monitor_index()
+        is_nvidia_cuda = "CUDA" in (current_device_label or "") and not devices_module.IS_ROCM
         dynamic_defaults = DEFAULTS.copy()
         dynamic_defaults["Monitor Index"] = current_primary
+        dynamic_defaults["Depth Model"] = default_base_depth_model()
+        dynamic_defaults["XR Preview Window"] = False
+        if is_nvidia_cuda:
+            dynamic_defaults["torch.compile"] = True
+            dynamic_defaults["TensorRT"] = True
         self.apply_config(dynamic_defaults, keep_optional=False)
         self.locale = current_locale
         self.lang_dd.value = "English" if current_locale == "EN" else "简体中文"

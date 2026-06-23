@@ -98,8 +98,10 @@ class GUIConfigMixin:
 
         saved_ctrl = cfg.get("Controller Model", DEFAULTS.get("Controller Model", "PICO"))
         self.ctrl_model_dd.value = saved_ctrl if saved_ctrl in self.ctrl_model_dd.options else "PICO"
-        saved_env = cfg.get("Environment Model", DEFAULTS.get("Environment Model", "None"))
-        self.env_key = saved_env if saved_env in self.env_model_keys else (self.env_model_keys[0] if self.env_model_keys else "None")
+        saved_env = cfg.get("Environment Model", DEFAULTS.get("Environment Model", "Default"))
+        if str(saved_env).strip().lower() == "none":
+            saved_env = "Default"
+        self.env_key = saved_env if saved_env in self.env_model_keys else (self.env_model_keys[0] if self.env_model_keys else "Default")
         self.env_model_dd.value = environment_display_label(self.env_key, self.locale, self.env_model_display_names)
         self.torch_compile_cb.value = cfg.get("torch.compile")
         if self.torch_compile_cb.value is None:
@@ -404,7 +406,7 @@ class GUIConfigMixin:
     @staticmethod
     def _display_to_preset(value):
         mapping = {
-            "Cinema": "cinema", "影院": "cinema", "电影 / 偏均衡": "cinema",
+            "Cinema": "cinema", "Cinema / banlance": "cinema", "影院": "cinema", "电影 / 偏均衡": "cinema",
             "Game / Low Latency": "game_low_latency", "游戏 / 低延迟": "game_low_latency",
             "Still Image / HQ": "still_image_hq", "图片 / 高质量": "still_image_hq",
             "Debug / Export": "debug_export", "调试 / 导出": "debug_export",

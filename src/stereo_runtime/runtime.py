@@ -175,6 +175,7 @@ class OpenXRRuntimeResult:
     depth: torch.Tensor
     left_eye: torch.Tensor
     right_eye: torch.Tensor
+    source_rgb: torch.Tensor | None = None
     debug_info: dict[str, Any] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
     provider_info: dict[str, Any] = field(default_factory=dict)
@@ -495,9 +496,31 @@ class StereoRuntime:
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
 
-        render_start = time.perf_counter()
-        openxr = render_openxr_stereo(rgb_frame, depth, openxr_config)
-        openxr_render_ms = (time.perf_counter() - render_start) * 1000.0
+        prewarp_eyes = _openxr_prewarp_eyes_enabled()
+        openxr_render_ms = 0.0
+        pack_ms = 0.0
+        pack_backend = "none"
+        source_rgb = rgb_frame
+        if prewarp_eyes:
+            render_start = time.perf_counter()
+            openxr = render_openxr_stereo(rgb_frame, depth, openxr_config)
+            openxr_render_ms = (time.perf_counter() - render_start) * 1000.0
+
+            pack_start = time.perf_counter()
+            left_eye = openxr.left_eye
+            right_eye = openxr.right_eye
+            if _openxr_runtime_output_uint8_enabled() and (left_eye.is_floating_point() or right_eye.is_floating_point()):
+                left_eye = left_eye.detach().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8)
+                right_eye = right_eye.detach().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8)
+                pack_backend = "torch_float_eye_to_uint8"
+            pack_ms = (time.perf_counter() - pack_start) * 1000.0
+            output_format = "openxr_eye_views"
+            render_backend = dict(openxr.debug_info)
+        else:
+            left_eye = rgb_frame
+            right_eye = rgb_frame
+            output_format = "openxr_rgb_depth"
+            render_backend = {"backend": "openxr_viewer_shader_dibr"}
         total_ms = (time.perf_counter() - total_start) * 1000.0
 
         timing = {
@@ -506,6 +529,7 @@ class StereoRuntime:
             "depth_postprocess_ms": float(profile.postprocess_ms),
             "depth_total_ms": float(depth_total_ms),
             "openxr_render_ms": float(openxr_render_ms),
+            "pack_ms": float(pack_ms),
             "total_ms": float(total_ms),
         }
         memory = self._collect_memory_stats(rgb_frame)
@@ -513,12 +537,14 @@ class StereoRuntime:
         self.last_memory = memory
         self.stats.update(timing, memory)
 
-        debug = dict(openxr.debug_info)
+        debug = dict(render_backend)
         debug["runtime_depth_backend"] = self.depth_config.backend
-        debug["runtime_output_format"] = "openxr_eye_views"
-        debug["runtime_output_dtype"] = _runtime_eye_dtype(openxr.left_eye, openxr.right_eye)
-        debug["runtime_output_eye_size"] = _runtime_eye_size(openxr.left_eye)
+        debug["runtime_output_format"] = output_format
+        debug["runtime_output_dtype"] = _runtime_eye_dtype(left_eye, right_eye)
+        debug["runtime_output_eye_size"] = _runtime_eye_size(left_eye)
+        debug["runtime_output_pack_backend"] = pack_backend
         if openxr_config is not None:
+            debug["openxr_ipd"] = float(openxr_config.ipd)
             debug["openxr_depth_strength"] = float(openxr_config.depth_strength)
             debug["openxr_stereo_scale"] = float(openxr_config.stereo_scale)
             debug["openxr_max_shift_ratio"] = float(openxr_config.max_shift_ratio)
@@ -526,11 +552,27 @@ class StereoRuntime:
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         if memory:
             debug.update(memory)
+        if total_ms >= float(os.environ.get("D2S_SLOW_RUNTIME_LOG_MS", "120") or "120"):
+            print(
+                "[StereoRuntime] slow openxr frame:"
+                f" total_ms={total_ms:.1f}"
+                f" depth_total_ms={depth_total_ms:.1f}"
+                f" depth_model_ms={float(profile.model_ms):.1f}"
+                f" depth_postprocess_ms={float(profile.postprocess_ms):.1f}"
+                f" openxr_render_ms={openxr_render_ms:.1f}"
+                f" pack_ms={pack_ms:.1f}"
+                f" output_dtype={debug.get('runtime_output_dtype', 'n/a')}"
+                f" eye_size={debug.get('runtime_output_eye_size', 'n/a')}"
+                f" render_backend={debug.get('backend', debug.get('openxr_backend', 'n/a'))}"
+                f" depth_backend={debug.get('runtime_depth_backend', 'n/a')}",
+                flush=True,
+            )
 
         return OpenXRRuntimeResult(
             depth=depth,
-            left_eye=openxr.left_eye,
-            right_eye=openxr.right_eye,
+            left_eye=left_eye,
+            right_eye=right_eye,
+            source_rgb=source_rgb,
             debug_info=debug,
             timing=timing,
             provider_info=self.provider_report(),
@@ -685,7 +727,19 @@ def _runtime_eye_size(eye) -> str:
         return f"{int(shape[1])}x{int(shape[0])}"
     return "unknown"
 def _runtime_output_uint8_enabled() -> bool:
-    return str(os.environ.get("D2S_RUNTIME_OUTPUT_UINT8", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}
+    return _env_flag("D2S_RUNTIME_OUTPUT_UINT8", "0")
+
+
+def _openxr_runtime_output_uint8_enabled() -> bool:
+    return _env_flag("D2S_OPENXR_RUNTIME_OUTPUT_UINT8", os.environ.get("D2S_RUNTIME_OUTPUT_UINT8", "1"))
+
+
+def _openxr_prewarp_eyes_enabled() -> bool:
+    return _env_flag("D2S_OPENXR_PREWARP_EYES", "0")
+
+
+def _env_flag(name: str, default: object = "0") -> bool:
+    return str(os.environ.get(name, default) or default).strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _fast_plus_fused_enabled() -> bool:

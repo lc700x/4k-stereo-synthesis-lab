@@ -89,7 +89,7 @@ class OverlayMixin:
             self._cached_sbs_fps       = self.sbs_fps
             self._cached_latency       = self.total_latency
             self._cached_screen_width  = self.screen_width
-            self._cached_screen_height = self.screen_height if self.screen_height is not None else 0.0
+            self._cached_screen_height = self.screen_width * 9.0 / 16.0
             self._cached_screen_dist   = self.screen_distance
             self._cached_screen_curved = self._screen_curved
             self._cached_depth_ratio   = self.depth_ratio
@@ -475,7 +475,7 @@ class OverlayMixin:
                 GAP = 8
                 cy  = (sh - 32) // 2
 
-                h = self.screen_height if self.screen_height is not None else 0.0
+                h = self.screen_width * 9.0 / 16.0
 
                 def _tw(text, font):
                     try:

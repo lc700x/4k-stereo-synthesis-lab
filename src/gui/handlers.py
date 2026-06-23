@@ -1,6 +1,7 @@
 """GUI Handler Mixin — event handlers, visibility sync, i18n, audio, refresh."""
 import os
 import re
+import asyncio
 import subprocess
 import flet as ft
 from utils import (
@@ -51,12 +52,12 @@ class GUIHandlerMixin:
 
     def _preset_to_display(self, value):
         mapping = {
-            "auto": "Cinema", "cinema": "Cinema",
+            "auto": "Cinema / banlance", "cinema": "Cinema / banlance",
             "game_low_latency": "Game / Low Latency",
             "still_image_hq": "Still Image / HQ",
             "debug_export": "Debug / Export",
         }
-        key = mapping.get(str(value or "cinema").strip().lower(), "Cinema")
+        key = mapping.get(str(value or "cinema").strip().lower(), "Cinema / banlance")
         return UI_MESSAGES[self.locale].get(key, key) if hasattr(self, "locale") else key
 
     # ── model handlers ──
@@ -722,27 +723,50 @@ class GUIHandlerMixin:
 
     # ── stream URL ──
 
-    def update_stream_url(self, e=None):
+    def _format_stream_url(self, local_ip, protocol, port, stream_key):
+        if self.run_mode_key in ["MJPEG Streamer", "Legacy Streamer"]:
+            return f"http://{local_ip}:{port}/"
+        templates = {
+            "RTMP": f"rtmp://{local_ip}:{port}/{stream_key}",
+            "RTSP": f"rtsp://{local_ip}:{port}/{stream_key}",
+            "HLS": f"http://{local_ip}:{port}/{stream_key}/",
+            "HLS M3U8": f"http://{local_ip}:{port}/{stream_key}/index.m3u8",
+            "WebRTC": f"http://{local_ip}:{port}/{stream_key}/",
+        }
+        return templates.get(protocol, f"http://{local_ip}:{port}/{stream_key}/")
+
+    async def _refresh_local_ip_async(self):
+        try:
+            local_ip = await asyncio.to_thread(get_local_ip)
+        except Exception:
+            local_ip = "127.0.0.1"
+        if local_ip and local_ip != getattr(self, "_local_ip_cache", None):
+            self._local_ip_cache = local_ip
+            self.update_stream_url(resolve_ip=False)
+        self._local_ip_task = None
+
+    def _schedule_local_ip_refresh(self):
+        task = getattr(self, "_local_ip_task", None)
+        if task is not None and not task.done():
+            return
+        try:
+            self._local_ip_task = asyncio.create_task(self._refresh_local_ip_async())
+        except RuntimeError:
+            self._local_ip_cache = get_local_ip()
+
+    def update_stream_url(self, e=None, resolve_ip=True):
         if not self.stream_container.visible:
             return
         protocol = self.stream_proto_dd.value
         port = self.stream_port_tf.value or str(DEFAULT_PORT)
         stream_key = self.stream_key_tf.value or "live"
-        local_ip = get_local_ip()
-        if self.run_mode_key in ["MJPEG Streamer", "Legacy Streamer"]:
-            self.stream_url_tf.content.controls[0].value = f"http://{local_ip}:{port}/"
-        else:
-            templates = {
-                "RTMP": f"rtmp://{local_ip}:{port}/{stream_key}",
-                "RTSP": f"rtsp://{local_ip}:{port}/{stream_key}",
-                "HLS": f"http://{local_ip}:{port}/{stream_key}/",
-                "HLS M3U8": f"http://{local_ip}:{port}/{stream_key}/index.m3u8",
-                "WebRTC": f"http://{local_ip}:{port}/{stream_key}/",
-            }
-            self.stream_url_tf.content.controls[0].value = templates.get(protocol, f"http://{local_ip}:{port}/{stream_key}/")
+        local_ip = getattr(self, "_local_ip_cache", "127.0.0.1")
+        self.stream_url_tf.content.controls[0].value = self._format_stream_url(local_ip, protocol, port, stream_key)
         self._safe_update(self.stream_url_tf)
         self.preview_btn.visible = protocol not in ["RTMP", "RTSP"]
         self._safe_update(self.preview_btn)
+        if resolve_ip:
+            self._schedule_local_ip_refresh()
 
     def _on_stream_protocol_change(self, e):
         self.stream_protocol_key = e.control.value

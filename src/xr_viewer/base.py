@@ -74,8 +74,6 @@ class ScreenEffectsMixin:
             return
         if self.screen_height is None:
             return
-        self._render_shadow(mgl_fbo, vp_mat)
-        self._render_ground_light(mgl_fbo, vp_mat)
         self._render_glow(mgl_fbo, vp_mat)
 
     def _render_screen_foreground_effects(self, mgl_fbo, vp_mat):
@@ -105,17 +103,20 @@ class ScreenEffectsMixin:
         glow_margin = glow_width * 6.0
         glow_w = self.screen_width + 2.0 * glow_margin
         glow_h = self.screen_height + 2.0 * glow_margin
-        uv_glow_width = glow_width / max(glow_w, glow_h, 1e-6)
+        uv_scale = max(glow_w, glow_h, 1e-6)
+        uv_glow_width = glow_width / uv_scale
+        uv_glow_extent = glow_margin / uv_scale
 
         self.ctx.depth_mask = False
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        model = self._screen_effect_model(glow_w, glow_h, z_offset=-0.002)
+        model = self._screen_effect_model(glow_w, glow_h, z_offset=-self._screen_back_offset(1.0))
         mvp = vp_mat @ model
         self._glow_prog['u_mvp'].write(mvp.T.astype('f4').tobytes())
         self._glow_prog['u_screen_half'].value = (self.screen_width / glow_w / 2.0, self.screen_height / glow_h / 2.0)
         self._glow_prog['u_glow_color'].value = tuple(getattr(self, '_glow_color', (0.30, 0.55, 1.0)))
         self._glow_prog['u_glow_width'].value = uv_glow_width
+        self._glow_prog['u_glow_extent'].value = uv_glow_extent
         self._glow_prog['u_glow_intensity'].value = intensity
         self._glow_vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
@@ -135,7 +136,7 @@ class ScreenEffectsMixin:
         self.ctx.depth_mask = False
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        model = self._screen_effect_model(shadow_w, shadow_h, z_offset=-0.004, y_offset=y_off)
+        model = self._screen_effect_model(shadow_w, shadow_h, z_offset=-self._screen_back_offset(1.2), y_offset=y_off)
         mvp = vp_mat @ model
         self._shadow_prog['u_mvp'].write(mvp.T.astype('f4').tobytes())
         self._shadow_prog['u_opacity'].value = opacity
@@ -157,7 +158,7 @@ class ScreenEffectsMixin:
         self.ctx.depth_mask = False
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        model = self._screen_effect_model(ground_w, ground_h, z_offset=-0.006, y_offset=y_off)
+        model = self._screen_effect_model(ground_w, ground_h, z_offset=-self._screen_back_offset(1.4), y_offset=y_off)
         mvp = vp_mat @ model
         self._ground_prog['u_mvp'].write(mvp.T.astype('f4').tobytes())
         self._ground_prog['u_color'].value = tuple(getattr(self, '_ground_light_color', (0.25, 0.45, 1.0)))
@@ -174,6 +175,7 @@ class ScreenEffectsMixin:
         if prog is None or vao is None:
             return
         alpha = max(float(getattr(self, '_border_alpha', 1.0)), 0.35)
+        self.ctx.disable(moderngl.DEPTH_TEST)
         self.ctx.depth_mask = False
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
@@ -182,12 +184,13 @@ class ScreenEffectsMixin:
         model = self._screen_effect_model(border_w, border_h, z_offset=-0.001)
         mvp = vp_mat @ model
         prog['u_mvp'].write(mvp.T.astype('f4').tobytes())
-        prog['u_color'].value = (0.65, 0.68, 0.72)
+        prog['u_color'].value = (0.0, 0.0, 0.0)
         prog['u_alpha'].value = alpha
         prog['u_border_uv'].value = (0.015, 0.022)
         vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
         self.ctx.depth_mask = True
+        self.ctx.enable(moderngl.DEPTH_TEST)
 
 class OpenXRViewer(ScreenEffectsMixin, OpenXRViewerCore, OverlayMixin):
     """No-room viewer.

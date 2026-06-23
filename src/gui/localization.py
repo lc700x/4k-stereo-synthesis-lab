@@ -21,7 +21,7 @@ MESSAGE_CATALOGS = {
         "Standard": "Standard",
         "Enhanced": "Enhanced",
         "Stereo Mode:": "Stereo Mode:",
-        "Cinema": "Cinema",
+        "Cinema": "Cinema / banlance",
         "Game / Low Latency": "Game / Low Latency",
         "Still Image / HQ": "Still Image / HQ",
         "Debug / Export": "Debug / Export",

@@ -10,6 +10,7 @@ __all__ = [
     '_get_desktop_size',
     '_send_vscroll',
     '_send_hscroll',
+    '_U32',
     '_MOUSEEVENTF_LEFTDOWN',
     '_MOUSEEVENTF_LEFTUP',
     '_MOUSEEVENTF_RIGHTDOWN',

@@ -1,14 +1,14 @@
 glcontext==3.0.0
 glfw==2.10.0
 moderngl==5.12.0
-opencv-python==4.13.0.92
-transformers==5.12.1
-huggingface_hub==1.20.1
+opencv-python==4.12.0.88
+transformers==4.56.2
+huggingface_hub==0.36.2
 hf_xet==1.5.1
 safetensors==0.8.0
-numpy==2.5.0
+numpy==2.2.6
 pillow==12.2.0
-onnx==1.22.0
+onnx==1.20.1
 onnxscript==0.7.0
 mss==10.2.0
 pynput==1.8.2
@@ -28,8 +28,8 @@ setuptools==82.0.1
 # for da3
 omegaconf==2.3.1
 addict==2.4.0
-evo==1.36.5
-e3nn==0.6.0
+evo==1.34.2
+e3nn==0.5.9
 
 # gui
 flet==0.85.3

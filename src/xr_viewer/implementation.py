@@ -3807,7 +3807,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         try:
             self._init_openxr()
         except Exception as e:
-            print("[OpenXRViewer] OpenXR init failed")
+            if getattr(self, '_is_no_headset_error', None) and self._is_no_headset_error(e):
+                print("[OpenXRViewer] Headset not available yet, entering wait mode")
+            else:
+                print(f"[OpenXRViewer] OpenXR init failed: {type(e).__name__}: {e}")
             self._cleanup_partial_openxr(destroy_instance=False)
             self._enter_preview_only_wait()
 

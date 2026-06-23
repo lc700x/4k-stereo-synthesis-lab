@@ -52,12 +52,12 @@ class GUIHandlerMixin:
 
     def _preset_to_display(self, value):
         mapping = {
-            "auto": "Cinema / banlance", "cinema": "Cinema / banlance",
+            "auto": "Cinema", "cinema": "Cinema",
             "game_low_latency": "Game / Low Latency",
-            "still_image_hq": "Still Image / HQ",
+            "still_image_hq": "Image  / High Quality",
             "debug_export": "Debug / Export",
         }
-        key = mapping.get(str(value or "cinema").strip().lower(), "Cinema / banlance")
+        key = mapping.get(str(value or "cinema").strip().lower(), "Cinema")
         return UI_MESSAGES[self.locale].get(key, key) if hasattr(self, "locale") else key
 
     # ── model handlers ──
@@ -567,7 +567,7 @@ class GUIHandlerMixin:
         self.stereo_scale_label.value = t["Stereo Scale:"]
         self.stereo_preset_label.value = t["Stereo Mode:"]
         preset_key = self._display_to_preset(self.stereo_preset_dd.value)
-        self.stereo_preset_dd.options = [t["Cinema"], t["Game / Low Latency"], t["Still Image / HQ"], t["Debug / Export"]]
+        self.stereo_preset_dd.options = [t["Cinema"], t["Game / Low Latency"], t["Image  / High Quality"], t["Debug / Export"]]
         self.stereo_preset_dd.value = self._preset_to_display(preset_key)
         self.stereo_quality_label.value = t["Synthetic View:"]
         stereo_quality_key = self._display_to_stereo_quality(self.stereo_quality_dd.value)

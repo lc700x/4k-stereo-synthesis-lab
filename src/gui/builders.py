@@ -310,8 +310,8 @@ class GUIBuilderMixin:
         # Row 5: Stereo runtime mode and quality
         self.stereo_preset_label = ft.Text("Stereo Mode:", size=FONT_SIZE, width=S(130))
         self.stereo_preset_dd = CompactDropdown(
-            options=["Cinema / banlance", "Game / Low Latency", "Still Image / HQ", "Debug / Export"],
-            value="Cinema / banlance", width=S(130), on_select=self.on_stereo_preset_change)
+            options=["Cinema", "Game / Low Latency", "Image  / High Quality", "Debug / Export"],
+            value="Cinema", width=S(130), on_select=self.on_stereo_preset_change)
         self.stereo_quality_label = ft.Text("Synthetic View:", size=FONT_SIZE, width=S(130))
         self.stereo_quality_dd = CompactDropdown(options=self._stereo_quality_options(),
             value=self._stereo_quality_to_display("quality_4k"), width=S(130))

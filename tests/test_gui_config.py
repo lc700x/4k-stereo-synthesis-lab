@@ -209,8 +209,8 @@ def test_stereo_preset_auto_option_removed():
     config_text = _config_source().read_text(encoding="utf-8")
     builders_text = _file_text("builders.py")
     assert '"Stereo Preset": "cinema"' in config_text
-    assert 'options=["Cinema / banlance", "Game / Low Latency", "Still Image / HQ", "Debug / Export"]' in builders_text
-    assert 'options=["Auto", "Cinema / banlance"' not in all_text
+    assert 'options=["Cinema", "Game / Low Latency", "Image  / High Quality", "Debug / Export"]' in builders_text
+    assert 'options=["Auto", "Cinema"' not in all_text
     assert '"Auto": "auto"' not in all_text
     assert '"自动": "auto"' not in all_text
 

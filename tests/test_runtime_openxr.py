@@ -55,7 +55,7 @@ def test_process_openxr_frame_defaults_to_rgb_depth_runtime_result():
     assert result.debug_info["backend"] == "openxr_viewer_shader_dibr"
 
 
-def test_openxr_rgb_depth_debug_info_carries_stereo_scale():
+def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
     config = StereoRuntimeConfig(
         model_id="Distill-Any-Depth-Base",
         cache_dir="models",
@@ -67,11 +67,12 @@ def test_openxr_rgb_depth_debug_info_carries_stereo_scale():
 
     result = runtime.process_openxr_frame(
         rgb,
-        OpenXRRenderConfig(ipd=0.064, stereo_scale=0.5, depth_strength=2.0),
+        OpenXRRenderConfig(ipd=0.064, stereo_scale=0.5, depth_strength=2.0, max_shift_ratio=0.0),
     )
 
     assert result.debug_info["openxr_ipd"] == 0.064
     assert result.debug_info["openxr_stereo_scale"] == 0.5
+    assert result.debug_info["openxr_max_shift_ratio"] == 0.0
 
 
 def test_openxr_rgb_depth_viewer_keeps_physical_ipd_and_stores_stereo_scale():
@@ -79,6 +80,7 @@ def test_openxr_rgb_depth_viewer_keeps_physical_ipd_and_stores_stereo_scale():
 
     assert 'self.ipd_uv = max(0.0, float(debug_info["openxr_ipd"]))' in source
     assert "self._runtime_rgb_depth_stereo_scale = max(0.0, float(debug_info.get(\"openxr_stereo_scale\", 1.0)))" in source
+    assert "self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(debug_info.get(\"openxr_max_shift_ratio\", 0.05)))" in source
     assert 'float(debug_info["openxr_ipd"])) * max(0.0, stereo_scale)' not in source
 
 

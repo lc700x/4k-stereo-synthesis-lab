@@ -90,16 +90,17 @@ def test_default_glow_off_uses_blank_fast_path(monkeypatch):
     assert not viewer._render_glow_called
 
 
-def test_default_profile_starts_with_glow_off():
+def test_default_profile_starts_with_surround_glow():
     import json
 
     profile_path = SRC / "xr_viewer" / "environments" / "Default" / "profile.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
-    assert profile["glow_mode"] == "off"
+    assert profile["glow_mode"] == "surround"
     assert profile["glow_intensity_multiplier"] == 0.0
-    assert profile["glow_shell_intensity_multiplier"] == 0.0
+    assert profile["glow_shell_intensity_multiplier"] == 1.85
     assert profile["lighting_preset_index"] == 0
+    assert profile["lighting_presets"][0]["glow_mode"] == "surround"
 
 
 def test_default_glow_on_keeps_background_effect_path(monkeypatch):
@@ -114,15 +115,22 @@ def test_default_glow_on_keeps_background_effect_path(monkeypatch):
     viewer._glow_intensity_multiplier = 1.0
     viewer._glow_shell_intensity_multiplier = 0.0
     viewer._render_glow_called = False
+    viewer._render_glow_shell_call = None
 
     def _render_glow(*_args):
         viewer._render_glow_called = True
 
+    def _render_glow_shell(*args, **kwargs):
+        viewer._render_glow_shell_call = (args, kwargs)
+
     viewer._render_glow = _render_glow
+    viewer._render_glow_shell = _render_glow_shell
     viewer._render_screen_background_effects(None, None)
 
     assert not viewer._default_blank_fast_path()
-    assert viewer._render_glow_called
+    assert not viewer._render_glow_called
+    assert viewer._render_glow_shell_call is not None
+    assert viewer._render_glow_shell_call[1]["intensity_multiplier"] == 0.72
 
 
 def test_default_surround_glow_uses_shell_render_path(monkeypatch):
@@ -229,19 +237,25 @@ def test_default_background_effects_skip_dark_room_board(monkeypatch):
     viewer._glow_intensity_multiplier = 1.0
     viewer._current_view_mat = object()
     viewer._render_glow_called = False
+    viewer._render_glow_shell_called = False
     viewer._render_env_model_called = False
 
     def _render_glow(*_args):
         viewer._render_glow_called = True
 
+    def _render_glow_shell(*_args, **_kwargs):
+        viewer._render_glow_shell_called = True
+
     def _render_env_model(*_args):
         viewer._render_env_model_called = True
 
     viewer._render_glow = _render_glow
+    viewer._render_glow_shell = _render_glow_shell
     viewer._render_env_model = _render_env_model
     viewer._render_screen_background_effects(None, None)
 
-    assert viewer._render_glow_called
+    assert not viewer._render_glow_called
+    assert viewer._render_glow_shell_called
     assert not viewer._render_env_model_called
 
 
@@ -255,13 +269,25 @@ def test_default_glow_mode_cycle_from_y(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._environment_model = "Default"
     viewer._active_environment = None
-    viewer._glow_mode = "veil"
-    viewer._glow_intensity_multiplier = 1.85
-    viewer._glow_shell_intensity_multiplier = 0.0
+    viewer._glow_mode = "surround"
+    viewer._glow_intensity_multiplier = 0.0
+    viewer._glow_shell_intensity_multiplier = 1.85
     viewer._env_profile = {
         "glow_intensity_multiplier": 0.0,
         "glow_shell_intensity_multiplier": 0.0,
         "lighting_presets": [
+            {
+                "name": "Surround Glow",
+                "glow_mode": "surround",
+                "glow_intensity_multiplier": 0.0,
+                "glow_shell_intensity_multiplier": 1.85,
+            },
+            {
+                "name": "Screen Glow",
+                "glow_mode": "screen",
+                "glow_intensity_multiplier": 1.85,
+                "glow_shell_intensity_multiplier": 0.0,
+            },
             {
                 "name": "Glow Off",
                 "glow_mode": "off",
@@ -282,31 +308,9 @@ def test_default_glow_mode_cycle_from_y(monkeypatch):
                 "glow_shell_intensity_multiplier": 0.0,
                 "frosted_glow_intensity": 3.0,
             },
-            {
-                "name": "Surround Glow",
-                "glow_mode": "surround",
-                "glow_intensity_multiplier": 0.0,
-                "glow_shell_intensity_multiplier": 1.85,
-            },
-            {
-                "name": "Screen Glow",
-                "glow_mode": "screen",
-                "glow_intensity_multiplier": 1.85,
-                "glow_shell_intensity_multiplier": 0.0,
-            },
         ],
     }
     viewer._save_glow_to_builtin_profile = lambda: None
-
-    assert viewer._cycle_glow_mode_from_y()
-    assert viewer._glow_mode == "frosted"
-    assert viewer._glow_intensity_multiplier == 1.85
-    assert viewer._glow_shell_intensity_multiplier == 0.0
-
-    assert viewer._cycle_glow_mode_from_y()
-    assert viewer._glow_mode == "surround"
-    assert viewer._glow_intensity_multiplier == 0.0
-    assert viewer._glow_shell_intensity_multiplier == 1.85
 
     assert viewer._cycle_glow_mode_from_y()
     assert viewer._glow_mode == "screen"
@@ -322,6 +326,16 @@ def test_default_glow_mode_cycle_from_y(monkeypatch):
     assert viewer._glow_mode == "veil"
     assert viewer._glow_intensity_multiplier == 1.85
     assert viewer._glow_shell_intensity_multiplier == 0.0
+
+    assert viewer._cycle_glow_mode_from_y()
+    assert viewer._glow_mode == "frosted"
+    assert viewer._glow_intensity_multiplier == 1.85
+    assert viewer._glow_shell_intensity_multiplier == 0.0
+
+    assert viewer._cycle_glow_mode_from_y()
+    assert viewer._glow_mode == "surround"
+    assert viewer._glow_intensity_multiplier == 0.0
+    assert viewer._glow_shell_intensity_multiplier == 1.85
 
 
 def test_frosted_glow_shader_uses_screen_texture_bright_blur():
@@ -364,9 +378,14 @@ def test_surround_glow_shell_uses_screen_border_color():
     assert "sample_border_color" in glsl_text
     assert "sample_region_reflection" in glsl_text
     assert "vec2 grid = vec2(16.0, 9.0)" in glsl_text
-    assert "textureLod(u_glow_tex, sp, 2.2)" in glsl_text
+    assert "top_col" in glsl_text
+    assert "bottom_col" in glsl_text
+    assert "left_col" in glsl_text
+    assert "right_col" in glsl_text
+    assert "edge_band_depth" in glsl_text
+    assert "vertical_edges" in glsl_text
+    assert "textureLod(u_glow_tex, sp, 0.0)" in glsl_text
     assert "region_mix" in glsl_text
-    assert "side_weight" in glsl_text
 
 
 def test_screen_glow_sampler_builds_16x9_color_grid(monkeypatch):

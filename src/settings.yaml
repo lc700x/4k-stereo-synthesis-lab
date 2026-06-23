@@ -1,7 +1,7 @@
 Capture Mode: Monitor
 Monitor Index: 1
 Window Title: ''
-Show FPS: true
+Show FPS: false
 Model List:
   Distill-Any-Depth-Small:
     resolutions:
@@ -313,24 +313,28 @@ Model List:
     resolutions:
     - 1536
 Depth Model: Distill-Any-Depth-Base
-Depth Strength: 2.0
-Depth Quick: Standard
+Depth Strength: 3.5
+Depth Quick: Enhanced
 Depth Resolution: 518
-Anti-aliasing: 2
-Depth Antialias Strength: 2.0
+Anti-aliasing: 1
+Depth Antialias Strength: 1.0
 Foreground Scale: 0.5
-IPD: 0.064
-Convergence: 0.0
-Stereo Scale: 0.5
+IPD: 0.03
+Convergence: 0.25
+Stereo Scale: 0.3
 Stereo Preset: cinema
-Stereo Quality: fast
-Max Shift Ratio: 0.05
+Stereo Quality: quality_4k
+Max Shift Ratio: 0.03
 Temporal: true
 Temporal Strength: 0.7
 Auto Scene Reset: true
 Scene Reset Threshold: 0.22
 Reset Cooldown Frames: 3
 Edge Dilation: 2
+Mask Feather Radius: 3
+Hole Fill Mode: soft_low_ghost
+Hole Fill Radius: 3
+Hole Fill Strength: 1.0
 Edge Threshold: 0.04
 Cross Eyed: false
 Anaglyph Method: red_cyan
@@ -368,4 +372,4 @@ Fill 16:9: true
 Fix Viewer Aspect: false
 Stereo Output: 2
 OpenVINO: null
-Synthetic View: fast
+Synthetic View: quality_4k

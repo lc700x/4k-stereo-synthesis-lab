@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import Callable
 
 from stereo_runtime import stereo_config_for_preset
-from stereo_runtime.adapter import preset_for_runtime_mode
+from stereo_runtime.adapter import _normalize_hole_fill_mode, preset_for_runtime_mode
 
 def read_yaml(path: str) -> dict:
     import yaml
@@ -33,6 +33,10 @@ def runtime_stereo_overrides(runtime) -> dict:
         "depth_antialias_strength": config.depth_antialias_strength,
         "edge_threshold": config.edge_threshold,
         "edge_dilation": config.edge_dilation,
+        "mask_feather_radius": config.mask_feather_radius,
+        "hole_fill_mode": config.hole_fill_mode,
+        "hole_fill_radius": config.hole_fill_radius,
+        "hole_fill_strength": config.hole_fill_strength,
         "screen_edge_mask_suppression": config.screen_edge_mask_suppression,
         "cross_eyed": config.cross_eyed,
         "anaglyph_method": config.anaglyph_method,
@@ -66,6 +70,13 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
     ipd_mm = float(ipd_raw)
     if ipd_mm <= 1.0:
         ipd_mm *= 1000.0
+    has_hole_fill_mode = "Hole Fill Mode" in settings_dict
+    hole_fill_mode, hole_fill_radius, hole_fill_strength = _normalize_hole_fill_mode(
+        settings_dict.get("Hole Fill Mode", getattr(config, "hole_fill_mode", "balanced"))
+    )
+    if not has_hole_fill_mode:
+        hole_fill_radius = int(settings_dict.get("Hole Fill Radius", hole_fill_radius))
+        hole_fill_strength = float(settings_dict.get("Hole Fill Strength", hole_fill_strength))
     values = {
         "depth_strength": float(settings_dict.get("Depth Strength", config.depth_strength)),
         "convergence": float(settings_dict.get("Convergence", config.convergence)),
@@ -100,6 +111,10 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
             )
         ),
         "edge_dilation": int(settings_dict.get("Edge Dilation", config.edge_dilation)),
+        "mask_feather_radius": int(settings_dict.get("Mask Feather Radius", config.mask_feather_radius)),
+        "hole_fill_mode": hole_fill_mode,
+        "hole_fill_radius": hole_fill_radius,
+        "hole_fill_strength": hole_fill_strength,
         "edge_threshold": float(settings_dict.get("Edge Threshold", config.edge_threshold)),
         "anaglyph_method": str(settings_dict.get("Anaglyph Method", config.anaglyph_method)),
         "cross_eyed": to_bool_hot_reload(settings_dict.get("Cross Eyed", config.cross_eyed)),
@@ -179,6 +194,8 @@ class StereoHotReloader:
             ipd=values["ipd"],
             depth_ratio=values["depth_strength"],
             convergence=values["convergence"],
+            stereo_scale=values["stereo_scale"],
+            max_shift_ratio=values["max_shift_ratio"],
         )
         self.last_values = values
         self.last_mtime = mtime
@@ -195,6 +212,8 @@ class StereoHotReloader:
             f" foreground_scale={values['foreground_scale']:.3f}"
             f" antialias={values['depth_antialias_strength']:.3f}"
             f" edge_dilation={values['edge_dilation']}"
+            f" mask_feather={values['mask_feather_radius']}"
+            f" hole_fill={values['hole_fill_mode']}({values['hole_fill_radius']}/{values['hole_fill_strength']:.2f})"
             f" edge_threshold={values['edge_threshold']:.3f}"
             f" anaglyph={values['anaglyph_method']}"
             f" cross_eyed={int(values['cross_eyed'])}",

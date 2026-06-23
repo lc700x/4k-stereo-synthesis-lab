@@ -576,7 +576,12 @@ class GUIHandlerMixin:
         self.scene_reset_label.value = t["Scene Threshold:"]
         self.reset_cooldown_label.value = t["Reset Cooldown:"]
         self.edge_dilation_label.value = t["Edge Dilation:"]
+        self.mask_feather_label.value = t["Mask Feather:"]
         self.edge_threshold_label.value = t["Edge Threshold:"]
+        self.hole_fill_mode_label.value = t["Hole Fill Mode:"]
+        hole_fill_mode_key = self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value)
+        self.hole_fill_mode_dd.options = self._hole_fill_mode_options()
+        self.hole_fill_mode_dd.value = self._hole_fill_mode_to_display(hole_fill_mode_key)
         self.anaglyph_label.value = t["Anaglyph:"]
         self.cross_eyed_cb.label = t["Cross Eyed"]
         self.advanced_stereo_cb.label = t["Advanced Stereo"]
@@ -677,7 +682,9 @@ class GUIHandlerMixin:
             (self.scene_reset_dd, "tooltip_scene_reset"),
             (self.reset_cooldown_dd, "tooltip_reset_cooldown"),
             (self.edge_dilation_dd, "tooltip_edge_dilation"),
+            (self.mask_feather_dd, "tooltip_mask_feather"),
             (self.edge_threshold_dd, "tooltip_edge_threshold"),
+            (self.hole_fill_mode_dd, "tooltip_hole_fill_mode"),
             (self.anaglyph_dd, "tooltip_anaglyph"),
             (self.cross_eyed_cb, "tooltip_cross_eyed"),
             (self.advanced_stereo_cb, "tooltip_advanced_stereo"),
@@ -923,13 +930,15 @@ class GUIHandlerMixin:
         self.foreground_scale_dd.value = f"{values['foreground_scale']:.1f}"
         self.antialiasing_dd.value = str(values["antialiasing"])
         self.edge_dilation_dd.value = str(values["edge_dilation"])
+        self.mask_feather_dd.value = str(values["mask_feather_radius"])
+        self.hole_fill_mode_dd.value = self._hole_fill_mode_to_display(values["hole_fill_mode"])
         self.edge_threshold_dd.value = f"{values['edge_threshold']:.2f}"
         self.cross_eyed_cb.value = False
         for ctrl in (
             self.stereo_quality_dd, self.depth_strength_dd, self.depth_quick_dd,
             self.convergence_dd, self.max_shift_dd, self.temporal_strength_dd,
             self.foreground_scale_dd, self.antialiasing_dd, self.edge_dilation_dd,
-            self.edge_threshold_dd, self.cross_eyed_cb,
+            self.mask_feather_dd, self.edge_threshold_dd, self.hole_fill_mode_dd, self.cross_eyed_cb,
         ):
             self._safe_update(ctrl)
         return True

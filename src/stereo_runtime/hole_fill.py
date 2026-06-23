@@ -15,11 +15,20 @@ def box_blur(x: torch.Tensor, radius: int) -> torch.Tensor:
     return F.avg_pool2d(x, kernel_size=k, stride=1, padding=radius, count_include_pad=True)
 
 
-def edge_aware_fill(image: torch.Tensor, mask: torch.Tensor, radius: int = 3, strength: float = 1.0, fused: bool = True) -> torch.Tensor:
+def edge_aware_fill(
+    image: torch.Tensor,
+    mask: torch.Tensor,
+    radius: int = 3,
+    strength: float = 1.0,
+    fused: bool = True,
+    mask_feather_radius: int = 0,
+) -> torch.Tensor:
     image = ensure_bchw(image, name="image").float()
     mask = ensure_b1hw(mask).to(device=image.device, dtype=image.dtype).clamp(0, 1)
     if mask.shape[-2:] != image.shape[-2:]:
         mask = F.interpolate(mask, size=image.shape[-2:], mode="bilinear", align_corners=False)
+    if mask_feather_radius > 0:
+        mask = box_blur(mask, radius=int(mask_feather_radius)).clamp(0, 1)
     backend = edge_aware_fill_backend(image, mask, radius=radius, strength=strength, fused=fused)
     if backend == "triton_radius1":
         from .hole_fill_triton import edge_aware_fill_radius1_strength060

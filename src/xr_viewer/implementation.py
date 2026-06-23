@@ -200,6 +200,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._runtime_eye_gpu_enabled = str(
             kwargs.get('openxr_runtime_eye_gpu_upload', os.environ.get('D2S_OPENXR_RUNTIME_EYE_GPU_UPLOAD', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')
+        self._openxr_rgb_depth_feather = str(
+            kwargs.get('openxr_rgb_depth_feather', os.environ.get('D2S_OPENXR_RGB_DEPTH_FEATHER', '0')) or '0'
+        ).strip().lower() in ('1', 'true', 'yes', 'on')
+        self._openxr_rgb_depth_shader_resolution = str(
+            kwargs.get('openxr_rgb_depth_shader_resolution', os.environ.get('D2S_OPENXR_RGB_DEPTH_SHADER_RESOLUTION', 'source')) or 'source'
+        ).strip().lower()
+        if self._openxr_rgb_depth_shader_resolution not in ('source', 'swapchain', 'unset'):
+            self._openxr_rgb_depth_shader_resolution = 'source'
+        self._openxr_rgb_depth_ipd_mode = str(
+            kwargs.get('openxr_rgb_depth_ipd_mode', os.environ.get('D2S_OPENXR_RGB_DEPTH_IPD_MODE', 'beta_direct')) or 'beta_direct'
+        ).strip().lower().replace('-', '_')
+        if self._openxr_rgb_depth_ipd_mode not in ('scaled', 'beta_direct'):
+            self._openxr_rgb_depth_ipd_mode = 'scaled'
+        self._openxr_rgb_depth_shader_resolution_logged = False
         self._runtime_eye_gpu_logged = False
         # The CUDA/GL *image* zero-copy path (register_image +
         # cudaMemcpy2DToArray) only works for RGBA textures: a CUDA array has
@@ -2120,7 +2134,22 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         runtime_rgb_depth_stereo_scale = (
             1.0 if self._runtime_direct_source else float(getattr(self, '_runtime_rgb_depth_stereo_scale', 1.0))
         )
-        screen_ipd_uv = self.ipd_uv * runtime_rgb_depth_stereo_scale
+        runtime_rgb_depth_max_shift_ratio = (
+            0.05 if self._runtime_direct_source else float(getattr(self, '_runtime_rgb_depth_max_shift_ratio', 0.05))
+        )
+        runtime_rgb_depth_max_shift_scale = max(0.0, runtime_rgb_depth_max_shift_ratio) / 0.05
+        rgb_depth_ipd_mode = str(getattr(self, '_openxr_rgb_depth_ipd_mode', 'beta_direct') or 'beta_direct')
+        screen_ipd_uv = self.ipd_uv
+        if not self._runtime_direct_source:
+            if rgb_depth_ipd_mode == 'beta_direct':
+                screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
+            else:
+                screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
+            screen_ipd_uv *= runtime_rgb_depth_max_shift_scale
+        screen_depth_strength = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
+        if not self._runtime_direct_source and abs(screen_depth_strength) <= 1e-6:
+            screen_ipd_uv = 0.0
+        screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0
         model = self._build_model_mat4()
         mvp = vp_mat @ model
         if self._runtime_direct_source:
@@ -2158,6 +2187,31 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             if self._runtime_direct_source else self._texture_size
         )
         screen_source_size = screen_source_size or (sc_w, sc_h)
+        shader_resolution_mode = str(getattr(self, '_openxr_rgb_depth_shader_resolution', 'source') or 'source')
+        if self._runtime_direct_source or shader_resolution_mode == 'source':
+            shader_resolution = (float(screen_source_size[0]), float(screen_source_size[1]))
+        elif shader_resolution_mode == 'swapchain':
+            shader_resolution = (float(sc_w), float(sc_h))
+        else:
+            shader_resolution = None
+        if not self._runtime_direct_source and not getattr(self, '_openxr_rgb_depth_shader_resolution_logged', False):
+            print(
+                "[OpenXRViewer] rgb_depth shader:"
+                f" resolution_mode={shader_resolution_mode}"
+                f" resolution={shader_resolution if shader_resolution is not None else 'unset'}"
+                f" feather={int(bool(getattr(self, '_openxr_rgb_depth_feather', False)))}",
+                f" ipd_mode={rgb_depth_ipd_mode}"
+                f" ipd_uv={self.ipd_uv:.6f}"
+                f" stereo_scale={runtime_rgb_depth_stereo_scale:.3f}"
+                f" max_shift_ratio={runtime_rgb_depth_max_shift_ratio:.3f}"
+                f" max_shift_scale={runtime_rgb_depth_max_shift_scale:.3f}"
+                f" effective_ipd_uv={screen_ipd_uv:.6f}"
+                f" eye_offset_abs={abs(screen_eye_offset):.6f}"
+                f" depth_strength={screen_depth_strength:.6f}"
+                f" convergence={float(self.convergence):.6f}",
+                flush=True,
+            )
+            self._openxr_rgb_depth_shader_resolution_logged = True
 
         if self._screen_curved and self._curved_prog is not None:
             if screen_depth_tex is None:
@@ -2181,13 +2235,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._curved_verts_params = params
             self._curved_prog['u_mvp'].write(vp_mat.T.tobytes())
             runtime_rgb_depth = not self._runtime_direct_source
-            self._curved_prog['u_resolution'].value = (float(screen_source_size[0]), float(screen_source_size[1]))
-            self._curved_prog['u_feather_enabled'].value = 1 if runtime_rgb_depth else 0
-            self._curved_prog['u_feather_width'].value = 0.02 if runtime_rgb_depth else 0.0
+            feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)
+            if shader_resolution is not None:
+                self._curved_prog['u_resolution'].value = shader_resolution
+            self._curved_prog['u_feather_enabled'].value = 1 if feather_enabled else 0
+            self._curved_prog['u_feather_width'].value = 0.02 if feather_enabled else 0.0
             self._curved_prog['u_viewport'].value = (0.0, 0.0, float(sc_w), float(sc_h))
             self._curved_prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
-            self._curved_prog['u_eye_offset'].value = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0
-            self._curved_prog['u_depth_strength'].value = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
+            self._curved_prog['u_eye_offset'].value = screen_eye_offset
+            self._curved_prog['u_depth_strength'].value = screen_depth_strength
             self._curved_prog['u_convergence'].value = float(self.convergence)
             self._curved_prog['u_corner_radius'].value = self._corner_radius
             self._curved_vao.render(moderngl.TRIANGLE_STRIP, vertices=(48 + 1) * 2)
@@ -2199,13 +2255,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             screen_depth_tex.use(location=1)
             self.prog['u_mvp'].write(mvp.T.tobytes())
             runtime_rgb_depth = not self._runtime_direct_source
-            self.prog['u_resolution'].value = (float(screen_source_size[0]), float(screen_source_size[1]))
-            self.prog['u_feather_enabled'].value = 1 if runtime_rgb_depth else 0
-            self.prog['u_feather_width'].value = 0.02 if runtime_rgb_depth else 0.0
+            feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)
+            if shader_resolution is not None:
+                self.prog['u_resolution'].value = shader_resolution
+            self.prog['u_feather_enabled'].value = 1 if feather_enabled else 0
+            self.prog['u_feather_width'].value = 0.02 if feather_enabled else 0.0
             self.prog['u_viewport'].value = (0.0, 0.0, float(sc_w), float(sc_h))
             self.prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
-            self.prog['u_eye_offset'].value = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0
-            self.prog['u_depth_strength'].value = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
+            self.prog['u_eye_offset'].value = screen_eye_offset
+            self.prog['u_depth_strength'].value = screen_depth_strength
             self.prog['u_convergence'].value = float(self.convergence)
             self.prog['u_corner_radius'].value = self._corner_radius
             self.quad_vao.render(moderngl.TRIANGLE_STRIP)
@@ -3826,18 +3884,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._a_last = a_now
         self._b_last = b_now
 
-        # Y (left): short press applies default screen preset; hold 1s cycles presets; left grip + Y click cycles glow mode.
+        # Y (left): short press applies default screen preset; hold 1s cycles presets.
         Y_LONG = 1.0
         y_now = self._read_bool_action(self._act_y_btn, "/user/hand/left")
         if y_now and not self._y_last:
             self._y_press_t    = time.perf_counter()
             self._y_long_fired = False
             self._y_glow_press_handled = False
-            if grip_l:
-                cycle_glow = getattr(self, '_cycle_glow_mode_from_y', None)
-                if callable(cycle_glow) and cycle_glow():
-                    self._y_glow_press_handled = True
-                    self._y_long_fired = True
         if y_now:
             held_y = time.perf_counter() - self._y_press_t
             if not self._y_long_fired and held_y >= Y_LONG:
@@ -3854,8 +3907,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._reset_screen_to_default(show_border=True)
         self._y_last = y_now
 
-        # X (left): short press -> toggle virtual keyboard; long hold -> lighting or passthrough.
-        X_LIGHT_HOLD = 1.0
+        # X (left): short press -> toggle virtual keyboard.
+        # Hold 1s cycles glow in the Default/None blank room; room models keep light cycling.
+        X_GLOW_HOLD = 1.0
         X_PASSTHROUGH_HOLD = 4.0
         x_now = self._read_bool_action(self._act_x_btn, "/user/hand/left")
         if x_now and not self._x_last:
@@ -3871,10 +3925,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if not x_now and self._x_last:
             held = time.perf_counter() - getattr(self, '_x_press_t', 0.0)
             if not getattr(self, '_x_long_fired', False):
-                if held >= X_LIGHT_HOLD:
-                    cycle_light = getattr(self, '_cycle_light_from_x', None)
-                    if not (callable(cycle_light) and cycle_light()):
-                        self._bg_color_idx = (self._bg_color_idx + 1) % len(_BG_COLORS)
+                if held >= X_GLOW_HOLD:
+                    env_name = str(getattr(self, '_environment_model', '') or '').strip().lower()
+                    blank_default_room = (
+                        env_name in ('default', 'none')
+                        and getattr(self, '_active_environment', None) is None
+                    )
+                    if blank_default_room:
+                        cycle_glow = getattr(self, '_cycle_glow_mode_from_y', None)
+                        if not (callable(cycle_glow) and cycle_glow()):
+                            self._bg_color_idx = (self._bg_color_idx + 1) % len(_BG_COLORS)
+                    else:
+                        cycle_light = getattr(self, '_cycle_light_from_x', None)
+                        if not (callable(cycle_light) and cycle_light()):
+                            self._bg_color_idx = (self._bg_color_idx + 1) % len(_BG_COLORS)
                     self._x_light_fired = True
                 else:
                     self._keyboard_visible = not self._keyboard_visible
@@ -4298,13 +4362,27 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                                     runtime_rgb_depth_stereo_scale = float(
                                         getattr(self, '_runtime_rgb_depth_stereo_scale', 1.0)
                                     )
+                                    runtime_rgb_depth_max_shift_ratio = float(
+                                        getattr(self, '_runtime_rgb_depth_max_shift_ratio', 0.05)
+                                    )
+                                    runtime_rgb_depth_max_shift_scale = max(0.0, runtime_rgb_depth_max_shift_ratio) / 0.05
+                                    rgb_depth_ipd_mode = str(getattr(self, '_openxr_rgb_depth_ipd_mode', 'beta_direct') or 'beta_direct')
+                                    screen_ipd_uv = self.ipd_uv
+                                    if rgb_depth_ipd_mode == 'beta_direct':
+                                        screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
+                                    else:
+                                        screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
+                                    screen_ipd_uv *= runtime_rgb_depth_max_shift_scale
+                                    screen_depth_strength = self.depth_strength * self.depth_ratio
+                                    if abs(screen_depth_strength) <= 1e-6:
+                                        screen_ipd_uv = 0.0
                                     self._d3d11_native_renderer.render_eye(
                                         sc_image.texture,
                                         sc_w,
                                         sc_h,
                                         eye_index,
-                                        self.ipd_uv * max(0.0, runtime_rgb_depth_stereo_scale),
-                                        self.depth_strength * self.depth_ratio,
+                                        screen_ipd_uv,
+                                        screen_depth_strength,
                                         float(self.convergence),
                                         mvp,
                                     )

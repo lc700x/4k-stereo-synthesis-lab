@@ -1,6 +1,6 @@
 # 4K Stereo Synthesis Lab
 
-`4k-stereo-synthesis-lab` 是 Desktop2Stereo v2.5 工作区，包含 Flet GUI、桌面捕获、OpenXR/XR viewer、streaming、depth provider、stereo synthesis、输出打包、preset、benchmark 和视觉回归工具。
+`4k-stereo-synthesis-lab` 是 Desktop2Stereo v3.0beta 工作区，包含 Flet GUI、桌面捕获、OpenXR/XR viewer、streaming、depth provider、stereo synthesis、输出打包、preset、benchmark 和视觉回归工具。
 
 当前主线目标是在 4K RGB + depth 输入下，提供稳定的 Desktop2Stereo host/runtime，并验证 layered / occlusion-aware / symmetric stereo synthesis 是否能超过简单 depth-shift 路线。
 

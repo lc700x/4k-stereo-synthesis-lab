@@ -105,6 +105,8 @@ def create_runtime_context(
         ipd=ipd,
         depth_ratio=depth_strength,
         convergence=convergence,
+        stereo_scale=runtime_config.stereo_scale,
+        max_shift_ratio=runtime_config.max_shift_ratio,
     )
     source_health_log = env_flag(
         "D2S_SOURCE_HEALTH_LOG",

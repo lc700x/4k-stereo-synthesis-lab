@@ -4,5 +4,5 @@ import platform
 
 
 DEBUG = False
-VERSION = "2.5.0Beta"
+VERSION = "3.0beta"
 OS_NAME = platform.system()

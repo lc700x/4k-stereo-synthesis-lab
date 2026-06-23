@@ -186,7 +186,7 @@ class GUIBuilderMixin:
             self.depth_model_label, self.depth_resolution_label, self.depth_quick_label,
             self.convergence_label, self.depth_strength_label, self.foreground_scale_label,
             self.antialiasing_label, self.stereo_preset_label, self.max_shift_label,
-            self.scene_reset_label, self.edge_dilation_label, self.stereo_scale_label,
+            self.scene_reset_label, self.edge_dilation_label, self.mask_feather_label, self.hole_fill_mode_label, self.stereo_scale_label,
             self.acceleration_label, self.computing_device_label, self.capture_tool_label,
             self.target_fps_label, self.run_mode_label,
             self.stereo_output_label, self.controller_label, self.lang_label,
@@ -297,10 +297,10 @@ class GUIBuilderMixin:
 
         # Row 4: IPD + stereo scale
         self.ipd_label = ft.Text("IPD (mm):", size=FONT_SIZE, width=S(130))
-        self.ipd_dd = CompactDropdown(options=[str(i) for i in range(58, 71)], value="64",
+        self.ipd_dd = CompactDropdown(options=[str(i) for i in range(30, 71)], value="64",
             width=S(130), on_select=self.on_stereo_hot_param_change)
         self.stereo_scale_label = ft.Text("Stereo Scale:", size=FONT_SIZE, width=S(130))
-        self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(1, 11)],
+        self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)],
             value="0.5", width=S(130), on_select=self.on_stereo_hot_param_change)
         row3 = ft.Row([
             self.ipd_label, self.ipd_dd,
@@ -339,11 +339,20 @@ class GUIBuilderMixin:
         self.edge_dilation_label = ft.Text("Edge Dilation:", size=FONT_SIZE, width=S(130))
         self.edge_dilation_dd = CompactDropdown(options=["0", "1", "2", "3", "4"],
             value="2", width=S(130), on_select=self.on_stereo_hot_param_change)
+        self.mask_feather_label = ft.Text("Mask Feather:", size=FONT_SIZE, width=S(130))
+        self.mask_feather_dd = CompactDropdown(options=["0", "1", "2", "3", "4", "5"],
+            value="3", width=S(130), on_select=self.on_stereo_hot_param_change)
+        stereo_row3 = ft.Row([self.edge_dilation_label, self.edge_dilation_dd,
+            ft.Container(width=S(40)), self.mask_feather_label, self.mask_feather_dd], spacing=1)
         self.edge_threshold_label = ft.Text("Edge Threshold:", size=FONT_SIZE, width=S(130))
         self.edge_threshold_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)],
             value="0.04", width=S(130), on_select=self.on_stereo_hot_param_change)
-        stereo_row3 = ft.Row([self.edge_dilation_label, self.edge_dilation_dd,
-            ft.Container(width=S(40)), self.edge_threshold_label, self.edge_threshold_dd], spacing=1)
+        self.hole_fill_mode_label = ft.Text("Hole Fill Mode:", size=FONT_SIZE, width=S(130))
+        self.hole_fill_mode_dd = CompactDropdown(
+            options=["Balanced", "Soft / Low Ghost", "Sharp Test"],
+            value="Balanced", width=S(130), on_select=self.on_stereo_hot_param_change)
+        hole_fill_mode_row = ft.Row([self.hole_fill_mode_label, self.hole_fill_mode_dd], spacing=1)
+        stereo_row3b = ft.Row([self.edge_threshold_label, self.edge_threshold_dd], spacing=1)
 
         self.cross_eyed_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT,
             label="Cross Eyed", value=False, on_change=self.on_stereo_hot_param_change)
@@ -356,7 +365,7 @@ class GUIBuilderMixin:
         self.advanced_stereo_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT,
             label="Advanced Stereo", value=False, on_change=self.on_advanced_stereo_change)
         advanced_stereo_row = ft.Row([self.advanced_stereo_cb], spacing=1)
-        self._advanced_stereo_rows = [convergence_depth_row, row2b, row3, stereo_row1, stereo_row2, stereo_row3, stereo_row4]
+        self._advanced_stereo_rows = [convergence_depth_row, row2b, row3, stereo_row1, stereo_row2, stereo_row3, stereo_row3b, stereo_row4]
 
         # Acceleration group
         self.acceleration_label = ft.Text("Acceleration:", size=FONT_SIZE, width=S(130))
@@ -500,7 +509,7 @@ class GUIBuilderMixin:
 
         # Assembly
         depth_group = ft.Container(
-            ft.Column([row0, row1, stereo_row0, convergence_depth_row, row2b, row3,
+            ft.Column([row0, row1, stereo_row0, hole_fill_mode_row, convergence_depth_row, row2b, row3,
                        stereo_row1, stereo_row2, stereo_row3, stereo_row4,
                        self.row4a, self.row4b, self.row4c, advanced_stereo_row], spacing=S(8)),
             margin=ft.Margin(0, 0, 0, S(8)),

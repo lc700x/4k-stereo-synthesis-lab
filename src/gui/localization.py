@@ -37,7 +37,12 @@ MESSAGE_CATALOGS = {
         "Reset Cooldown:": "Reset Cooldown:",
         "Auto Scene Reset": "Auto Scene Reset",
         "Edge Dilation:": "Edge Dilation:",
+        "Mask Feather:": "Mask Feather:",
         "Edge Threshold:": "Edge Threshold:",
+        "Hole Fill Mode:": "Hole Fill:",
+        "Balanced": "Balanced",
+        "Soft / Low Ghost": "Soft / Low Ghost",
+        "Sharp Test": "Sharp Test",
         "On": "On",
         "Anaglyph:": "Anaglyph:",
         "Cross Eyed": "Cross Eyed",
@@ -133,7 +138,9 @@ MESSAGE_CATALOGS = {
         "tooltip_reset_cooldown": "Minimum frame cooldown between automatic temporal resets",
         "tooltip_auto_scene_reset": "Automatically reset temporal state when a scene cut is detected",
         "tooltip_edge_dilation": "Expands detected depth edges for occlusion handling",
+        "tooltip_mask_feather": "Softens the occlusion fill mask; higher values reduce hard edge artifacts",
         "tooltip_edge_threshold": "Depth edge sensitivity; lower values detect more edges",
+        "tooltip_hole_fill_mode": "Occlusion fill preset: Balanced keeps the fast Triton path, Soft reduces edge ghosts, Sharp Test keeps stronger detail for comparison",
         "tooltip_anaglyph": "Color pair used when Display Mode is Anaglyph",
         "tooltip_cross_eyed": "Swap left and right eyes for cross-eyed viewing",
         "tooltip_advanced_stereo": "Show expert stereo/runtime parameters. Leave off for the simplified everyday UI.",
@@ -206,7 +213,12 @@ MESSAGE_CATALOGS = {
         "Reset Cooldown:": "重置冷却:",
         "Auto Scene Reset": "自动场景重置",
         "Edge Dilation:": "边缘扩张:",
+        "Mask Feather:": "遮罩羽化:",
         "Edge Threshold:": "边缘阈值:",
+        "Hole Fill Mode:": "补洞模式:",
+        "Balanced": "均衡",
+        "Soft / Low Ghost": "柔和 / 低重影",
+        "Sharp Test": "锐利测试",
         "On": "开启",
         "Anaglyph:": "红蓝模式:",
         "Cross Eyed": "交叉眼",
@@ -310,7 +322,9 @@ MESSAGE_CATALOGS = {
         "tooltip_reset_cooldown": "两次自动时域重置之间的最小帧数间隔",
         "tooltip_auto_scene_reset": "检测到场景切换时自动重置时域历史",
         "tooltip_edge_dilation": "扩张深度边缘区域，用于遮挡和补洞处理",
+        "tooltip_mask_feather": "柔化遮挡补洞遮罩；数值越高越能减轻硬边重影",
         "tooltip_edge_threshold": "深度边缘检测敏感度；越低检测到的边缘越多",
+        "tooltip_hole_fill_mode": "遮挡补洞预设：均衡保留 Triton 快路径，柔和降低边缘重影，锐利测试用于对比细节",
         "tooltip_anaglyph": "显示模式为红蓝/补色时使用的颜色组合",
         "tooltip_cross_eyed": "交换左右眼，用于交叉眼观看",
         "tooltip_advanced_stereo": "显示专家级立体和运行时参数；普通使用建议保持关闭。",
@@ -438,3 +452,33 @@ def display_to_stereo_quality(value):
                 return key
     return "quality_4k"
 
+
+HOLE_FILL_MODE_KEYS = ("balanced", "soft_low_ghost", "sharp_test")
+HOLE_FILL_MODE_LABELS = {
+    "balanced": "Balanced",
+    "soft_low_ghost": "Soft / Low Ghost",
+    "sharp_test": "Sharp Test",
+}
+
+
+def hole_fill_mode_options(locale=DEFAULT_LOCALE):
+    messages = get_messages(locale)
+    return [messages[HOLE_FILL_MODE_LABELS[key]] for key in HOLE_FILL_MODE_KEYS]
+
+
+def hole_fill_mode_to_display(value, locale=DEFAULT_LOCALE):
+    key = str(value or "balanced")
+    messages = get_messages(locale)
+    label = HOLE_FILL_MODE_LABELS.get(key, HOLE_FILL_MODE_LABELS["balanced"])
+    return messages.get(label, label)
+
+
+def display_to_hole_fill_mode(value):
+    text = str(value or "")
+    for key, label in HOLE_FILL_MODE_LABELS.items():
+        if text == key or text == label:
+            return key
+        for locale in SUPPORTED_LOCALES:
+            if text == get_messages(locale).get(label):
+                return key
+    return "balanced"

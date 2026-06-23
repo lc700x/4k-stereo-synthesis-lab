@@ -58,6 +58,8 @@ def test_gui_hot_stereo_params_auto_save_on_select():
     assert '"Foreground Scale": foreground_scale' in _file_text("config_mgr.py")
     assert '"Depth Antialias Strength": antialias_strength' in _file_text("config_mgr.py")
     assert '"Edge Dilation": self._parse_int(self.edge_dilation_dd.value' in _file_text("config_mgr.py")
+    assert '"Mask Feather Radius": self._parse_int(self.mask_feather_dd.value' in _file_text("config_mgr.py")
+    assert '"Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value)' in _file_text("config_mgr.py")
     assert '"Edge Threshold": self._parse_float(self.edge_threshold_dd.value' in _file_text("config_mgr.py")
     assert '"Anaglyph Method": self.anaglyph_dd.value' in _file_text("config_mgr.py")
     assert '"Cross Eyed": bool(self.cross_eyed_cb.value)' in _file_text("config_mgr.py")
@@ -101,6 +103,21 @@ def test_advanced_stereo_is_not_persisted_and_starts_collapsed():
     assert 'self.advanced_stereo_cb.value = False' in cfg_text
     assert '"Advanced Stereo": self.advanced_stereo_cb.value' not in all_text
     assert 'cfg.get("Advanced Stereo"' not in all_text
+
+
+def test_hole_fill_mode_is_visible_without_advanced_stereo():
+    builders_text = _file_text("builders.py")
+    assert 'hole_fill_mode_row = ft.Row([self.hole_fill_mode_label, self.hole_fill_mode_dd]' in builders_text
+    depth_start = builders_text.index("depth_group = ft.Container(")
+    depth_end = builders_text.index("device_group = ft.Container(", depth_start)
+    depth_block = builders_text[depth_start:depth_end]
+    assert "hole_fill_mode_row" in depth_block
+    advanced_start = builders_text.index("self._advanced_stereo_rows = [")
+    advanced_end = builders_text.index("]", advanced_start)
+    advanced_block = builders_text[advanced_start:advanced_end]
+    assert "hole_fill_mode_row" not in advanced_block
+    assert "self.hole_fill_mode_label" not in advanced_block
+    assert "self.hole_fill_mode_dd" not in advanced_block
 
 
 def test_advanced_device_options_is_not_persisted_and_starts_collapsed():
@@ -193,8 +210,9 @@ def test_environment_dropdown_saves_canonical_key():
 
 def test_stereo_scale_control_is_next_to_ipd():
     builders_text = _file_text("builders.py")
+    assert 'self.ipd_dd = CompactDropdown(options=[str(i) for i in range(30, 71)]' in builders_text
     assert 'self.stereo_scale_label = ft.Text("Stereo Scale:"' in builders_text
-    assert 'self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(1, 11)]' in builders_text
+    assert 'self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)]' in builders_text
     row_start = builders_text.index('row3 = ft.Row([')
     row_end = builders_text.index('# Row 5: Stereo runtime mode and quality', row_start)
     row = builders_text[row_start:row_end]
@@ -248,7 +266,58 @@ def test_shift_ratio_and_edge_threshold_options_are_dense():
     assert '"Max Shift Ratio:": "位移比例:"' in localization_text
     assert 'self.max_shift_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)]' in builders_text
     assert 'self.edge_threshold_dd = CompactDropdown(options=[f"{i / 100:.2f}" for i in range(0, 11)]' in builders_text
+    assert 'self.mask_feather_dd = CompactDropdown(options=["0", "1", "2", "3", "4", "5"]' in builders_text
     assert 'self.temporal_strength_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)]' in builders_text
+
+
+def test_mask_feather_radius_gui_control_is_localized_and_hot_reloadable():
+    builders_text = _file_text("builders.py")
+    config_text = _config_source().read_text(encoding="utf-8")
+    config_mgr_text = _file_text("config_mgr.py")
+    handlers_text = _file_text("handlers.py")
+    localization_text = _localization_source().read_text(encoding="utf-8")
+
+    assert '"Mask Feather Radius": 3' in config_text
+    assert 'self.mask_feather_label = ft.Text("Mask Feather:"' in builders_text
+    assert 'self.mask_feather_dd = CompactDropdown(options=["0", "1", "2", "3", "4", "5"]' in builders_text
+    assert 'self.mask_feather_dd.value = str(cfg.get("Mask Feather Radius", DEFAULTS["Mask Feather Radius"]))' in config_mgr_text
+    assert '"Mask Feather Radius": self._parse_int(self.mask_feather_dd.value, DEFAULTS["Mask Feather Radius"])' in config_mgr_text
+    assert 'self.mask_feather_label.value = t["Mask Feather:"]' in handlers_text
+    assert '(self.mask_feather_dd, "tooltip_mask_feather")' in handlers_text
+    assert '"Mask Feather:": "Mask Feather:"' in localization_text
+    assert '"Mask Feather:": "遮罩羽化:"' in localization_text
+    assert '"tooltip_mask_feather"' in localization_text
+
+
+def test_reset_defaults_restore_current_stereo_edge_defaults():
+    config_text = _config_source().read_text(encoding="utf-8")
+    process_text = _file_text("process.py")
+
+    assert '"Depth Antialias Strength": 2.0' in config_text
+    assert '"Mask Feather Radius": 3' in config_text
+    assert '"Hole Fill Mode": "soft_low_ghost"' in config_text
+    assert '"Hole Fill Radius": 3' in config_text
+    assert '"Hole Fill Strength": 1.0' in config_text
+    assert "dynamic_defaults = DEFAULTS.copy()" in process_text
+    assert "self.apply_config(dynamic_defaults, keep_optional=False)" in process_text
+
+
+def test_hole_fill_mode_gui_control_is_localized_and_hot_reloadable():
+    builders_text = _file_text("builders.py")
+    config_text = _config_source().read_text(encoding="utf-8")
+    config_mgr_text = _file_text("config_mgr.py")
+    handlers_text = _file_text("handlers.py")
+    localization_text = _localization_source().read_text(encoding="utf-8")
+
+    assert '"Hole Fill Mode": "soft_low_ghost"' in config_text
+    assert 'self.hole_fill_mode_label = ft.Text("Hole Fill Mode:"' in builders_text
+    assert 'options=["Balanced", "Soft / Low Ghost", "Sharp Test"]' in builders_text
+    assert 'self.hole_fill_mode_dd.value = self._hole_fill_mode_to_display(cfg.get("Hole Fill Mode", DEFAULTS["Hole Fill Mode"]))' in config_mgr_text
+    assert '"Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value)' in config_mgr_text
+    assert 'self.hole_fill_mode_label.value = t["Hole Fill Mode:"]' in handlers_text
+    assert '(self.hole_fill_mode_dd, "tooltip_hole_fill_mode")' in handlers_text
+    assert 'HOLE_FILL_MODE_KEYS = ("balanced", "soft_low_ghost", "sharp_test")' in localization_text
+    assert '"Hole Fill Mode:": "补洞模式:"' in localization_text
 
 
 def test_model_backbone_size_dropdown_has_own_tooltip():

@@ -18,6 +18,7 @@ from .temporal import TemporalState, apply_temporal, detect_scene_change
 
 Backend = Literal["fast", "fast_plus", "quality_4k", "hq_4k"]
 HoleFill = Literal["none", "fast", "edge_aware"]
+HoleFillMode = Literal["balanced", "soft_low_ghost", "sharp_test"]
 
 
 @dataclass
@@ -44,6 +45,10 @@ class StereoConfig:
     depth_antialias_strength: float = 0.0
     edge_dilation: int = 2
     edge_threshold: float = 0.04
+    mask_feather_radius: int = 3
+    hole_fill_mode: HoleFillMode = "balanced"
+    hole_fill_radius: int = 3
+    hole_fill_strength: float = 1.0
     screen_edge_mask_suppression: int = 0
     cross_eyed: bool = False
     anaglyph_method: AnaglyphMethod = "red_cyan"
@@ -130,12 +135,22 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
     stage_start = time.perf_counter()
     hole_fill_backend = "none"
     if config.hole_fill != "none":
-        radius = 2 if config.hole_fill == "fast" else 3
-        strength = 0.65 if config.hole_fill == "fast" else 1.0
+        radius = int(config.hole_fill_radius)
+        strength = float(config.hole_fill_strength)
+        if config.hole_fill == "fast" and config.hole_fill_mode == "balanced":
+            radius = 2
+            strength = 0.65
         eyes = torch.cat([left, right], dim=0)
         fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
         hole_fill_backend = edge_aware_fill_backend(eyes, fill_mask, radius=radius, strength=strength, fused=config.fused)
-        eyes = edge_aware_fill(eyes, fill_mask, radius=radius, strength=strength, fused=config.fused)
+        eyes = edge_aware_fill(
+            eyes,
+            fill_mask,
+            radius=radius,
+            strength=strength,
+            fused=config.fused,
+            mask_feather_radius=config.mask_feather_radius,
+        )
         left, right = eyes.chunk(2, dim=0)
 
     stage_times["hole_fill_ms"] = (time.perf_counter() - stage_start) * 1000.0
@@ -150,6 +165,10 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         "warp_composite_backend": warp_composite_backend,
         "occlusion_mask_backend": occlusion_mask_backend,
         "hole_fill_backend": hole_fill_backend,
+        "mask_feather_radius": int(config.mask_feather_radius),
+        "hole_fill_mode": str(config.hole_fill_mode),
+        "hole_fill_radius": int(radius) if config.hole_fill != "none" else 0,
+        "hole_fill_strength": float(strength) if config.hole_fill != "none" else 0.0,
         **stage_times,
     }
 
@@ -226,7 +245,14 @@ def synthesize_stereo(
             eyes = torch.cat([left, right], dim=0)
             fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
             hole_fill_backend = edge_aware_fill_backend(eyes, fill_mask, radius=1, strength=0.60, fused=config.fused)
-            eyes = edge_aware_fill(eyes, fill_mask, radius=1, strength=0.60, fused=config.fused)
+            eyes = edge_aware_fill(
+                eyes,
+                fill_mask,
+                radius=1,
+                strength=0.60,
+                fused=config.fused,
+                mask_feather_radius=config.mask_feather_radius,
+            )
             left, right = eyes.chunk(2, dim=0)
             debug = {
                 "backend": config.backend,
@@ -244,6 +270,7 @@ def synthesize_stereo(
                 "fast_plus_edge_dilation": 1,
                 "fast_plus_hole_fill_radius": 1,
                 "fast_plus_hole_fill_strength": 0.60,
+                "mask_feather_radius": int(config.mask_feather_radius),
             }
         else:
             mask = None

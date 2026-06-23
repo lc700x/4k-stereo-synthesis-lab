@@ -205,6 +205,8 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
             "Depth Antialias Strength": 0.6,
             "Edge Threshold": 0.06,
             "Edge Dilation": 3,
+            "Mask Feather Radius": 2,
+            "Hole Fill Mode": "Soft / Low Ghost",
             "Cross Eyed": True,
             "Anaglyph Method": "green_magenta",
         },
@@ -230,6 +232,10 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
     assert stereo.depth_antialias_strength == 0.6
     assert stereo.edge_threshold == 0.06
     assert stereo.edge_dilation == 3
+    assert stereo.mask_feather_radius == 2
+    assert stereo.hole_fill_mode == "soft_low_ghost"
+    assert stereo.hole_fill_radius == 1
+    assert stereo.hole_fill_strength == 0.6
     assert stereo.cross_eyed is True
     assert stereo.anaglyph_method == "green_magenta"
 
@@ -277,6 +283,33 @@ def test_runtime_fast_quality_disables_temporal_and_postprocess_overrides():
     assert stereo.reset_cooldown_frames == 0
     assert stereo.foreground_scale == 0.0
     assert stereo.depth_antialias_strength == 0.0
+
+
+def test_runtime_config_defaults_mask_feather_radius_for_hole_fill():
+    config = runtime_config_from_d2s_settings({"Depth Model": "Distill-Any-Depth-Base"})
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.mask_feather_radius == 3
+    assert stereo.mask_feather_radius == 3
+
+
+def test_runtime_config_hole_fill_mode_overrides_legacy_radius_strength_values():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Hole Fill Mode": "Sharp Test",
+            "Hole Fill Radius": 5,
+            "Hole Fill Strength": 0.4,
+        }
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.hole_fill_mode == "sharp_test"
+    assert config.hole_fill_radius == 1
+    assert config.hole_fill_strength == 1.0
+    assert stereo.hole_fill_mode == "sharp_test"
+    assert stereo.hole_fill_radius == 1
+    assert stereo.hole_fill_strength == 1.0
 
 
 def test_runtime_config_profile_sync_defaults_off_and_maps_setting():

@@ -149,5 +149,9 @@ class StereoRuntimeLogger:
             f" fast_plus_fused={state[4]}"
             f" fast_plus_fused_skip={state[5]}"
             f" fast_plus_fused_temporal_bypass={state[6]}",
+            f" depth_strength={float(debug.get('openxr_depth_strength', 0.0)):.3f}"
+            f" stereo_scale={float(debug.get('openxr_stereo_scale', 0.0)):.3f}"
+            f" max_shift={float(debug.get('openxr_max_shift_ratio', 0.0)):.3f}"
+            f" convergence={float(debug.get('openxr_convergence', 0.0)):.3f}",
             flush=True,
         )

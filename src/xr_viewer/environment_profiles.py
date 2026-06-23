@@ -496,13 +496,13 @@ class EnvironmentProfileMixin:
 
 
     def _cycle_glow_mode_from_y(self):
-        """Default blank room only: frosted -> surround -> screen -> off."""
+        """Default blank room only: surround -> screen -> off first."""
         if self._environment_screen_locked():
             return False
         env_name = str(getattr(self, '_environment_model', '') or '').strip().lower()
         if env_name not in ('default', 'none') or getattr(self, '_active_environment', None) is not None:
             return False
-        modes = ('veil', 'frosted', 'surround', 'screen', 'off')
+        modes = ('surround', 'screen', 'off', 'veil', 'frosted')
         current = str(getattr(self, '_glow_mode', 'screen') or 'screen').strip().lower()
         try:
             idx = modes.index(current)

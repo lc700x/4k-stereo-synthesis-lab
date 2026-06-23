@@ -78,11 +78,22 @@ class RuntimeCallbacks:
 
         return drain_latest(q, first_item, on_drop=on_drop)
 
-    def update_openxr_runtime_config(self, *, ipd=None, depth_ratio=None, convergence=None, screen_roll=None):
+    def update_openxr_runtime_config(
+        self,
+        *,
+        ipd=None,
+        depth_ratio=None,
+        convergence=None,
+        stereo_scale=None,
+        max_shift_ratio=None,
+        screen_roll=None,
+    ):
         self.context.openxr_state.update_runtime_config(
             ipd=ipd,
             depth_ratio=depth_ratio,
             convergence=convergence,
+            stereo_scale=stereo_scale,
+            max_shift_ratio=max_shift_ratio,
             screen_roll=screen_roll,
         )
 

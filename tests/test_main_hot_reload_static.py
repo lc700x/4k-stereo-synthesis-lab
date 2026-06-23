@@ -33,6 +33,10 @@ def test_main_has_limited_stereo_hot_reload_path():
     assert "clamp_foreground_scale_hot_reload(" in text
     assert '"depth_antialias_strength"' in text
     assert '"edge_dilation"' in text
+    assert '"mask_feather_radius"' in text
+    assert '"hole_fill_mode"' in text
+    assert '"hole_fill_radius"' in text
+    assert '"hole_fill_strength"' in text
     assert '"edge_threshold"' in text
     assert '"anaglyph_method"' in text
     assert '"depth_safety"' not in text

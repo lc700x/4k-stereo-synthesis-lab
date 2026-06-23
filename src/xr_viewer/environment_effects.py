@@ -207,8 +207,10 @@ class EnvironmentEffectsMixin:
             ) = old_values
 
 
-    def _render_glow_shell(self, mgl_fbo, vp_mat):
-        intensity = float(getattr(self, '_glow_intensity', 0.0)) * float(getattr(self, '_glow_shell_intensity_multiplier', 0.0))
+    def _render_glow_shell(self, mgl_fbo, vp_mat, intensity_multiplier=None):
+        if intensity_multiplier is None:
+            intensity_multiplier = float(getattr(self, '_glow_shell_intensity_multiplier', 0.0))
+        intensity = float(getattr(self, '_glow_intensity', 0.0)) * float(intensity_multiplier)
         if intensity <= 0.0:
             return
         if getattr(self, '_glow_shell_prog', None) is None or getattr(self, '_glow_shell_vao', None) is None:
@@ -271,7 +273,8 @@ class EnvironmentEffectsMixin:
             if mode == 'surround':
                 self._render_glow_shell(mgl_fbo, vp_mat)
             elif mode == 'screen':
-                self._render_glow(mgl_fbo, vp_mat)
+                screen_mult = float(getattr(self, '_glow_intensity_multiplier', 0.0))
+                self._render_glow_shell(mgl_fbo, vp_mat, intensity_multiplier=screen_mult * 0.72)
 
     def _render_screen_foreground_effects(self, mgl_fbo, vp_mat):
         mode = str(getattr(self, '_glow_mode', 'screen') or 'screen').strip().lower()

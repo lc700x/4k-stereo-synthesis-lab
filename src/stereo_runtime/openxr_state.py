@@ -13,6 +13,8 @@ class OpenXRStateController:
         ipd: float,
         depth_ratio: float,
         convergence: float,
+        stereo_scale: float | None = None,
+        max_shift_ratio: float | None = None,
     ):
         self.run_mode = run_mode
         self.render_active = threading.Event()
@@ -24,6 +26,8 @@ class OpenXRStateController:
             "ipd": float(ipd),
             "depth_ratio": float(depth_ratio),
             "convergence": float(convergence),
+            "stereo_scale": None if stereo_scale is None else float(stereo_scale),
+            "max_shift_ratio": None if max_shift_ratio is None else float(max_shift_ratio),
             "screen_roll": 0.0,
         }
         self.source_pause_notice_lock = threading.Lock()
@@ -69,6 +73,8 @@ class OpenXRStateController:
         ipd=None,
         depth_ratio=None,
         convergence=None,
+        stereo_scale=None,
+        max_shift_ratio=None,
         screen_roll=None,
     ) -> None:
         with self.runtime_config_lock:
@@ -78,6 +84,10 @@ class OpenXRStateController:
                 self.runtime_config_state["depth_ratio"] = float(depth_ratio)
             if convergence is not None:
                 self.runtime_config_state["convergence"] = float(convergence)
+            if stereo_scale is not None:
+                self.runtime_config_state["stereo_scale"] = float(stereo_scale)
+            if max_shift_ratio is not None:
+                self.runtime_config_state["max_shift_ratio"] = float(max_shift_ratio)
             if screen_roll is not None:
                 self.runtime_config_state["screen_roll"] = float(screen_roll)
 
@@ -87,9 +97,17 @@ class OpenXRStateController:
         return OpenXRRenderConfig(
             ipd=state["ipd"],
             ipd_mm=runtime.stereo_config.ipd_mm,
-            stereo_scale=runtime.stereo_config.stereo_scale,
+            stereo_scale=(
+                runtime.stereo_config.stereo_scale
+                if state["stereo_scale"] is None
+                else state["stereo_scale"]
+            ),
             depth_strength=state["depth_ratio"],
             convergence=state["convergence"],
-            max_shift_ratio=runtime.stereo_config.max_shift_ratio,
+            max_shift_ratio=(
+                runtime.stereo_config.max_shift_ratio
+                if state["max_shift_ratio"] is None
+                else state["max_shift_ratio"]
+            ),
             screen_roll=state["screen_roll"],
         )

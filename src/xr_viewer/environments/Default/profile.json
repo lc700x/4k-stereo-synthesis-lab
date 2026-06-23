@@ -14,12 +14,12 @@
   "xr_quad_layer_enabled": false,
   "xr_quad_layer_debug_offset": 0.0,
   "xr_quad_layer_stereo_boost": 1.0,
-  "glow_mode": "off",
+  "glow_mode": "surround",
   "glow_intensity": 0.5,
   "glow_width": 1.9,
   "glow_surround_margin": 18.0,
   "glow_intensity_multiplier": 0.0,
-  "glow_shell_intensity_multiplier": 0.0,
+  "glow_shell_intensity_multiplier": 1.85,
   "glow_shell_radius": 20.0,
   "glow_shell_height": 9.5,
   "frosted_glow_intensity": 3.0,
@@ -39,6 +39,26 @@
   "frosted_veil_beam_mix": 0.22,
   "lighting_preset_index": 0,
   "lighting_presets": [
+    {
+      "name": "Surround Glow",
+      "glow_mode": "surround",
+      "glow_intensity_multiplier": 0.0,
+      "glow_shell_intensity_multiplier": 1.85,
+      "glow_intensity": 0.5,
+      "glow_width": 1.9,
+      "glow_surround_margin": 18.0,
+      "glow_shell_radius": 20.0,
+      "glow_shell_height": 9.5
+    },
+    {
+      "name": "Screen Glow",
+      "glow_mode": "screen",
+      "glow_intensity_multiplier": 1.85,
+      "glow_shell_intensity_multiplier": 0.0,
+      "glow_intensity": 0.5,
+      "glow_width": 1.9,
+      "glow_surround_margin": 18.0
+    },
     {
       "name": "Glow Off",
       "glow_mode": "off",
@@ -80,26 +100,6 @@
       "frosted_glow_thickness": 2.65,
       "frosted_glow_inset": 0.0,
       "frosted_glow_diffuse": 1.45
-    },
-    {
-      "name": "Surround Glow",
-      "glow_mode": "surround",
-      "glow_intensity_multiplier": 0.0,
-      "glow_shell_intensity_multiplier": 1.85,
-      "glow_intensity": 0.5,
-      "glow_width": 1.9,
-      "glow_surround_margin": 18.0,
-      "glow_shell_radius": 20.0,
-      "glow_shell_height": 9.5
-    },
-    {
-      "name": "Screen Glow",
-      "glow_mode": "screen",
-      "glow_intensity_multiplier": 1.85,
-      "glow_shell_intensity_multiplier": 0.0,
-      "glow_intensity": 0.5,
-      "glow_width": 1.9,
-      "glow_surround_margin": 18.0
     }
   ],
   "screen_light_intensity": 3.5,

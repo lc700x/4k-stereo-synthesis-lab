@@ -69,6 +69,10 @@ class StereoRuntimeConfig:
     depth_antialias_strength: float = 0.0
     edge_threshold: float = 0.04
     edge_dilation: int = 2
+    mask_feather_radius: int = 3
+    hole_fill_mode: str = "balanced"
+    hole_fill_radius: int = 3
+    hole_fill_strength: float = 1.0
     screen_edge_mask_suppression: int = 0
     cross_eyed: bool = False
     anaglyph_method: str = "red_cyan"
@@ -188,6 +192,14 @@ def runtime_config_from_d2s_settings(
     stereo_quality = _normalize_stereo_quality(settings.get("Stereo Quality", settings.get("Synthetic View", "fast" if depth_only else "quality_4k")))
     ipd_mm = _normalize_ipd_mm(settings)
 
+    has_hole_fill_mode = "Hole Fill Mode" in settings
+    hole_fill_mode, hole_fill_radius, hole_fill_strength = _normalize_hole_fill_mode(
+        settings.get("Hole Fill Mode", settings.get("Hole Fill", "balanced"))
+    )
+    if not has_hole_fill_mode:
+        hole_fill_radius = int(settings.get("Hole Fill Radius", hole_fill_radius))
+        hole_fill_strength = float(settings.get("Hole Fill Strength", hole_fill_strength))
+
     return StereoRuntimeConfig(
         model_id=str(model_name),
         cache_dir=cache_dir,
@@ -217,6 +229,10 @@ def runtime_config_from_d2s_settings(
         depth_antialias_strength=float(settings.get("Depth Antialias Strength", settings.get("Anti-aliasing", 0.0))),
         edge_threshold=float(settings.get("Edge Threshold", 0.04)),
         edge_dilation=int(settings.get("Edge Dilation", 2)),
+        mask_feather_radius=int(settings.get("Mask Feather Radius", 3)),
+        hole_fill_mode=hole_fill_mode,
+        hole_fill_radius=hole_fill_radius,
+        hole_fill_strength=hole_fill_strength,
         screen_edge_mask_suppression=int(settings.get("Screen Edge Mask Suppression", 0)),
         cross_eyed=_to_bool(settings.get("Cross Eyed", False)),
         anaglyph_method=str(settings.get("Anaglyph Method", "red_cyan")),
@@ -283,6 +299,33 @@ def _normalize_stereo_quality(value: Any) -> StereoQuality:
         "hq_4k": "hq_4k",
     }
     return mapping.get(key, "quality_4k")
+
+
+def _normalize_hole_fill_mode(value: Any) -> tuple[str, int, float]:
+    key = _normalize_hole_fill_mode_key(value)
+    mapping = {
+        "balanced": ("balanced", 3, 1.0),
+        "soft": ("soft_low_ghost", 1, 0.6),
+        "low_ghost": ("soft_low_ghost", 1, 0.6),
+        "soft_low_ghost": ("soft_low_ghost", 1, 0.6),
+        "sharp": ("sharp_test", 1, 1.0),
+        "sharp_test": ("sharp_test", 1, 1.0),
+    }
+    return mapping.get(key, ("balanced", 3, 1.0))
+
+
+def _normalize_hole_fill_mode_key(value: Any) -> str:
+    text = str(value or "balanced").strip().lower()
+    for old, new in (
+        ("低重影", "low ghost"),
+        ("柔和", "soft"),
+        ("均衡", "balanced"),
+        ("锐利测试", "sharp test"),
+    ):
+        text = text.replace(old, new)
+    for ch in ("-", "/", "+", "\\", "|", "(", ")", "[", "]"):
+        text = text.replace(ch, " ")
+    return "_".join(part for part in text.split() if part)
 
 
 def _normalize_output_format(value: Any) -> OutputFormat:
@@ -426,6 +469,10 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
             "depth_antialias_strength": depth_antialias_strength,
             "edge_threshold": config.edge_threshold,
             "edge_dilation": config.edge_dilation,
+            "mask_feather_radius": config.mask_feather_radius,
+            "hole_fill_mode": config.hole_fill_mode,
+            "hole_fill_radius": config.hole_fill_radius,
+            "hole_fill_strength": config.hole_fill_strength,
             "screen_edge_mask_suppression": config.screen_edge_mask_suppression,
             "cross_eyed": config.cross_eyed,
             "anaglyph_method": config.anaglyph_method,

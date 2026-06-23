@@ -110,6 +110,31 @@ def test_layered_quality_uses_physical_ipd_with_stereo_scale():
     )
     assert torch.allclose(result.debug_info["shift_px"], expected_shift)
 
+
+@pytest.mark.parametrize("backend", ["fast", "fast_plus", "quality_4k", "hq_4k"])
+def test_zero_stereo_scale_bypasses_all_binocular_difference(backend):
+    rgb, depth = make_inputs(width=64, height=32)
+    config = StereoConfig(
+        backend=backend,
+        output_format="full_sbs",
+        temporal=False,
+        fused=False,
+        depth_strength=10.0,
+        convergence=0.0,
+        ipd_mm=64.0,
+        stereo_scale=0.0,
+        max_shift_ratio=0.10,
+        debug_output=True,
+    )
+
+    result = synthesize_stereo(rgb, depth, config)
+
+    assert torch.count_nonzero(result.debug_info["shift_px"]) == 0
+    assert torch.allclose(result.left_eye, rgb)
+    assert torch.allclose(result.right_eye, rgb)
+    assert torch.allclose(result.left_eye, result.right_eye)
+
+
 def test_half_sbs_shape():
     rgb, depth = make_inputs()
     result = synthesize_stereo(rgb, depth, StereoConfig(backend="fast", output_format="half_sbs"))
@@ -142,6 +167,43 @@ def test_fast_plus_adds_light_occlusion_fill_debug_info():
     assert "occlusion_mask" in result.debug_info
     assert result.debug_info["hole_fill_backend"] in {"torch_avg_pool", "triton_radius3"}
     assert not torch.equal(result.sbs, fast.sbs)
+
+
+def test_layered_hole_fill_mode_controls_radius_and_strength():
+    rgb, depth = make_inputs()
+    result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(
+            backend="quality_4k",
+            output_format="half_sbs",
+            debug_output=True,
+            temporal=False,
+            fused=False,
+            hole_fill_mode="soft_low_ghost",
+            hole_fill_radius=1,
+            hole_fill_strength=0.6,
+        ),
+    )
+
+    assert result.debug_info["hole_fill_mode"] == "soft_low_ghost"
+    assert result.debug_info["hole_fill_radius"] == 1
+    assert result.debug_info["hole_fill_strength"] == 0.6
+
+
+def test_mask_feather_radius_softens_hole_fill_blend():
+    image = torch.zeros(1, 3, 9, 9)
+    image[:, :, :, 5:] = 1.0
+    mask = torch.zeros(1, 1, 9, 9)
+    mask[:, :, 4, 4] = 1.0
+
+    hard = edge_aware_fill(image, mask, radius=1, strength=1.0, fused=False, mask_feather_radius=0)
+    soft = edge_aware_fill(image, mask, radius=1, strength=1.0, fused=False, mask_feather_radius=2)
+
+    assert not torch.equal(hard, soft)
+    hard_changed = ((hard - image).abs() > 1e-6).sum()
+    soft_changed = ((soft - image).abs() > 1e-6).sum()
+    assert soft_changed > hard_changed
 
 def test_full_sbs_shape():
     rgb, depth = make_inputs()

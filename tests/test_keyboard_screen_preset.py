@@ -208,8 +208,8 @@ def test_curved_screen_uses_same_fragment_path_as_flat_screen():
     assert "screen_tex.use(location=0)" in curved_block
     assert "screen_depth_tex.use(location=1)" in curved_block
     assert "self._curved_prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll" in curved_block
-    assert "self._curved_prog['u_eye_offset'].value = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0" in curved_block
-    assert "self._curved_prog['u_depth_strength'].value = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio" in curved_block
+    assert "self._curved_prog['u_eye_offset'].value = screen_eye_offset" in curved_block
+    assert "self._curved_prog['u_depth_strength'].value = screen_depth_strength" in curved_block
     for uniform in ("u_resolution", "u_feather_enabled", "u_feather_width", "u_viewport"):
         assert f"self._curved_prog['{uniform}']" in curved_block
 
@@ -220,8 +220,26 @@ def test_openxr_screen_shader_uniforms_are_initialized_for_flat_and_curved_paths
     render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
 
     assert "screen_source_size = (" in render_eye
-    assert "screen_ipd_uv = self.ipd_uv * runtime_rgb_depth_stereo_scale" in render_eye
+    assert "os.environ.get('D2S_OPENXR_RGB_DEPTH_IPD_MODE', 'beta_direct')" in impl_text
+    assert "rgb_depth_ipd_mode = str(getattr(self, '_openxr_rgb_depth_ipd_mode', 'beta_direct') or 'beta_direct')" in render_eye
+    assert "if rgb_depth_ipd_mode == 'beta_direct':" in render_eye
+    assert "screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)" in render_eye
+    assert "runtime_rgb_depth_stereo_scale) / 0.5" not in render_eye
+    assert "runtime_rgb_depth_max_shift_scale = max(0.0, runtime_rgb_depth_max_shift_ratio) / 0.05" in render_eye
+    assert "screen_ipd_uv *= runtime_rgb_depth_max_shift_scale" in render_eye
+    assert "if not self._runtime_direct_source and abs(screen_depth_strength) <= 1e-6:" in render_eye
+    assert "screen_ipd_uv = 0.0" in render_eye
+    assert "screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0" in render_eye
+    assert "shader_resolution_mode = str(getattr(self, '_openxr_rgb_depth_shader_resolution', 'source') or 'source')" in render_eye
+    assert "elif shader_resolution_mode == 'swapchain':" in render_eye
+    assert "shader_resolution = None" in render_eye
+    assert "f\" ipd_mode={rgb_depth_ipd_mode}\"" in render_eye
+    assert "f\" max_shift_ratio={runtime_rgb_depth_max_shift_ratio:.3f}\"" in render_eye
+    assert "f\" effective_ipd_uv={screen_ipd_uv:.6f}\"" in render_eye
+    assert "feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)" in render_eye
     for program_name in ("self.prog", "self._curved_prog"):
+        assert f"{program_name}['u_eye_offset'].value = screen_eye_offset" in render_eye
+        assert f"{program_name}['u_depth_strength'].value = screen_depth_strength" in render_eye
         for uniform in ("u_resolution", "u_feather_enabled", "u_feather_width", "u_viewport"):
             assert f"{program_name}['{uniform}']" in render_eye
 
@@ -267,7 +285,7 @@ def test_quad_layer_is_disabled_and_projection_screen_is_always_drawn():
     assert "self._xr_quad_layer_active" not in quad_gate
 
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye = render_eye.split("def ", 1)[0]
+    render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
     assert "draw_projection_screen" not in render_eye
     assert "_quad_layer_can_replace_projection_screen" not in render_eye
     assert "screen_depth_tex = self._runtime_depth_texture" in render_eye
@@ -305,3 +323,21 @@ def test_curved_screen_geometry_uses_beta_fixed_angle_arc_and_gl_state_reset():
     assert "self.ctx.disable(moderngl.BLEND)" in render_eye
     assert "self.ctx.disable(moderngl.CULL_FACE)" in render_eye
     assert "glFrontFace(GL_CCW)" in render_eye
+
+
+def test_x_long_press_cycles_default_glow_and_y_no_longer_uses_grip_glow():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    y_block = impl_text.split("# Y (left): short press applies default screen preset; hold 1s cycles presets.", 1)[1]
+    y_block = y_block.split("# X (left):", 1)[0]
+    x_block = impl_text.split("# X (left): short press -> toggle virtual keyboard.", 1)[1]
+    x_block = x_block.split("# Thumbstick clicks:", 1)[0]
+
+    assert "_cycle_glow_mode_from_y" not in y_block
+    assert "X_GLOW_HOLD = 1.0" in x_block
+    assert "blank_default_room = (" in x_block
+    assert "env_name in ('default', 'none')" in x_block
+    assert "and getattr(self, '_active_environment', None) is None" in x_block
+    assert "if blank_default_room:" in x_block
+    assert "cycle_glow = getattr(self, '_cycle_glow_mode_from_y', None)" in x_block
+    assert "else:\n                        cycle_light = getattr(self, '_cycle_light_from_x', None)" in x_block
+    assert "self._keyboard_visible = not self._keyboard_visible" in x_block

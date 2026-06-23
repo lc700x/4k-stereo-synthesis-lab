@@ -942,27 +942,53 @@ vec3 sample_border_color(vec2 p) {
     }
     float x = clamp(p.x, 0.0, 1.0);
     float y = clamp(1.0 - p.y, 0.0, 1.0);
-    vec3 acc = vec3(0.0);
-    float wsum = 0.0;
+    vec3 top_col = vec3(0.0);
+    vec3 bottom_col = vec3(0.0);
+    vec3 left_col = vec3(0.0);
+    vec3 right_col = vec3(0.0);
+    float top_sum = 0.0;
+    float side_sum = 0.0;
     for (int i = -3; i <= 3; ++i) {
-        float o = float(i) * 0.055;
-        float sx = clamp(x + o, 0.0, 1.0);
-        float w = 1.0 - 0.11 * abs(float(i));
-        acc += textureLod(u_glow_tex, vec2(sx, 0.045), 0.0).rgb * w;
-        acc += textureLod(u_glow_tex, vec2(sx, 0.955), 0.0).rgb * w;
-        wsum += w * 2.0;
+        float lateral = float(i) * 0.075;
+        float sx = clamp(x + lateral, 0.0, 1.0);
+        float lateral_w = exp(-abs(float(i)) * 0.22);
+        for (int d = 0; d < 5; ++d) {
+            float edge_band_depth = 0.030 + float(d) * 0.045;
+            float depth_w = exp(-float(d) * 0.48);
+            float w = lateral_w * depth_w;
+            top_col += textureLod(u_glow_tex, vec2(sx, edge_band_depth), 0.0).rgb * w;
+            bottom_col += textureLod(u_glow_tex, vec2(sx, 1.0 - edge_band_depth), 0.0).rgb * w;
+            top_sum += w;
+        }
     }
-    float side_weight = pow(abs(x - 0.5) * 2.0, 1.7);
-    for (int j = -2; j <= 2; ++j) {
-        float o = float(j) * 0.095;
-        float sy = clamp(y + o, 0.0, 1.0);
-        float w = (1.0 - 0.16 * abs(float(j))) * side_weight;
-        acc += textureLod(u_glow_tex, vec2(0.045, sy), 0.0).rgb * w;
-        acc += textureLod(u_glow_tex, vec2(0.955, sy), 0.0).rgb * w;
-        wsum += w * 2.0;
+    for (int j = -3; j <= 3; ++j) {
+        float lateral = float(j) * 0.095;
+        float sy = clamp(y + lateral, 0.0, 1.0);
+        float lateral_w = exp(-abs(float(j)) * 0.20);
+        for (int d = 0; d < 5; ++d) {
+            float edge_band_depth = 0.030 + float(d) * 0.050;
+            float depth_w = exp(-float(d) * 0.44);
+            float w = lateral_w * depth_w;
+            left_col += textureLod(u_glow_tex, vec2(edge_band_depth, sy), 0.0).rgb * w;
+            right_col += textureLod(u_glow_tex, vec2(1.0 - edge_band_depth, sy), 0.0).rgb * w;
+            side_sum += w;
+        }
     }
-    vec3 border = acc / max(wsum, 0.001);
-    return mix(u_glow_color, border, 0.88);
+    top_col /= max(top_sum, 0.001);
+    bottom_col /= max(top_sum, 0.001);
+    left_col /= max(side_sum, 0.001);
+    right_col /= max(side_sum, 0.001);
+    float top_weight = smoothstep(0.50, 0.95, p.y);
+    float bottom_weight = smoothstep(0.50, 0.95, 1.0 - p.y);
+    float left_weight = smoothstep(0.35, 0.95, 1.0 - p.x);
+    float right_weight = smoothstep(0.35, 0.95, p.x);
+    vec3 border = (
+        top_col * top_weight +
+        bottom_col * bottom_weight +
+        left_col * left_weight +
+        right_col * right_weight
+    ) / max(top_weight + bottom_weight + left_weight + right_weight, 0.001);
+    return mix(u_glow_color, border, 0.90);
 }
 
 vec3 sample_region_reflection(vec2 p) {
@@ -981,17 +1007,19 @@ vec3 sample_region_reflection(vec2 p) {
             float d = dot(off, off);
             float w = exp(-d * 0.42);
             vec2 sp = clamp(q + off * cell, vec2(0.0), vec2(1.0));
-            acc += textureLod(u_glow_tex, sp, 2.2).rgb * w;
+            acc += textureLod(u_glow_tex, sp, 0.0).rgb * w;
             wsum += w;
         }
     }
     vec3 region = acc / max(wsum, 0.001);
-    return mix(u_glow_color, region, 0.82);
+    return mix(u_glow_color, region, 0.92);
 }
 
 void main() {
     float horiz = clamp(1.0 - abs(uv.x - 0.5) * 2.0, 0.0, 1.0);
-    float vertical = smoothstep(0.02, 0.24, uv.y) * (1.0 - smoothstep(0.80, 0.98, uv.y));
+    float vertical_core = smoothstep(0.02, 0.20, uv.y) * (1.0 - smoothstep(0.82, 0.98, uv.y));
+    float vertical_edges = max(1.0 - smoothstep(0.12, 0.42, uv.y), smoothstep(0.58, 0.88, uv.y)) * 0.30;
+    float vertical = max(vertical_core, vertical_edges);
     float front_focus = pow(horiz, 1.55);
     float band = 0.58 + 0.42 * sin(uv.y * 3.14159265);
     float wrap = 0.65 + 0.35 * smoothstep(0.18, 0.70, horiz);
@@ -1002,7 +1030,7 @@ void main() {
     glow = min(glow, 1.0);
     vec3 border_color = sample_border_color(uv);
     vec3 region_color = sample_region_reflection(vec2(uv.x, 0.5 + (uv.y - 0.5) * 0.35));
-    float region_mix = 0.30 + 0.42 * smoothstep(0.12, 0.72, horiz);
+    float region_mix = 0.38 + 0.46 * smoothstep(0.12, 0.72, horiz);
     vec3 shell_color = mix(border_color, region_color, region_mix);
     frag_color = vec4(shell_color * glow, glow * 0.92);
 }

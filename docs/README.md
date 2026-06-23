@@ -20,6 +20,7 @@
 | [13-realtime-stereo-parameter-guide.md](13-realtime-stereo-parameter-guide.md) | 实时立体参数、Auto Mode、电影/游戏/图片模式策略 |
 | [17-multiplatform-provider-layout.md](17-multiplatform-provider-layout.md) | 多平台 depth provider 目录分层和 artifact 规划 |
 | [18-host-bootstrap-device-flow.md](18-host-bootstrap-device-flow.md) | Host/GUI/capture bootstrap 设备检测与 runtime 参数传递流程 |
+| [20-openxr-gpu-glow-guide.md](20-openxr-gpu-glow-guide.md) | OpenXR GPU glow 的原理、调用链、配置和复杂效果扩展方法 |
 
 ## Benchmark 与优化记录
 

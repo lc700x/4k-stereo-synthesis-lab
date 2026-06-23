@@ -78,6 +78,8 @@ class GUIConfigMixin:
         self.max_shift_dd.value = f'{self._parse_float(cfg.get("Max Shift Ratio", DEFAULTS["Max Shift Ratio"]), DEFAULTS["Max Shift Ratio"]):.2f}'
         self.temporal_strength_dd.value = f'{self._parse_float(cfg.get("Temporal Strength", DEFAULTS["Temporal Strength"]), DEFAULTS["Temporal Strength"]):.2f}'
         self.edge_dilation_dd.value = str(cfg.get("Edge Dilation", DEFAULTS["Edge Dilation"]))
+        self.mask_feather_dd.value = str(cfg.get("Mask Feather Radius", DEFAULTS["Mask Feather Radius"]))
+        self.hole_fill_mode_dd.value = self._hole_fill_mode_to_display(cfg.get("Hole Fill Mode", DEFAULTS["Hole Fill Mode"]))
         self.edge_threshold_dd.value = f'{self._parse_float(cfg.get("Edge Threshold", DEFAULTS["Edge Threshold"]), DEFAULTS["Edge Threshold"]):.2f}'
         self.cross_eyed_cb.value = cfg.get("Cross Eyed", DEFAULTS["Cross Eyed"])
         self.anaglyph_dd.value = cfg.get("Anaglyph Method", DEFAULTS["Anaglyph Method"])
@@ -208,6 +210,8 @@ class GUIConfigMixin:
             "Scene Reset Threshold": scene_reset_threshold,
             "Reset Cooldown Frames": self._parse_int(self.reset_cooldown_dd.value, DEFAULTS["Reset Cooldown Frames"]),
             "Edge Dilation": self._parse_int(self.edge_dilation_dd.value, DEFAULTS["Edge Dilation"]),
+            "Mask Feather Radius": self._parse_int(self.mask_feather_dd.value, DEFAULTS["Mask Feather Radius"]),
+            "Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value),
             "Edge Threshold": self._parse_float(self.edge_threshold_dd.value, DEFAULTS["Edge Threshold"]),
             "Cross Eyed": self.cross_eyed_cb.value,
             "Anaglyph Method": self.anaglyph_dd.value,
@@ -301,6 +305,8 @@ class GUIConfigMixin:
             "Anti-aliasing": self._parse_int(self.antialiasing_dd.value, DEFAULTS["Anti-aliasing"]),
             "Depth Antialias Strength": antialias_strength,
             "Edge Dilation": self._parse_int(self.edge_dilation_dd.value, DEFAULTS["Edge Dilation"]),
+            "Mask Feather Radius": self._parse_int(self.mask_feather_dd.value, DEFAULTS["Mask Feather Radius"]),
+            "Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value),
             "Edge Threshold": self._parse_float(self.edge_threshold_dd.value, DEFAULTS["Edge Threshold"]),
             "Anaglyph Method": self.anaglyph_dd.value,
             "Cross Eyed": bool(self.cross_eyed_cb.value),
@@ -318,28 +324,28 @@ class GUIConfigMixin:
     def _stereo_preset_gui_values(preset):
         return {
             "cinema": {
-                "quality": "quality_4k", "depth_strength": 2.4, "depth_quick": "Enhanced",
-                "convergence": 0.25, "max_shift_ratio": 0.05, "stereo_scale": 0.5,
+                "quality": "quality_4k", "depth_strength": 3.5, "depth_quick": "Enhanced",
+                "convergence": 0.25, "max_shift_ratio": 0.03, "stereo_scale": 0.3,
                 "temporal_strength": 0.7, "foreground_scale": 0.5, "antialiasing": 1,
-                "edge_dilation": 2, "edge_threshold": 0.04,
+                "edge_dilation": 2, "mask_feather_radius": 3, "hole_fill_mode": "soft_low_ghost", "edge_threshold": 0.04,
             },
             "game_low_latency": {
-                "quality": "fast_plus", "depth_strength": 1.6, "depth_quick": "Soft",
-                "convergence": 0.25, "max_shift_ratio": 0.04, "stereo_scale": 0.5,
+                "quality": "fast_plus", "depth_strength": 2.5, "depth_quick": "Soft",
+                "convergence": 0.25, "max_shift_ratio": 0.03, "stereo_scale": 0.3,
                 "temporal_strength": 0.25, "foreground_scale": 0.0, "antialiasing": 0,
-                "edge_dilation": 1, "edge_threshold": 0.04,
+                "edge_dilation": 1, "mask_feather_radius": 3, "hole_fill_mode": "soft_low_ghost", "edge_threshold": 0.04,
             },
             "still_image_hq": {
                 "quality": "hq_4k", "depth_strength": 3.0, "depth_quick": "Enhanced",
-                "convergence": 0.25, "max_shift_ratio": 0.06, "stereo_scale": 0.5,
+                "convergence": 0.25, "max_shift_ratio": 0.03, "stereo_scale": 0.3,
                 "temporal_strength": 0.00, "foreground_scale": 0.5, "antialiasing": 2,
-                "edge_dilation": 3, "edge_threshold": 0.04,
+                "edge_dilation": 3, "mask_feather_radius": 3, "hole_fill_mode": "balanced", "edge_threshold": 0.04,
             },
             "debug_export": {
-                "quality": "quality_4k", "depth_strength": 2.4, "depth_quick": "Enhanced",
-                "convergence": 0.25, "max_shift_ratio": 0.05, "stereo_scale": 0.5,
+                "quality": "quality_4k", "depth_strength": 3.5, "depth_quick": "Enhanced",
+                "convergence": 0.25, "max_shift_ratio": 0.03, "stereo_scale": 0.3,
                 "temporal_strength": 0.7, "foreground_scale": 0.0, "antialiasing": 0,
-                "edge_dilation": 2, "edge_threshold": 0.04,
+                "edge_dilation": 2, "mask_feather_radius": 3, "hole_fill_mode": "balanced", "edge_threshold": 0.04,
             },
         }.get(preset)
 
@@ -356,6 +362,19 @@ class GUIConfigMixin:
     def _stereo_quality_to_display(self, value):
         from .localization import stereo_quality_to_display
         return stereo_quality_to_display(value, self.locale)
+
+    def _hole_fill_mode_options(self):
+        from .localization import hole_fill_mode_options
+        return hole_fill_mode_options(self.locale)
+
+    def _hole_fill_mode_to_display(self, value):
+        from .localization import hole_fill_mode_to_display
+        return hole_fill_mode_to_display(value, self.locale)
+
+    @staticmethod
+    def _display_to_hole_fill_mode(value):
+        from .localization import display_to_hole_fill_mode
+        return display_to_hole_fill_mode(value)
 
     @staticmethod
     def _display_to_stereo_quality(value):

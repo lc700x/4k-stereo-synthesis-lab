@@ -408,6 +408,7 @@ class CoreRuntimeEyeMixin:
         if "openxr_ipd" in debug_info:
             self.ipd_uv = max(0.0, float(debug_info["openxr_ipd"]))
         self._runtime_rgb_depth_stereo_scale = max(0.0, float(debug_info.get("openxr_stereo_scale", 1.0)))
+        self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(debug_info.get("openxr_max_shift_ratio", 0.05)))
 
     def _normalize_rgb_depth_runtime_source(self, rgb, depth):
         import torch

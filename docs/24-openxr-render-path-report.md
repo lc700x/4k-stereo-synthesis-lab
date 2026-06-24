@@ -1,60 +1,60 @@
-# OpenXR Render Path Report
+# OpenXR 渲染路径报告
 
-## Purpose
+## 目的
 
-This report clarifies how the legacy Desktop2Stereo OpenXR path worked, how the current OpenXR paths differ, and how stereo modes should map to render paths after the stereo runtime rewrite.
+本报告阐明旧版 Desktop2Stereo OpenXR 路径的工作方式、当前 OpenXR 路径的差异，以及立体模式在立体运行时重写后应如何映射到渲染路径。
 
-The key product goal is:
+核心产品目标是：
 
-- Traditional stereo mode should preserve the legacy OpenXR behavior.
-- Cinema, game, and still-image stereo modes should use the new full `stereo_runtime.synthesize_stereo()` pipeline when OpenXR quality output is desired.
+- 传统立体模式应保留旧版 OpenXR 行为。
+- 影院、游戏和静态图像立体模式在需要 OpenXR 质量输出时，应使用新的完整 `stereo_runtime.synthesize_stereo()` 管线。
 
-## Legacy Desktop2Stereo OpenXR Flow
+## 旧版 Desktop2Stereo OpenXR 流程
 
-The legacy `Desktop2Stereo_v2.5.0Beta` OpenXR path did not use the full `make_sbs()` stereo synthesis path.
+旧版 `Desktop2Stereo_v2.5.0Beta` OpenXR 路径未使用完整的 `make_sbs()` 立体合成路径。
 
-Legacy OpenXR flow:
+旧版 OpenXR 流程：
 
 ```text
 capture
 -> predict_depth(rgb)
 -> depth_q.put(rgb, depth, timestamp)
 -> OpenXRViewer.run(first_rgb, first_depth)
--> viewer uploads RGB texture + depth texture
--> OpenXR shader generates per-eye parallax from RGB + depth
+-> viewer 上传 RGB 纹理 + 深度纹理
+-> OpenXR 着色器从 RGB + 深度生成每眼视差
 ```
 
-Relevant legacy behavior:
+相关旧版行为：
 
-- `main.py` OpenXR branch creates `OpenXRViewer(ipd=IPD, depth_ratio=DEPTH_STRENGTH, ...)`.
-- It passes `rgb` and `depth` directly into `viewer.run()`.
-- The OpenXR viewer uploads RGB and depth in `_update_frame(rgb, depth)`.
-- The viewer shader uses `depth_strength * depth_ratio` to create stereo parallax.
-- The legacy `make_sbs(...)` path is used by legacy streaming / non-OpenXR output, not by OpenXR.
+- `main.py` 的 OpenXR 分支创建 `OpenXRViewer(ipd=IPD, depth_ratio=DEPTH_STRENGTH, ...)`。
+- 将 `rgb` 和 `depth` 直接传入 `viewer.run()`。
+- OpenXR viewer 在 `_update_frame(rgb, depth)` 中上传 RGB 和深度。
+- viewer 着色器使用 `depth_strength * depth_ratio` 创建立体视差。
+- 旧版 `make_sbs(...)` 路径用于旧版流媒体 / 非 OpenXR 输出，不用于 OpenXR。
 
-Therefore, legacy OpenXR is best described as an RGB+depth shader path, not a full SBS synthesis path.
+因此，旧版 OpenXR 最佳描述为 RGB+深度着色器路径，而非完整的 SBS 合成路径。
 
-## Current Render Path Concepts
+## 当前渲染路径概念
 
-The current codebase has three distinct concepts that must not be treated as equivalent:
+当前代码库包含三个不同的概念，不得等同对待：
 
 1. OpenXR rgb-depth
 2. OpenXR prewarp eyes
-3. OpenXR full stereo synthesis eyes, not fully wired yet
+3. OpenXR full stereo synthesis eyes（尚未完全接入）
 
 ### 1. OpenXR rgb-depth
 
-This is the current default low-latency OpenXR path.
+这是当前默认的低延迟 OpenXR 路径。
 
 ```text
 runtime:
-RGB -> depth model -> depth postprocess
+RGB -> 深度模型 -> 深度后处理
 
 viewer:
-RGB + depth -> OpenXR shader -> headset
+RGB + 深度 -> OpenXR 着色器 -> 头显
 ```
 
-Parameters consumed by this path:
+该路径消费的参数：
 
 - `depth_strength`
 - `convergence`
@@ -64,7 +64,7 @@ Parameters consumed by this path:
 - `foreground_scale`
 - `depth_antialias_strength`
 
-Parameters not consumed by this path:
+该路径不消费的参数：
 
 - `temporal_strength`
 - `edge_threshold`
@@ -74,44 +74,44 @@ Parameters not consumed by this path:
 - `hole_fill_radius`
 - `hole_fill_strength`
 
-Advantages:
+优势：
 
-- Lowest latency among the OpenXR paths.
-- Controller and GUI changes to core depth parameters are lightweight.
-- Closest to the legacy OpenXR behavior.
-- Good for interactive tuning and real-time headset use.
+- 在 OpenXR 路径中延迟最低。
+- 控制器和 GUI 对核心深度参数的变更开销很小。
+- 最接近旧版 OpenXR 行为。
+- 适合交互式调参和实时头显使用。
 
-Disadvantages:
+劣势：
 
-- Does not use the full stereo synthesis pipeline.
-- Cinema, game, and still-image presets are only partially meaningful.
-- Hole fill, edge dilation, mask feather, and stereo temporal blend do not affect headset output.
+- 未使用完整的立体合成管线。
+- 影院、游戏和静态图像预设仅部分生效。
+- 补洞、边缘膨胀、遮罩羽化和立体时序混合不会影响头显输出。
 
-Performance impact:
+性能影响：
 
-- Lowest additional cost after depth inference.
-- Most cost is depth model inference plus a relatively cheap viewer shader.
+- 深度推理后的额外开销最低。
+- 大部分开销来自深度模型推理和相对廉价的 viewer 着色器。
 
-Correct use:
+正确用途：
 
-- Traditional OpenXR mode.
-- Legacy behavior compatibility.
-- Low-latency usage.
-- Realtime controller depth adjustment.
+- 传统的 OpenXR 模式。
+- 旧版行为兼容。
+- 低延迟使用场景。
+- 实时控制器深度调节。
 
 ### 2. OpenXR prewarp eyes
 
-This path generates left and right eye images in the runtime before passing them to the viewer.
+该路径在将图像传递给 viewer 之前，先在 runtime 中生成左右眼图像。
 
 ```text
 runtime:
-RGB + depth -> render_openxr_stereo() -> left_eye + right_eye
+RGB + 深度 -> render_openxr_stereo() -> left_eye + right_eye
 
 viewer:
-upload left_eye + right_eye -> headset
+上传 left_eye + right_eye -> 头显
 ```
 
-Parameters consumed by this path:
+该路径消费的参数：
 
 - `depth_strength`
 - `convergence`
@@ -120,7 +120,7 @@ Parameters consumed by this path:
 - `max_shift_ratio`
 - `screen_roll`
 
-Parameters not consumed by this path:
+该路径不消费的参数：
 
 - `foreground_scale`
 - `depth_antialias_strength`
@@ -130,48 +130,48 @@ Parameters not consumed by this path:
 - `mask_feather_radius`
 - `hole_fill_*`
 
-Advantages:
+优势：
 
-- Runtime owns the OpenXR stereo warp.
-- Viewer becomes closer to a left/right eye texture presenter.
-- Useful as an experimental or compatibility path.
+- Runtime 拥有 OpenXR 立体 warp 的控制权。
+- Viewer 更接近左右眼纹理展示器。
+- 可用作实验性或兼容性路径。
 
-Disadvantages:
+劣势：
 
-- It does not call full `synthesize_stereo()`.
-- It does not make cinema/game/still-image full synthesis parameters effective.
-- More expensive than rgb-depth because two eye images are generated and transferred.
+- 未调用完整的 `synthesize_stereo()`。
+- 未使影院/游戏/静态图像的完整合成参数生效。
+- 比 rgb-depth 更昂贵，因为需要生成和传输两幅眼图。
 
-Performance impact:
+性能影响：
 
-- Medium.
-- Higher GPU and memory bandwidth cost than rgb-depth.
-- Usually less suitable for fast interactive tuning than rgb-depth.
+- 中等。
+- GPU 和内存带宽开销高于 rgb-depth。
+- 通常不如 rgb-depth 适合快速的交互式调参。
 
-Correct use:
+正确用途：
 
-- Compatibility experiments.
-- Cases where viewer-side RGB+depth shader behavior is undesirable.
-- Not the final path for full quality stereo synthesis.
+- 兼容性实验。
+- 在 viewer 端 RGB+深度着色器行为不可取的情况下使用。
+- 不是全质量立体合成的最终路径。
 
 ### 3. OpenXR full stereo synthesis eyes
 
-This is the desired quality path for the new cinema, game, and still-image modes. It is not fully wired into OpenXR output yet.
+这是新的影院、游戏和静态图像模式所期望的质量路径。尚未完全接入 OpenXR 输出。
 
-Target flow:
+目标流程：
 
 ```text
 runtime:
-RGB + depth
+RGB + 深度
 -> stereo_runtime.synthesize_stereo()
--> left_eye + right_eye, or SBS split into eye images
+-> left_eye + right_eye，或将 SBS 分割为眼图
 -> OpenXR runtime result
 
 viewer:
-runtime-direct eye texture upload -> headset
+runtime 直接上传眼图纹理 -> 头显
 ```
 
-Parameters that should be consumed by this path:
+该路径应消费的参数：
 
 - `quality_4k` / `fast` / `fast_plus`
 - `depth_strength`
@@ -189,36 +189,36 @@ Parameters that should be consumed by this path:
 - `hole_fill_radius`
 - `hole_fill_strength`
 
-Advantages:
+优势：
 
-- Makes the new stereo runtime rewrite meaningful in OpenXR.
-- Enables full quality processing for cinema, game, and still-image modes.
-- Uses occlusion, hole fill, edge processing, and temporal smoothing as designed.
+- 使新的立体运行时重写在 OpenXR 中发挥作用。
+- 为影院、游戏和静态图像模式启用全质量处理。
+- 按设计使用遮挡、补洞、边缘处理和时序平滑。
 
-Disadvantages:
+劣势：
 
-- Highest runtime cost.
-- Higher latency than rgb-depth.
-- Parameter changes require recomputing synthesized eye images.
-- 4K quality modes may be expensive for game-like workloads.
+- 运行时开销最高。
+- 延迟高于 rgb-depth。
+- 参数变更需要重新计算合成的眼图。
+- 4K 质量模式对于游戏类工作负载可能开销较大。
 
-Performance impact:
+性能影响：
 
-- Highest.
-- Adds full synthesis cost after depth inference: depth postprocess, warp/composite, occlusion mask, hole fill, temporal blend, and output packing/upload.
-- Must be benchmarked separately by preset and resolution.
+- 最高。
+- 在深度推理之后增加了完整的合成开销：深度后处理、warp/合成、遮挡 mask、补洞、时序混合以及输出打包/上传。
+- 必须按预设和分辨率分别进行基准测试。
 
-Correct use:
+正确用途：
 
-- Cinema quality mode.
-- Still-image high quality mode.
-- Game mode only with lower-latency presets such as `fast` or `fast_plus`, after performance validation.
+- 影院质量模式。
+- 静态图像高质量模式。
+- 游戏模式仅在使用 `fast` 或 `fast_plus` 等低延迟预设并通过性能验证后使用。
 
-## Current Wiring Gap
+## 当前的接入缺口
 
-The current pipeline contains a partial fallback that can call full synthesis but does not use its final result for OpenXR display.
+当前管线包含一个部分回退，可以调用完整合成但未将其最终结果用于 OpenXR 显示。
 
-Current behavior:
+当前行为：
 
 ```python
 if ctx.run_mode == "OpenXR" and ctx.openxr_runtime_direct:
@@ -227,36 +227,36 @@ else:
     runtime_result = ctx.stereo_runtime.process_rgb_frame(...)
 ```
 
-When `openxr_runtime_direct` is false, `process_rgb_frame()` does run full stereo synthesis. However, the OpenXR queue currently receives RGB+depth fallback data:
+当 `openxr_runtime_direct` 为 false 时，`process_rgb_frame()` 确实会运行完整的立体合成。然而，OpenXR 队列当前接收的是 RGB+深度回退数据：
 
 ```python
 ctx.queue_put_latest(ctx.runtime_q, ((frame_rgb, fallback_depth), capture_start_time))
 ```
 
-That means the full synthesis output is not actually shown in OpenXR. The viewer falls back to the RGB+depth shader path.
+这意味着完整的合成输出实际上并未在 OpenXR 中显示。Viewer 回退到了 RGB+深度着色器路径。
 
-Required fix:
+需要修复的内容：
 
 ```text
 process_rgb_frame()
--> use StereoRuntimeResult.left_eye/right_eye or split StereoRuntimeResult.sbs
--> package as an OpenXR runtime result
--> send to viewer runtime-direct eye texture path
+-> 使用 StereoRuntimeResult.left_eye/right_eye 或拆分 StereoRuntimeResult.sbs
+-> 打包为 OpenXR runtime result
+-> 发送到 viewer 的 runtime 直接眼图纹理路径
 ```
 
-## Recommended Mode Mapping
+## 推荐模式映射
 
-### Traditional Stereo Mode
+### 传统立体模式
 
-Use OpenXR rgb-depth.
+使用 OpenXR rgb-depth。
 
-Reason:
+理由：
 
-- This reproduces the legacy OpenXR behavior.
-- It is low latency.
-- It supports realtime depth adjustment well.
+- 这复现了旧版 OpenXR 行为。
+- 延迟低。
+- 很好地支持实时深度调节。
 
-Expose or emphasize these controls:
+暴露或强调以下控件：
 
 - `Depth Strength`
 - `Convergence`
@@ -266,7 +266,7 @@ Expose or emphasize these controls:
 - `Foreground Scale`
 - `Depth Antialias Strength`
 
-Hide, disable, or mark as not applicable in OpenXR rgb-depth:
+在 OpenXR rgb-depth 中隐藏、禁用或标记为不适用：
 
 - `Temporal Strength`
 - `Edge Threshold`
@@ -276,58 +276,58 @@ Hide, disable, or mark as not applicable in OpenXR rgb-depth:
 - `Hole Fill Radius`
 - `Hole Fill Strength`
 
-### Cinema Mode
+### 影院模式
 
-Use OpenXR full stereo synthesis eyes once wired.
+接入后使用 OpenXR full stereo synthesis eyes。
 
-Reason:
+理由：
 
-- Cinema mode benefits from high-quality occlusion and hole fill.
-- Latency is less critical than visual quality.
+- 影院模式受益于高质量的遮挡和补洞处理。
+- 延迟不如视觉质量关键。
 
-Recommended backend:
+推荐后端：
 
-- `quality_4k` where performance allows.
-- Fallback to a balanced or faster preset if runtime cost is too high.
+- 性能允许时使用 `quality_4k`。
+- 如果运行时开销过高，回退到平衡或更快的预设。
 
-### Game Mode
+### 游戏模式
 
-Use OpenXR full stereo synthesis eyes only with a low-latency preset.
+仅在使用低延迟预设的情况下使用 OpenXR full stereo synthesis eyes。
 
-Reason:
+理由：
 
-- Game mode needs lower latency.
-- Full `quality_4k` may be too expensive.
+- 游戏模式需要更低的延迟。
+- 完整的 `quality_4k` 可能开销过大。
 
-Recommended backend:
+推荐后端：
 
 - `fast`
 - `fast_plus`
-- Carefully benchmark before enabling expensive hole fill or temporal settings.
+- 在启用昂贵的补洞或时序设置之前仔细进行基准测试。
 
-### Still Image Mode
+### 静态图像模式
 
-Use OpenXR full stereo synthesis eyes once wired.
+接入后使用 OpenXR full stereo synthesis eyes。
 
-Reason:
+理由：
 
-- Latency matters less.
-- High-quality hole fill, edge processing, and temporal settings can be more valuable.
+- 延迟不那么重要。
+- 高质量的补洞、边缘处理和时序设置更有价值。
 
-Recommended backend:
+推荐后端：
 
-- `quality_4k` or still-image high quality preset.
+- `quality_4k` 或静态图像高质量预设。
 
-## Summary Table
+## 汇总表
 
-| Path | Legacy-compatible | Full synthesis | Low latency | Uses hole fill / edge / temporal | Best use |
-|---|---:|---:|---:|---:|---|
-| OpenXR rgb-depth | Yes | No | Best | No | Traditional OpenXR, realtime tuning |
-| OpenXR prewarp eyes | No | No | Medium | No | Compatibility / experiments |
-| OpenXR full synthesis eyes | No | Yes | Worst | Yes | Cinema, still image, quality-focused modes |
+| 路径 | 兼容旧版 | 完整合成 | 低延迟 | 使用补洞/边缘/时序 | 最佳用途 |
+|---|---|---|---|---|---|
+| OpenXR rgb-depth | 是 | 否 | 最佳 | 否 | 传统 OpenXR，实时调参 |
+| OpenXR prewarp eyes | 否 | 否 | 中等 | 否 | 兼容性 / 实验 |
+| OpenXR full synthesis eyes | 否 | 是 | 最差 | 是 | 影院、静态图像，重质量模式 |
 
-## Final Recommendation
+## 最终建议
 
-Keep OpenXR rgb-depth as the legacy-compatible traditional mode.
+保留 OpenXR rgb-depth 作为兼容旧版的传统模式。
 
-Add or repair OpenXR full stereo synthesis eyes as a separate quality path for cinema, game, and still-image modes. Do not present SBS-only synthesis controls as active in OpenXR rgb-depth unless they are actually consumed by the current render path.
+增加或修复 OpenXR full stereo synthesis eyes，作为影院、游戏和静态图像模式的独立质量路径。不要在 OpenXR rgb-depth 中将纯 SBS 合成控件呈现为可用状态，除非它们确实被当前渲染路径所消费。

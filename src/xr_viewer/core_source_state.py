@@ -267,20 +267,22 @@ class CoreSourceStateMixin:
             and hasattr(item, "depth")
         )
 
-    def _publish_runtime_config(self):
+    def _publish_runtime_config(self, *, include_stereo=False):
         callback = self._runtime_config_callback
         if not callable(callback):
             return
         try:
-            depth_ratio = float(self.depth_ratio)
-            if self._quad_layer_can_replace_projection_screen():
-                depth_ratio *= float(getattr(self, '_xr_quad_layer_stereo_boost', 1.0))
-            callback(
-                ipd=self.ipd_uv,
-                depth_ratio=depth_ratio,
-                convergence=self.convergence,
-                screen_roll=self.screen_roll,
-            )
+            payload = {"screen_roll": self.screen_roll}
+            if include_stereo:
+                depth_strength = float(self.depth_strength)
+                if self._quad_layer_can_replace_projection_screen():
+                    depth_strength *= float(getattr(self, '_xr_quad_layer_stereo_boost', 1.0))
+                payload.update(
+                    ipd=self.ipd_uv,
+                    depth_strength=depth_strength,
+                    convergence=self.convergence,
+                )
+            callback(**payload)
         except Exception:
             pass
 

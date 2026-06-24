@@ -401,8 +401,9 @@ class CoreRuntimeEyeMixin:
             self._d3d11_native_renderer.has_frame = False
 
     def _apply_runtime_rgb_depth_config(self, debug_info):
-        if "openxr_depth_strength" in debug_info:
-            self.depth_ratio = float(debug_info["openxr_depth_strength"])
+        # Depth strength is controlled by the viewer in OpenXR mode. Do not copy
+        # it back from runtime debug_info, or controller changes can be overwritten
+        # by the previous frame's config before the runtime sees the new value.
         if "openxr_convergence" in debug_info:
             self.convergence = float(debug_info["openxr_convergence"])
         if "openxr_ipd" in debug_info:

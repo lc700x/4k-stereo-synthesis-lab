@@ -35,13 +35,13 @@ class OverlayMixin:
       self._fps_overlay_visible, self.show_fps, self.actual_fps, self.sbs_fps,
       self.total_latency, self._cached_actual_fps, self._cached_sbs_fps,
       self._cached_latency, self._cached_screen_width, self._cached_screen_height,
-      self._cached_screen_dist, self._cached_screen_curved, self._cached_depth_ratio,
+      self._cached_screen_dist, self._cached_screen_curved, self._cached_depth_strength,
       self._cached_vr_res, self._cached_sbs_res, self._fps_display_ema,
       self._frame_ts_ring, self._sbs_ts_ring, self._last_overlay_update,
       self.font, self.bold_font, self.label_font, self.base_font_size,
       self._depth_osd_tex, self._depth_osd_vao, self._depth_osd_tex_size,
       self._depth_osd_alpha, self._depth_osd_show_t, self._depth_osd_last_val,
-      self.depth_ratio, self.depth_strength,
+      self.depth_strength, self._depth_strength_ratio,
       self._preset_osd_tex, self._preset_osd_vao, self._preset_osd_tex_size,
       self._preset_osd_alpha, self._preset_osd_show_t, self._preset_osd_last_key,
       self._preset_index, self._screen_presets,
@@ -92,7 +92,7 @@ class OverlayMixin:
             self._cached_screen_height = self.screen_width * 9.0 / 16.0
             self._cached_screen_dist   = self.screen_distance
             self._cached_screen_curved = self._screen_curved
-            self._cached_depth_ratio   = self.depth_ratio
+            self._cached_depth_strength = float(getattr(self, 'depth_strength', 0.0) or 0.0)
             self._cached_help_visible  = self._help_panel_visible
             self._cached_vr_res        = self._swapchain_sizes.get(0, (0, 0))
             self._cached_sbs_res       = self.frame_size
@@ -163,7 +163,7 @@ class OverlayMixin:
                 scr_str = (f"{self._cached_screen_width:.2f}"
                           f" x {self._cached_screen_height:.2f} m"
                           f"  @  {self._cached_screen_dist:.2f} m"
-                          f"   Depth {self._cached_depth_ratio:.2f}")
+                          f"   Depth Strength {self._cached_depth_strength:.2f}")
                 _draw_row(ROW1, "[3D Display]", C_LABEL, scr_str, C_CYAN)
 
                 vw, vh = self._cached_vr_res
@@ -247,10 +247,10 @@ class OverlayMixin:
         self.ctx.disable(moderngl.BLEND)
 
     def _render_depth_osd(self, eye_index, mgl_fbo, vp_mat):
-        """Floating depth-ratio indicator panel.
+        """Floating depth-strength indicator panel.
 
-        Appears when depth_ratio changes; fades out automatically.
-        Floats in front of the screen; distance from screen grows with depth_ratio.
+        Appears when depth strength changes; fades out automatically.
+        Floats in front of the screen; distance from screen grows with depth strength.
         Style matches the FPS status panel (dark rounded rectangle).
         """
         if self._depth_osd_tex is None or self.screen_height is None:
@@ -259,12 +259,12 @@ class OverlayMixin:
         now = self._frame_now
 
         # Detect change and (re)trigger on left eye only to avoid double writes.
-        # Composite key encodes both depth_ratio and the on/off state from
-        # depth_strength so the right-grip + left-stick-click toggle also
+        # Composite key encodes both displayed depth strength and on/off state
+        # so the right-grip + left-stick-click toggle also
         # fires the indicator.
         if eye_index == 0:
-            depth_on = self.depth_strength > 0.0
-            cur_val  = round(self.depth_ratio, 3)
+            depth_on = bool(getattr(self, '_stereo_enabled', True)) and self.depth_strength > 0.0
+            cur_val  = round(float(getattr(self, 'depth_strength', 0.0) or 0.0), 3)
             cur_key  = (cur_val, depth_on)
             if cur_key != self._depth_osd_last_val:
                 self._depth_osd_last_val = cur_key
@@ -273,7 +273,43 @@ class OverlayMixin:
 
                 # Rebuild PIL texture
                 if self.font is not None:
-                    dw, dh = self._depth_osd_tex_size
+                    _, base_dh = self._depth_osd_tex_size
+                    message = getattr(self, '_depth_osd_message', None)
+                    if message:
+                        label = ""
+                        value = str(message)
+                        self._depth_osd_message = None
+                    else:
+                        label = "Depth Strength"
+                        value = f"{cur_val:.2f}" if depth_on else "0.00"
+                    bfont = self.bold_font or self.font
+                    C_LABEL = (150, 158, 185, 255)
+                    C_VALUE = (  0, 210, 230, 255)
+                    PAD = 12
+                    GAP = 8
+                    measure = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
+
+                    def _tw(text, font):
+                        try:
+                            return int(measure.textlength(text, font=font))
+                        except AttributeError:
+                            return int(font.getsize(text)[0]) if hasattr(font, 'getsize') else 80
+
+                    lw = _tw(label, bfont) if label else 0
+                    vw = _tw(value, self.font)
+                    text_gap = GAP if label else 0
+                    dw = max(96, min(640, PAD * 2 + lw + text_gap + vw))
+                    dh = base_dh
+                    if self._depth_osd_tex is None or self._depth_osd_tex_size != (dw, dh):
+                        if self._depth_osd_tex is not None:
+                            try:
+                                self._depth_osd_tex.release()
+                            except Exception:
+                                pass
+                        self._depth_osd_tex = self.ctx.texture((dw, dh), 4, dtype='f1')
+                        self._depth_osd_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+                        self._depth_osd_tex_size = (dw, dh)
+
                     img  = Image.new('RGBA', (dw, dh), (0, 0, 0, 0))
                     draw = ImageDraw.Draw(img)
                     draw.rounded_rectangle(
@@ -281,19 +317,10 @@ class OverlayMixin:
                         radius=12,
                         fill=(32, 32, 36, 210),
                     )
-                    label = "Depth"
-                    value = f"{cur_val:.2f}" if depth_on else "0.00"
-                    bfont = self.bold_font or self.font
-                    C_LABEL = (150, 158, 185, 255)
-                    C_VALUE = (  0, 210, 230, 255)
-                    PAD = 12
                     cy  = (dh - 32) // 2
-                    draw.text((PAD, cy), label, font=bfont, fill=C_LABEL)
-                    try:
-                        lw = int(draw.textlength(label, font=bfont))
-                    except AttributeError:
-                        lw = int(bfont.getsize(label)[0]) if hasattr(bfont, 'getsize') else 60
-                    draw.text((PAD + lw + 8, cy), value, font=self.font, fill=C_VALUE)
+                    if label:
+                        draw.text((PAD, cy), label, font=bfont, fill=C_LABEL)
+                    draw.text((PAD + lw + text_gap, cy), value, font=self.font, fill=C_VALUE)
                     data = np.flipud(np.array(img, dtype=np.uint8))
                     self._depth_osd_tex.write(data.tobytes())
 
@@ -319,7 +346,7 @@ class OverlayMixin:
 
         BASE_Z_EXTRA = 0.05
         SCALE_Z      = 0.028
-        z_extra = BASE_Z_EXTRA + self.depth_ratio * SCALE_Z
+        z_extra = BASE_Z_EXTRA + self._effective_depth_strength() * SCALE_Z
         dist = self.screen_distance - z_extra
 
         cy_  = math.cos(self.screen_yaw);   sy_ = math.sin(self.screen_yaw)

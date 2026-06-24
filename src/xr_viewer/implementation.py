@@ -161,10 +161,19 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
     Call run(first_rgb, first_depth) to enter the blocking frame loop.
     """
 
+    def _effective_depth_strength(self):
+        base = float(getattr(self, 'depth_strength', 0.0) or 0.0)
+        ratio = float(getattr(self, '_depth_strength_ratio', 0.1) or 0.0)
+        return base * ratio
+
+    def _quantize_depth_strength(self, value):
+        value = max(0.0, min(10.0, float(value)))
+        return round(value * 10.0) / 10.0
+
     def __init__(
         self,
         ipd=0.064,
-        depth_ratio=1.0,
+        depth_strength=1.0,
         convergence=0.0,
         frame_size=(1280, 720),
         fps=60,
@@ -180,10 +189,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._capture_mode = capture_mode
         self._input_monitor_index = monitor_index
         self.ipd_uv = ipd
-        self.depth_strength = 0.1 # multiplied by depth_ratio; effective = depth_strength * depth_ratio
+        self.depth_strength = self._quantize_depth_strength(depth_strength)
+        self._default_depth_strength = self.depth_strength
+        self._depth_strength_adjust_raw = self.depth_strength
+        self._depth_strength_ratio = 0.1
+        self._depth_strength_local_override_until = 0.0
         self._stereo_enabled = True
-        self._saved_depth_ratio = depth_ratio
-        self.depth_ratio = depth_ratio
+        self._saved_depth_strength = self.depth_strength
         self.convergence = convergence
         self.frame_size = frame_size
         self.fps = fps
@@ -279,7 +291,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._cached_screen_width   = 0.0
         self._cached_screen_height  = 0.0
         self._cached_screen_dist    = 0.0
-        self._cached_depth_ratio    = 1.0
+        self._cached_depth_strength = 1.0
         self._cached_vr_res         = (0, 0)
         self._cached_sbs_res        = (0, 0)
 
@@ -309,7 +321,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._active_environment = None
         self._settings_sync_dirty = False
         self._settings_sync_save_t = 0.0
-        self._last_persisted_depth_ratio = float(depth_ratio)
         self._glow_intensity = float(kwargs.get('glow_intensity', 0.65))
         self._glow_width_m = float(kwargs.get('glow_width', 0.16))
         self._glow_surround_margin_m = float(kwargs.get('glow_surround_margin', 14.0))
@@ -748,7 +759,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._team_ov_ltrig_held = False
         self._team_ov_rtrig_held = False
 
-        # Depth-ratio OSD: floating panel that appears when depth_ratio changes
+        # Depth-strength OSD: floating panel that appears when depth strength changes
         self._depth_osd_tex       = None
         self._depth_osd_vao       = None
         self._depth_osd_tex_size  = (256, 78)
@@ -839,7 +850,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._calib_tex = None
         self._calib_tex_size = (420, 200)  # Calibration combo instructions texture size
 
-        # Right grip + A/B ->depth_ratio control (hold A = increase, hold B = decrease)
+        # Right grip + A/B ->depth strength control (hold A = increase, hold B = decrease)
         # Reset to default: right grip + right thumbstick click
 
         # Physical mouse priority: suppress VR cursor when physical mouse is active
@@ -1271,7 +1282,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._overlay_prog, [(vbo2, '2f 2f', 'in_position', 'in_uv')]
         )
 
-        # Depth-ratio OSD
+        # Depth-strength OSD
         dw, dh = self._depth_osd_tex_size
         self._depth_osd_tex = self.ctx.texture((dw, dh), 4, dtype='f1')
         self._depth_osd_tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
@@ -2146,7 +2157,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             else:
                 screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
             screen_ipd_uv *= runtime_rgb_depth_max_shift_scale
-        screen_depth_strength = 0.0 if self._runtime_direct_source else self.depth_strength * self.depth_ratio
+        screen_depth_strength = 0.0 if self._runtime_direct_source else self._effective_depth_strength()
         if not self._runtime_direct_source and abs(screen_depth_strength) <= 1e-6:
             screen_ipd_uv = 0.0
         screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0
@@ -3623,10 +3634,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # Grip + stick fine-tuning (pan, resize, rotate, depth) ----------
         KB_MOVE_SPEED = 0.4    # m/s at full deflection
         DEPTH_SPEED  = 0.08    # depth_strength units/s at full deflection
-        # Depth-ratio stick control: replaces A/B + right-grip mapping
-        DEPTH_RATIO_SPEED = 0.5   # units/s at full deflection
-        DEPTH_RATIO_MIN   = 0.0
-        DEPTH_RATIO_MAX   = 10.0
+        # Depth-strength stick control: replaces A/B + right-grip mapping
+        DEPTH_STRENGTH_SPEED = 0.5   # units/s at full deflection
+        DEPTH_STRENGTH_MIN   = 0.0
+        DEPTH_STRENGTH_MAX   = 10.0
         if grip_l and not seat_adjust_active:
             if self._keyboard_visible and self._grip_target_l == 'keyboard':
                 # Left grip latched to keyboard + left stick ->standalone
@@ -3673,15 +3684,26 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         self._pitch_offset += ly * rot_speed
                         self.screen_pitch  += ly * rot_speed
         elif grip_r and not seat_adjust_active:
-            # Right grip + left stick Y ->depth strength
+            # Right grip + left stick Y -> depth strength (GUI value)
             DEPTH_STR_SPEED = 0.5
             DEPTH_STR_MIN   = 0.0
             DEPTH_STR_MAX   = 10.0
             if abs(ly) > DEAD:
                 old_val = self.depth_strength
-                self.depth_strength = max(DEPTH_STR_MIN,
-                                    min(DEPTH_STR_MAX,
-                                        self.depth_strength + ly * DEPTH_STR_SPEED * dt))
+                raw_val = float(getattr(self, '_depth_strength_adjust_raw', self.depth_strength) or 0.0)
+                raw_val = max(DEPTH_STR_MIN,
+                              min(DEPTH_STR_MAX, raw_val + ly * DEPTH_STR_SPEED * dt))
+                self._depth_strength_adjust_raw = raw_val
+                self.depth_strength = self._quantize_depth_strength(raw_val)
+                # Auto-exit 2D mode when user actively adjusts depth
+                if old_val == 0.0 and self.depth_strength > 1e-6:
+                    self._stereo_enabled = True
+                # Show OSD when depth changes
+                if self.depth_strength != old_val:
+                    self._saved_depth_strength = self.depth_strength
+                    self._depth_strength_local_override_until = time.perf_counter() + 0.75
+                    self._depth_osd_show_t = time.perf_counter()
+                    self._publish_runtime_config(include_stereo=True)
             # Don't send desktop scroll events while keyboard visible or the screen is being
             # grabbed/manipulated -avoid accidental scrolls while adjusting UI.
             if not (self._keyboard_visible or self._grabbed or grip_l or grip_r):
@@ -3737,14 +3759,14 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         self._keyboard_distance = max(0.2,
                             self._keyboard_distance + ry * self._dist_speed_base * dt)
             else:
-                if (not screen_locked) and abs(rx) > abs(ry) and abs(rx) > DEAD:
+                if (not screen_locked) and laser_r_on_screen and abs(rx) > abs(ry) and abs(rx) > DEAD:
                     _speed = self._stick_exp_speed(rx, self._size_speed_base, self._size_speed_max, self._size_speed_exp)
                     self._screen_ref_size = max(0.8,
                                                 self._screen_ref_size + math.copysign(_speed * dt, rx))
                     self.screen_height = None
                     self._resizing = True
                     self._screen_osd_show_t = time.perf_counter()
-                elif (not screen_locked) and abs(ry) > abs(rx) and abs(ry) > DEAD:
+                elif (not screen_locked) and laser_r_on_screen and abs(ry) > abs(rx) and abs(ry) > DEAD:
                     # Right-grip + right-stick Y ->radial distance along head->screen ray
                     _speed = self._stick_exp_speed(ry, self._dist_speed_base, self._dist_speed_max, self._dist_speed_exp)
                     # Move screen along the head->screen radial direction
@@ -3832,8 +3854,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._menu_pressed_last = menu_now
 
         # A / B (right):
-        #   Previously: right-grip + A/B adjusted depth_ratio. Now: right-grip +
-        #   right-stick Y adjusts depth_ratio. When A+B are held together (brand
+        #   Previously: right-grip + A/B adjusted depth strength. Now: right-grip +
+        #   left-stick Y adjusts depth strength. When A+B are held together (brand
         #   switch combo) A/B's other functions are suppressed.
         a_now = self._read_bool_action(self._act_a_btn, "/user/hand/right")
         b_now = self._read_bool_action(self._act_b_btn, "/user/hand/right")
@@ -3841,7 +3863,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if not ab_held:
             # When A+B are not held together, A/B keep their normal behaviour.
             # If right-grip is held we intentionally do not perform A/B immediate
-            # actions here (depth_ratio is adjusted via right-stick Y below).
+            # actions here (depth strength is adjusted via left-stick Y above).
             if not grip_r:
                 # A: short press ->toggle flat/curved screen; long press ->toggle FPS/status panel
                 A_LONG = 1.0
@@ -3962,10 +3984,17 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             if lsc_now and not self._left_stick_click_prev:
                 self._stereo_enabled = not self._stereo_enabled
                 if self._stereo_enabled:
-                    self.depth_ratio = self._saved_depth_ratio
+                    self.depth_strength = self._quantize_depth_strength(self._saved_depth_strength)
+                    self._depth_strength_adjust_raw = self.depth_strength
                 else:
-                    self._saved_depth_ratio = self.depth_ratio
-                    self.depth_ratio = 0.0
+                    self._saved_depth_strength = self._quantize_depth_strength(self.depth_strength)
+                    self._depth_strength_adjust_raw = self._saved_depth_strength
+                    self.depth_strength = 0.0
+                self._depth_strength_local_override_until = time.perf_counter() + 0.75
+                self._depth_osd_message = "3D mode on" if self._stereo_enabled else "3D mode off"
+                self._depth_osd_show_t = time.perf_counter()
+                self._depth_osd_alpha = 1.0
+                self._publish_runtime_config(include_stereo=True)
         else:
             if lsc_now and not self._left_stick_click_prev:
                 self._lsc_press_t = now
@@ -3977,10 +4006,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             if not lsc_now and self._left_stick_click_prev and not self._lsc_long_fired:
                 _send_key(0x43, ctrl=True)  # Ctrl+C
 
-        # Right stick + right grip ->reset depth strength
+        # Right stick + right grip -> reset depth strength
         if grip_r:
             if rsc_now and not self._right_stick_click_prev:
-                self.depth_strength = 2.0  # reset depth strength to default
+                old_val = self.depth_strength
+                self.depth_strength = self._quantize_depth_strength(
+                    getattr(self, '_default_depth_strength', self.depth_strength)
+                )
+                self._depth_strength_adjust_raw = self.depth_strength
+                self._saved_depth_strength = self.depth_strength
+                self._stereo_enabled = True
+                self._depth_strength_local_override_until = time.perf_counter() + 0.75
+                self._depth_osd_show_t = time.perf_counter()
+                if self.depth_strength != old_val:
+                    self._publish_runtime_config(include_stereo=True)
         else:
             if rsc_now and not self._right_stick_click_prev:
                 self._rsc_press_t = now
@@ -4373,7 +4412,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                                     else:
                                         screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
                                     screen_ipd_uv *= runtime_rgb_depth_max_shift_scale
-                                    screen_depth_strength = self.depth_strength * self.depth_ratio
+                                    screen_depth_strength = self._effective_depth_strength()
                                     if abs(screen_depth_strength) <= 1e-6:
                                         screen_ipd_uv = 0.0
                                     self._d3d11_native_renderer.render_eye(

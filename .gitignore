@@ -23,6 +23,10 @@ samples/private/
 *.jpg
 *.jpeg
 *.webp
+!samples/*.png
+!samples/*.jpg
+!samples/*.jpeg
+!samples/*.webp
 !samples/README.md
 src/gui/flet_clients/
 src/gui/flet_packages/*.partial

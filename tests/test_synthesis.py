@@ -8,7 +8,7 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from stereo_runtime.hole_fill import box_blur, edge_aware_fill
+from stereo_runtime.hole_fill import box_blur, directional_edge_aware_fill, edge_aware_fill
 from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px, make_base_grid, warp_horizontal
 from stereo_runtime.depth_upsample import upsample_depth
 from stereo_runtime.layers import composite_layers, depth_edges, make_depth_layers
@@ -165,7 +165,7 @@ def test_fast_plus_adds_light_occlusion_fill_debug_info():
     assert result.debug_info["fast_plus_hole_fill_radius"] == 1
     assert result.debug_info["fast_plus_hole_fill_strength"] == 0.60
     assert "occlusion_mask" in result.debug_info
-    assert result.debug_info["hole_fill_backend"] in {"torch_avg_pool", "triton_radius3"}
+    assert result.debug_info["hole_fill_backend"] == "torch_directional_content_aware"
     assert not torch.equal(result.sbs, fast.sbs)
 
 
@@ -204,6 +204,53 @@ def test_mask_feather_radius_softens_hole_fill_blend():
     hard_changed = ((hard - image).abs() > 1e-6).sum()
     soft_changed = ((soft - image).abs() > 1e-6).sum()
     assert soft_changed > hard_changed
+
+
+def test_directional_hole_fill_prefers_background_side_at_depth_edge():
+    image = torch.zeros(1, 3, 5, 7)
+    image[..., :, :3] = 0.2
+    image[..., :, 3:] = 0.9
+    depth = torch.zeros(1, 1, 5, 7)
+    depth[..., :, :3] = 0.0
+    depth[..., :, 3:] = 1.0
+    mask = torch.zeros(1, 1, 5, 7)
+    mask[..., :, 3:4] = 1.0
+
+    out = directional_edge_aware_fill(
+        image,
+        mask,
+        depth=depth,
+        shift_px=None,
+        radius=1,
+        strength=1.0,
+        mask_feather_radius=0,
+        depth_edge_threshold=0.01,
+    )
+
+    assert out[..., :, 3].mean() < image[..., :, 3].mean()
+    assert out[..., :, 3].mean() < 0.75
+
+
+def test_directional_hole_fill_protects_high_frequency_ui_edges():
+    image = torch.zeros(1, 3, 5, 7)
+    image[..., :, 3] = 1.0
+    depth = torch.zeros(1, 1, 5, 7)
+    mask = torch.zeros(1, 1, 5, 7)
+    mask[..., :, 3:4] = 1.0
+
+    protected = directional_edge_aware_fill(
+        image,
+        mask,
+        depth=depth,
+        shift_px=None,
+        radius=1,
+        strength=1.0,
+        mask_feather_radius=0,
+        depth_edge_threshold=0.01,
+    )
+    legacy = edge_aware_fill(image, mask, radius=1, strength=1.0, fused=False, mask_feather_radius=0)
+
+    assert protected[..., :, 3].mean() > legacy[..., :, 3].mean()
 
 def test_full_sbs_shape():
     rgb, depth = make_inputs()
@@ -689,7 +736,7 @@ def test_fused_config_false_uses_torch_backends():
     )
     assert result.debug_info["warp_composite_backend"] == "torch_grid_sample"
     assert result.debug_info["occlusion_mask_backend"] == "torch_max_pool"
-    assert result.debug_info["hole_fill_backend"] == "torch_avg_pool"
+    assert result.debug_info["hole_fill_backend"] == "torch_directional_content_aware"
     assert result.debug_info["sbs_backend"] == "torch_interpolate"
 
     full_result = synthesize_stereo(
@@ -732,7 +779,7 @@ def test_disable_triton_env_uses_torch_backends(monkeypatch: pytest.MonkeyPatch)
     )
     assert result.debug_info["warp_composite_backend"] == "torch_grid_sample"
     assert result.debug_info["occlusion_mask_backend"] == "torch_max_pool"
-    assert result.debug_info["hole_fill_backend"] == "torch_avg_pool"
+    assert result.debug_info["hole_fill_backend"] == "torch_directional_content_aware"
     assert result.debug_info["sbs_backend"] == "torch_interpolate"
 
     full_result = synthesize_stereo(

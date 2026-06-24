@@ -9,7 +9,7 @@ import torch
 
 from .baseline_shift import ShiftParams, compute_shift_px, synthesize_baseline, warp_horizontal
 from .depth_postprocess import postprocess_depth
-from .hole_fill import edge_aware_fill, edge_aware_fill_backend
+from .hole_fill import directional_edge_aware_fill, directional_edge_aware_fill_backend
 from .layers import composite_layers, make_depth_layers
 from .occlusion import make_occlusion_mask, occlusion_backend
 from .output import AnaglyphMethod, OutputFormat, ensure_bchw, make_sbs, match_depth, sbs_backend
@@ -142,14 +142,16 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
             strength = 0.65
         eyes = torch.cat([left, right], dim=0)
         fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
-        hole_fill_backend = edge_aware_fill_backend(eyes, fill_mask, radius=radius, strength=strength, fused=config.fused)
-        eyes = edge_aware_fill(
+        hole_fill_backend = directional_edge_aware_fill_backend()
+        eyes = directional_edge_aware_fill(
             eyes,
             fill_mask,
+            depth=depth,
+            shift_px=base_shift,
             radius=radius,
             strength=strength,
-            fused=config.fused,
             mask_feather_radius=config.mask_feather_radius,
+            depth_edge_threshold=config.edge_threshold,
         )
         left, right = eyes.chunk(2, dim=0)
 
@@ -244,14 +246,16 @@ def synthesize_stereo(
             )
             eyes = torch.cat([left, right], dim=0)
             fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
-            hole_fill_backend = edge_aware_fill_backend(eyes, fill_mask, radius=1, strength=0.60, fused=config.fused)
-            eyes = edge_aware_fill(
+            hole_fill_backend = directional_edge_aware_fill_backend()
+            eyes = directional_edge_aware_fill(
                 eyes,
                 fill_mask,
+                depth=depth_for_mask,
+                shift_px=shift_px,
                 radius=1,
                 strength=0.60,
-                fused=config.fused,
                 mask_feather_radius=config.mask_feather_radius,
+                depth_edge_threshold=0.03,
             )
             left, right = eyes.chunk(2, dim=0)
             debug = {

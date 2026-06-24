@@ -45,7 +45,7 @@ def test_gui_hot_stereo_params_auto_save_on_select():
     assert "def on_stereo_hot_param_change" in all_text
     assert "def _save_stereo_hot_params" in all_text
     assert 'on_select=self.on_stereo_hot_param_change' in _file_text("builders.py")
-    assert '"IPD": self._parse_int(self.ipd_dd.value' in _file_text("config_mgr.py")
+    assert '"IPD": self._display_ipd_mm_to_runtime_m(self.ipd_dd.value)' in _file_text("config_mgr.py")
     assert '"Stereo Scale": self._parse_float(self.stereo_scale_dd.value' in _file_text("config_mgr.py")
     assert '"Convergence": self._parse_float(self.convergence_dd.value' in _file_text("config_mgr.py")
     assert '"Depth Strength": self._parse_float(self.depth_strength_dd.value' in _file_text("config_mgr.py")
@@ -210,7 +210,7 @@ def test_environment_dropdown_saves_canonical_key():
 
 def test_stereo_scale_control_is_next_to_ipd():
     builders_text = _file_text("builders.py")
-    assert 'self.ipd_dd = CompactDropdown(options=[str(i) for i in range(30, 71)]' in builders_text
+    assert 'self.ipd_dd = CompactDropdown(options=[str(i) for i in range(50, 71)]' in builders_text
     assert 'self.stereo_scale_label = ft.Text("Stereo Scale:"' in builders_text
     assert 'self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)]' in builders_text
     row_start = builders_text.index('row3 = ft.Row([')
@@ -233,11 +233,42 @@ def test_stereo_preset_auto_option_removed():
     assert '"自动": "auto"' not in all_text
 
 
+def test_ipd_display_maps_to_calibrated_runtime_value():
+    import ast
+
+    config_mgr_text = _file_text("config_mgr.py")
+    tree = ast.parse(config_mgr_text)
+    wanted = {
+        "_IPD_RUNTIME_PER_DISPLAY_MM",
+        "_runtime_ipd_to_display_mm",
+        "_display_ipd_mm_to_runtime_m",
+        "_parse_int",
+    }
+    class_node = next(node for node in tree.body if isinstance(node, ast.ClassDef) and node.name == "GUIConfigMixin")
+    selected = [
+        node
+        for node in class_node.body
+        if isinstance(node, (ast.Assign, ast.FunctionDef))
+        and ((isinstance(node, ast.Assign) and any(getattr(target, "id", None) in wanted for target in node.targets)) or getattr(node, "name", None) in wanted)
+    ]
+    module = ast.Module(body=[ast.ClassDef(name="GUIConfigMixin", bases=[], keywords=[], body=selected, decorator_list=[])], type_ignores=[])
+    ast.fix_missing_locations(module)
+    namespace = {"DEFAULTS": {"IPD": 0.030}}
+    exec(compile(module, "config_mgr.py", "exec"), namespace)
+    mixin = namespace["GUIConfigMixin"]
+
+    assert mixin._runtime_ipd_to_display_mm(0.030) == 60
+    assert mixin._runtime_ipd_to_display_mm(0.064) == 64
+    assert mixin._display_ipd_mm_to_runtime_m("60") == 0.030
+    assert mixin._display_ipd_mm_to_runtime_m("64") == 0.032
+    assert mixin._display_ipd_mm_to_runtime_m("70") == 0.035
+
+
 def test_stereo_scale_has_tooltips():
     all_text = _all_text()
     localization_text = _localization_source().read_text(encoding="utf-8")
-    assert '"tooltip_stereo_scale": "Stereo strength multiplier applied to the physical IPD' in localization_text
-    assert '"tooltip_stereo_scale": "作用在物理 IPD 上的立体强度倍率' in localization_text
+    assert '"tooltip_stereo_scale": "Stereo strength multiplier applied after IPD calibration' in localization_text
+    assert '"tooltip_stereo_scale": "IPD 标定后的立体强度倍率' in localization_text
     assert '(self.stereo_scale_dd, "tooltip_stereo_scale")' in all_text
 
 

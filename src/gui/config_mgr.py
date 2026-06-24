@@ -87,7 +87,7 @@ class GUIConfigMixin:
         self._sync_advanced_stereo_visibility()
         self._sync_device_advanced_visibility(cfg.get("Run Mode", DEFAULTS.get("Run Mode", "Local Viewer")))
         ipd_m = cfg.get("IPD", DEFAULTS["IPD"])
-        self.ipd_dd.value = str(int(ipd_m * 1000))
+        self.ipd_dd.value = str(self._runtime_ipd_to_display_mm(ipd_m))
         self.stereo_scale_dd.value = f'{self._parse_float(cfg.get("Stereo Scale", cfg.get("Stereo Strength Scale", DEFAULTS["Stereo Scale"])), DEFAULTS["Stereo Scale"]):.1f}'
         self.fp16_cb.value = DEFAULTS["FP16"]
         self.showfps_cb.value = cfg.get("Show FPS", DEFAULTS["Show FPS"])
@@ -193,7 +193,7 @@ class GUIConfigMixin:
             "Stereo Preset": self._display_to_preset(self.stereo_preset_dd.value),
             "Stereo Quality": self._display_to_stereo_quality(self.stereo_quality_dd.value),
             "Synthetic View": self._display_to_stereo_quality(self.stereo_quality_dd.value),
-            "IPD": self._parse_int(self.ipd_dd.value, int(DEFAULTS["IPD"] * 1000)) / 1000.0,
+            "IPD": self._display_ipd_mm_to_runtime_m(self.ipd_dd.value),
             "Stereo Scale": self._parse_float(self.stereo_scale_dd.value, DEFAULTS["Stereo Scale"]),
             "Convergence": self._parse_float(self.convergence_dd.value, DEFAULTS["Convergence"]),
             "Display Mode": self.display_mode_dd.value,
@@ -290,7 +290,7 @@ class GUIConfigMixin:
             "Stereo Preset": self._display_to_preset(self.stereo_preset_dd.value),
             "Stereo Quality": self._display_to_stereo_quality(self.stereo_quality_dd.value),
             "Synthetic View": self._display_to_stereo_quality(self.stereo_quality_dd.value),
-            "IPD": self._parse_int(self.ipd_dd.value, int(DEFAULTS["IPD"] * 1000)) / 1000.0,
+            "IPD": self._display_ipd_mm_to_runtime_m(self.ipd_dd.value),
             "Stereo Scale": self._parse_float(self.stereo_scale_dd.value, DEFAULTS["Stereo Scale"]),
             "Convergence": self._parse_float(self.convergence_dd.value, DEFAULTS["Convergence"]),
             "Depth Strength": self._parse_float(self.depth_strength_dd.value, DEFAULTS["Depth Strength"]),
@@ -349,9 +349,29 @@ class GUIConfigMixin:
             },
         }.get(preset)
 
+    _IPD_RUNTIME_PER_DISPLAY_MM = 30.0 / 60.0
+
+    @classmethod
+    def _runtime_ipd_to_display_mm(cls, value):
+        try:
+            runtime_mm = float(value) * 1000.0
+        except (TypeError, ValueError):
+            runtime_mm = float(DEFAULTS["IPD"]) * 1000.0
+        if runtime_mm > 45.0:
+            display_mm = runtime_mm
+        else:
+            display_mm = runtime_mm / cls._IPD_RUNTIME_PER_DISPLAY_MM
+        return max(50, min(70, int(round(display_mm))))
+
+    @classmethod
+    def _display_ipd_mm_to_runtime_m(cls, value):
+        display_mm = cls._parse_int(value, cls._runtime_ipd_to_display_mm(DEFAULTS["IPD"]))
+        display_mm = max(50, min(70, display_mm))
+        return display_mm * cls._IPD_RUNTIME_PER_DISPLAY_MM / 1000.0
+
     @staticmethod
     def _depth_strength_for_quick(value):
-        return {"Soft": 1.4, "Standard": 2.0, "Enhanced": 2.6}.get(value, 2.0)
+        return {"Soft": 2.0, "Standard": 2.5, "Enhanced": 3.0}.get(value, 2.5)
 
     # ── stereo quality converters (delegate to localization module) ──
 
@@ -411,9 +431,9 @@ class GUIConfigMixin:
             strength = float(value)
         except (TypeError, ValueError):
             return "Standard"
-        if strength < 1.7:
+        if strength < 2.25:
             return "Soft"
-        if strength > 2.3:
+        if strength > 2.75:
             return "Enhanced"
         return "Standard"
 

@@ -141,11 +141,18 @@ def _filled_eye(
         edge_threshold,
         shift_edge_threshold_px,
     )
-    tap1 = _sample_eye(rgb, depth, channel, y, target_x - 1, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    tap2 = _sample_eye(rgb, depth, channel, y, target_x + 1, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    tap3 = _sample_eye(rgb, depth, channel, y, target_x - 2, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    tap4 = _sample_eye(rgb, depth, channel, y, target_x + 2, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    filled = (tap1 + tap2 + tap3 + tap4) * 0.25
+    left_depth = _load_depth_at(depth, y, target_x - 1, width, height)
+    right_depth = _load_depth_at(depth, y, target_x + 1, width, height)
+    reliable_direction = tl.abs(right_depth - left_depth) > edge_threshold
+    sample_right = right_depth < left_depth
+
+    left1 = _sample_eye(rgb, depth, channel, y, target_x - 1, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
+    right1 = _sample_eye(rgb, depth, channel, y, target_x + 1, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
+    left2 = _sample_eye(rgb, depth, channel, y, target_x - 2, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
+    right2 = _sample_eye(rgb, depth, channel, y, target_x + 2, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
+    balanced = (left1 + right1 + left2 + right2) * 0.25
+    background = tl.where(sample_right, right1 * 0.65 + right2 * 0.35, left1 * 0.65 + left2 * 0.35)
+    filled = tl.where(reliable_direction, background, balanced)
     return tl.where(mask, value + (filled - value) * 0.60, value)
 
 

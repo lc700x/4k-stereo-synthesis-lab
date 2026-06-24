@@ -297,7 +297,7 @@ class GUIBuilderMixin:
 
         # Row 4: IPD + stereo scale
         self.ipd_label = ft.Text("IPD (mm):", size=FONT_SIZE, width=S(130))
-        self.ipd_dd = CompactDropdown(options=[str(i) for i in range(30, 71)], value="64",
+        self.ipd_dd = CompactDropdown(options=[str(i) for i in range(50, 71)], value="64",
             width=S(130), on_select=self.on_stereo_hot_param_change)
         self.stereo_scale_label = ft.Text("Stereo Scale:", size=FONT_SIZE, width=S(130))
         self.stereo_scale_dd = CompactDropdown(options=[f"{i / 10:.1f}" for i in range(0, 11)],

@@ -274,6 +274,33 @@ viewer 根据 `runtime_result.debug_info["runtime_output_format"]` 分流：
 - `OpenXRViewerCore.depth_ratio` 保留为兼容 property，读写时映射到 `depth_strength`。
 - overlay / environment profile 中旧的 `depth_ratio` 读取不会再导致 `AttributeError`。
 
+## 补洞模式真实差异
+
+当前 GUI 暴露的四个补洞模式并不是同一种高质量补洞策略的不同名称。按当前代码，真实差异如下：
+
+| GUI 补洞模式 | 内部值 | 补洞技术 | 主要效果 | 性能影响预估 |
+|---|---:|---|---|---|
+| 柔和 / 低重影 | `soft_low_ghost` | `edge_aware_fill`，半径 `1`，强度 `0.6` | 轻补洞，少拉扯、少重影，但洞 / 边缘修复力度也最弱 | 最快。CUDA 可走 `triton_radius1`，通常低于标准 |
+| 均衡 / 标准 | `balanced` | `edge_aware_fill`，半径 `3`，强度 `1.0` | 默认实时档，补洞更完整，仍保持实时性能 | 快。CUDA 可走 `triton_radius3`；实测 4K `quality_4k` 总合成约 `22-28ms` |
+| 锐利 / 高细节 | `sharp_test` | `edge_aware_fill`，半径 `1`，强度 `1.0` | 比柔和更强，但采样半径小，尽量不大范围糊边；偏测试 / 对比档 | 很快。radius=1 采样范围小；若不满足专用 Triton 条件则回退 `torch_avg_pool` |
+| 内容感知 / 最高质量 | `quality` | `directional_edge_aware_fill`，方向感知 + 深度 / shift 边缘判断 + UI 高频保护 + blur 混合 | 遮挡边缘质量最好，减少前景颜色拖进空洞，保护文字 / 高频边缘 | 最慢。当前是 torch 组合算子；实测 4K `quality_4k` 总合成约 `90-93ms` |
+
+关键点：
+
+- `柔和 / 均衡 / 锐利` 都是快速 `edge_aware_fill` 系列，只是 `radius` / `strength` 不同。
+- `内容感知 / 最高质量` 才是 `directional_edge_aware_fill` 重策略。
+
+更具体的参数差异：
+
+```text
+柔和: radius=1, strength=0.6
+均衡: radius=3, strength=1.0
+锐利: radius=1, strength=1.0
+高质量: radius=3, strength=1.0 + directional/content-aware 额外逻辑
+```
+
+所以 OpenXR 实时建议默认使用 `均衡 / 标准`。只有专门对比画质，或者做静态图 / 导出时，才建议使用 `内容感知 / 最高质量`。
+
 ## 性能和质量取舍
 
 | 路径 | 兼容旧版 | 完整合成 | 低延迟 | 使用补洞/边缘/时序 | 最佳用途 |

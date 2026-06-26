@@ -21,17 +21,28 @@ _NOISY_CONSOLE_PREFIXES = (
     "[NativeUtil] sogou_native_util_pc loaded successfully",
     "[warmup] same version",
 )
+_DEBUG_CONSOLE_PREFIXES = (
+    "[debug]",
+    "debug:",
+)
 
 
-def _is_noisy_console_output(data):
+def _is_key_console_output(data):
     text = str(data or "").strip()
     if not text:
+        return True
+    lower = text.lower()
+    if any(text.startswith(prefix) for prefix in _NOISY_CONSOLE_PREFIXES):
         return False
-    return any(text.startswith(prefix) for prefix in _NOISY_CONSOLE_PREFIXES)
+    if any(lower.startswith(prefix) for prefix in _DEBUG_CONSOLE_PREFIXES):
+        return False
+    if lower.startswith("[diag]") and not any(token in lower for token in ("error", "failed", "exception", "exited")):
+        return False
+    return True
 
 
 def _setup_console_logging():
-    """Mirror stdout/stderr to the single rolling log file."""
+    """Write full stdout/stderr to the rolling log and keep console concise."""
     import datetime
     import threading
 
@@ -62,24 +73,22 @@ def _setup_console_logging():
             self.label = label
 
         def write(self, data):
-            if _is_noisy_console_output(data):
-                return len(data or "")
-            try:
-                self.original.write(data)
-            except Exception:
-                pass
-            if not data:
-                return len(data or "")
-            try:
-                ts = datetime.datetime.now().strftime("%H:%M:%S")
-                with lock:
-                    with open(LOG_FILE, "a", encoding="utf-8") as f:
-                        for line in data.splitlines():
-                            stripped = line.rstrip()
-                            if stripped:
-                                f.write(f"[{ts}] [{self.label}] {stripped}\n")
-            except Exception:
-                pass
+            if data:
+                try:
+                    ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    with lock:
+                        with open(LOG_FILE, "a", encoding="utf-8") as f:
+                            for line in str(data).splitlines():
+                                stripped = line.rstrip()
+                                if stripped:
+                                    f.write(f"[{ts}] [{self.label}] {stripped}\n")
+                except Exception:
+                    pass
+            if _is_key_console_output(data):
+                try:
+                    self.original.write(data)
+                except Exception:
+                    pass
             return len(data or "")
 
         def flush(self):

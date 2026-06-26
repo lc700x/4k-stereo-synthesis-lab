@@ -401,7 +401,6 @@ class GUIBuilderMixin:
         self.device_dd = CompactDropdown(options=[n for n in device_names],
             on_select=self.on_device_change, min_width=S(180))
         self.showfps_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT, label="Show FPS")
-        self.debug_mode_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT, label="Debug Mode", value=False)
         self.local_vsync_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT,
             label="VSync", value=DEFAULTS.get("VSync", False))
         self.target_fps_label = ft.Text("Capture FPS:", size=FONT_SIZE, width=S(130))
@@ -418,8 +417,7 @@ class GUIBuilderMixin:
         self.capture_tool_dd = CompactDropdown(options=[o for o in ct_options],
             on_select=self.on_capture_tool_change, min_width=S(160))
         row6 = ft.Row([self.capture_tool_label, self.capture_tool_dd,
-            ft.Container(width=S(15)), self.showfps_cb,
-            ft.Container(width=S(5)), self.debug_mode_cb], spacing=1)
+            ft.Container(width=S(15)), self.showfps_cb], spacing=1)
         self.row6b = ft.Row([self.target_fps_label, self.target_fps_dd,
             ft.Container(width=S(20)), self.local_vsync_cb], spacing=1)
         self.render_policy_label = ft.Text("Render Policy:", size=FONT_SIZE, width=S(130), visible=False)

@@ -81,7 +81,6 @@ DEFAULTS = {
     "Monitor Index": 1,
     "Window Title": "",
     "Show FPS": False,
-    "Debug Mode": False,
     "Model List": DEFAULT_MODEL_LIST,
     "Depth Model": DEFAULT_MODEL_LIST[0] if DEFAULT_MODEL_LIST else "",
     "Depth Strength": 2.5,

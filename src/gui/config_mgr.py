@@ -18,6 +18,7 @@ class GUIConfigMixin:
 
     def apply_config(self, cfg, keep_optional=True):
         self._config = cfg.copy()
+        self._config.pop("Debug Mode", None)
         current_primary = get_primary_monitor_index()
         mon_idx = cfg.get("Monitor Index", DEFAULTS["Monitor Index"])
         label = next((lbl for lbl, i in self.monitor_label_to_index.items() if i == mon_idx), None)
@@ -102,7 +103,6 @@ class GUIConfigMixin:
         self.stereo_scale_dd.value = f'{self._parse_float(cfg.get("Stereo Scale", cfg.get("Stereo Strength Scale", DEFAULTS["Stereo Scale"])), DEFAULTS["Stereo Scale"]):.1f}'
         self.fp16_cb.value = DEFAULTS["FP16"]
         self.showfps_cb.value = cfg.get("Show FPS", DEFAULTS["Show FPS"])
-        self.debug_mode_cb.value = cfg.get("Debug Mode", DEFAULTS["Debug Mode"])
         self.fill_16_9_cb.value = cfg.get("Fill 16:9", DEFAULTS["Fill 16:9"])
         self.fix_aspect_cb.value = cfg.get("Fix Viewer Aspect", DEFAULTS["Fix Viewer Aspect"])
         self.lossless_cb.value = cfg.get("Lossless Scaling Support", DEFAULTS["Lossless Scaling Support"])
@@ -200,13 +200,13 @@ class GUIConfigMixin:
         stereo_preset = self._display_to_preset(self.stereo_preset_dd.value)
         stereo_quality = self._stereo_quality_for_preset(stereo_preset)
         render_fixed_width, render_fixed_height = self._parse_fixed_size(self.render_fixed_dd.value)
+        self._config.pop("Debug Mode", None)
 
         self._config.update({
             "Capture Mode": self.capture_mode_key,
             "Monitor Index": monitor_idx,
             "Window Title": self.selected_window_name if self.capture_mode_key == "Window" else "",
             "Show FPS": self.showfps_cb.value,
-            "Debug Mode": self.debug_mode_cb.value,
             "Stereo Preset": stereo_preset,
             "Stereo Quality": stereo_quality,
             "Synthetic View": stereo_quality,
@@ -305,6 +305,7 @@ class GUIConfigMixin:
                     cfg.update(loaded)
             except Exception:
                 pass
+        cfg.pop("Debug Mode", None)
         temporal_strength = self._parse_float(self.temporal_strength_dd.value, DEFAULTS["Temporal Strength"])
         scene_reset_threshold = self._parse_float(self.scene_reset_dd.value, DEFAULTS["Scene Reset Threshold"])
         antialias_strength = self._parse_float(self.antialiasing_dd.value, DEFAULTS["Depth Antialias Strength"])

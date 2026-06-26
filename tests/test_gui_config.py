@@ -141,16 +141,25 @@ def test_advanced_device_options_is_not_persisted_and_starts_collapsed():
     assert 'cfg.get("Advanced Device Options"' not in all_text
 
 
-def test_noisy_third_party_console_output_is_filtered():
+def test_console_output_is_filtered_after_full_log_write():
     text = _file_text("process.py")
-    assert "def _is_noisy_console_output" in text
+    assert "def _is_key_console_output" in text
     assert "[NativeUtil] sogou_native_util_pc loaded successfully" in text
     assert "[warmup] same version" in text
-    filter_index = text.index("if _is_noisy_console_output(data):")
+    assert "_DEBUG_CONSOLE_PREFIXES" in text
+    log_write_index = text.index("with open(LOG_FILE")
+    filter_index = text.index("if _is_key_console_output(data):", log_write_index)
     console_write_index = text.index("self.original.write(data)", filter_index)
-    log_write_index = text.index("with open(LOG_FILE", filter_index)
-    assert "return len(data or \"\")" in text[filter_index:console_write_index]
-    assert filter_index < console_write_index < log_write_index
+    assert log_write_index < filter_index < console_write_index
+
+
+def test_debug_mode_gui_control_removed():
+    all_text = _all_text()
+    assert "debug_mode_cb" not in all_text
+    assert 'label="Debug Mode"' not in all_text
+    assert '"Debug Mode": False' not in all_text
+    assert '"Debug Mode": self.' not in all_text
+    assert 'cfg.get("Debug Mode"' not in all_text
 
 
 def test_gui_uses_single_rolling_log_for_gui_and_child_output():

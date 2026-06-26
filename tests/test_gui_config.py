@@ -570,9 +570,13 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
     assert 'self.row6d = ft.Row([self.render_policy_label, self.render_policy_dd' in builders_text
     assert 'self.row6e = ft.Row([self.render_fixed_label, self.render_fixed_dd' in builders_text
     assert 'self.row6f = ft.Row([self.render_min_dimension_label, self.render_min_dimension_dd' in builders_text
-    assert 'self.row6d.visible = show_render_size' in handlers_text
-    assert 'self.row6e.visible = show_render_size' in handlers_text
-    assert 'self.row6f.visible = show_render_size' in handlers_text
+    assert 'on_select=lambda e: self.update_visibility()' in builders_text
+    assert 'def _update_render_size_control_visibility' in handlers_text
+    assert 'show_scaled = show_render_size and policy == "scaled"' in handlers_text
+    assert 'show_fixed = show_render_size and policy == "fixed"' in handlers_text
+    assert 'show_dynamic = show_render_size and policy == "dynamic"' in handlers_text
+    assert 'self.row6e.visible = show_fixed or show_dynamic' in handlers_text
+    assert 'self._update_render_size_control_visibility(show_render_size)' in handlers_text
 
     assert 'cfg.get("Render Size Policy", DEFAULTS["Render Size Policy"])' in config_mgr_text
     assert 'cfg.get("Render Scale", DEFAULTS["Render Scale"])' in config_mgr_text

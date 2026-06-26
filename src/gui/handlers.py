@@ -72,6 +72,29 @@ class GUIHandlerMixin:
         }
         return mapping.get(text, text.strip().lower() or "native")
 
+    def _update_render_size_control_visibility(self, show_render_size):
+        policy = self._display_to_render_policy(getattr(self.render_policy_dd, "value", None))
+        show_scaled = show_render_size and policy == "scaled"
+        show_fixed = show_render_size and policy == "fixed"
+        show_dynamic = show_render_size and policy == "dynamic"
+        show_align = show_render_size
+
+        self.row6d.visible = show_render_size
+        self.row6e.visible = show_fixed or show_dynamic
+        self.row6f.visible = show_dynamic or show_align
+        for ctrl in [self.render_policy_label, self.render_policy_dd]:
+            ctrl.visible = show_render_size
+        for ctrl in [self.render_scale_label, self.render_scale_dd]:
+            ctrl.visible = show_scaled
+        for ctrl in [self.render_fixed_label, self.render_fixed_dd]:
+            ctrl.visible = show_fixed
+        for ctrl in [self.render_max_pixels_label, self.render_max_pixels_dd]:
+            ctrl.visible = show_dynamic
+        for ctrl in [self.render_min_dimension_label, self.render_min_dimension_dd]:
+            ctrl.visible = show_dynamic
+        for ctrl in [self.render_align_label, self.render_align_dd]:
+            ctrl.visible = show_align
+
     def _preset_to_display(self, value):
         mapping = {
             "auto": "Cinema", "cinema": "Cinema",
@@ -456,22 +479,11 @@ class GUIHandlerMixin:
         self.row6b.visible = show_timing
         self.row6c.visible = show_enhance
         show_render_size = advanced and mode in ["Local Viewer", "3D Monitor", "OpenXR Link"]
-        self.row6d.visible = show_render_size
-        self.row6e.visible = show_render_size
-        self.row6f.visible = show_render_size
+        self._update_render_size_control_visibility(show_render_size)
         self.target_fps_label.visible = show_timing
         self.target_fps_dd.visible = show_timing
         self.local_vsync_cb.visible = advanced and mode in ["Local Viewer", "3D Monitor"]
         self.debug_mode_cb.visible = advanced
-        for ctrl in [
-            self.render_policy_label, self.render_policy_dd,
-            self.render_scale_label, self.render_scale_dd,
-            self.render_fixed_label, self.render_fixed_dd,
-            self.render_max_pixels_label, self.render_max_pixels_dd,
-            self.render_min_dimension_label, self.render_min_dimension_dd,
-            self.render_align_label, self.render_align_dd,
-        ]:
-            ctrl.visible = show_render_size
         self.upscaler_label.visible = show_enhance
         self.upscaler_dd.visible = show_enhance
         self.upscaler_sharpness_label.visible = show_enhance

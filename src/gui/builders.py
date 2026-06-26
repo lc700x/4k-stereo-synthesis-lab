@@ -424,7 +424,8 @@ class GUIBuilderMixin:
             ft.Container(width=S(20)), self.local_vsync_cb], spacing=1)
         self.render_policy_label = ft.Text("Render Policy:", size=FONT_SIZE, width=S(130))
         self.render_policy_dd = CompactDropdown(
-            options=["Native", "Scaled", "Fixed", "Dynamic"], value="Native", width=S(130))
+            options=["Native", "Scaled", "Fixed", "Dynamic"], value="Native", width=S(130),
+            on_select=lambda e: self.update_visibility())
         self.render_scale_label = ft.Text("Render Scale:", size=FONT_SIZE, width=S(130))
         self.render_scale_dd = CompactDropdown(options=["0.25", "0.50", "0.75", "1.00"],
             value="1.00", width=S(130))

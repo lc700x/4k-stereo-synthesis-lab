@@ -52,6 +52,47 @@ class GUIHandlerMixin:
         t = UI_MESSAGES[self.locale]
         return [t["Native"], t["Scaled"], t["Fixed"], t["Dynamic"]]
 
+    def _render_scale_options(self):
+        return [
+            "1K / 1920x1080",
+            "2K / 2560x1440",
+            "3K / 3200x1800",
+            "4K / 3840x2160",
+        ]
+
+    def _render_scale_to_display(self, value):
+        scale = self._parse_float(value, DEFAULTS["Render Scale"])
+        if abs(scale - 0.5) < 0.01:
+            return "1K / 1920x1080"
+        if abs(scale - (2 / 3)) < 0.01:
+            return "2K / 2560x1440"
+        if abs(scale - (5 / 6)) < 0.01:
+            return "3K / 3200x1800"
+        if abs(scale - 1.0) < 0.01:
+            return "4K / 3840x2160"
+        return f"{scale:.6f}".rstrip("0").rstrip(".")
+
+    def _display_to_render_scale(self, value):
+        text = str(value or "").strip()
+        mapping = {
+            "1K / 1920x1080": 0.5,
+            "2K / 2560x1440": 2 / 3,
+            "3K / 3200x1800": 5 / 6,
+            "4K / 3840x2160": 1.0,
+        }
+        if text in mapping:
+            return mapping[text]
+        if "1920x1080" in text or text.startswith("1K"):
+            return 0.5
+        if "2560x1440" in text or text.startswith("2K"):
+            return 2 / 3
+        if "3200x1800" in text or text.startswith("3K"):
+            return 5 / 6
+        if "3840x2160" in text or text.startswith("4K"):
+            return 1.0
+        match = re.search(r"\d+(?:\.\d+)?", text)
+        return float(match.group(0)) if match else DEFAULTS["Render Scale"]
+
     def _render_policy_to_display(self, value):
         mapping = {
             "native": "Native",
@@ -668,6 +709,9 @@ class GUIHandlerMixin:
         self.render_policy_dd.options = self._render_policy_options()
         self.render_policy_dd.value = self._render_policy_to_display(render_policy)
         self.render_scale_label.value = t["Render Scale:"]
+        render_scale = self._display_to_render_scale(self.render_scale_dd.value)
+        self.render_scale_dd.options = self._render_scale_options()
+        self.render_scale_dd.value = self._render_scale_to_display(render_scale)
         self.render_fixed_label.value = t["Render Fixed Size:"]
         self.render_max_pixels_label.value = t["Render Pixel Cap:"]
         self.render_min_dimension_label.value = t["Render Min Side:"]

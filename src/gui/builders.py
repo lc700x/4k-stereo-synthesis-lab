@@ -431,8 +431,8 @@ class GUIBuilderMixin:
         self.row6d = ft.Row([self.render_policy_label, self.render_policy_dd,
             ft.Container(width=S(40)), self.render_align_label, self.render_align_dd], spacing=1)
         self.render_scale_label = ft.Text("Render Scale:", size=FONT_SIZE, width=S(130))
-        self.render_scale_dd = CompactDropdown(options=["0.25", "0.50", "0.75", "1.00"],
-            value="1.00", width=S(130))
+        self.render_scale_dd = CompactDropdown(options=self._render_scale_options(),
+            value=self._render_scale_to_display(DEFAULTS["Render Scale"]), width=S(130))
         self.render_fixed_label = ft.Text("Render Fixed Size:", size=FONT_SIZE, width=S(130))
         self.render_fixed_dd = CompactDropdown(
             options=["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"],

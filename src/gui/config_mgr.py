@@ -69,7 +69,8 @@ class GUIConfigMixin:
         self.target_fps_dd.value = self._target_fps_to_display(target_fps)
         self.render_policy_dd.value = self._render_policy_to_display(
             cfg.get("Render Size Policy", DEFAULTS["Render Size Policy"]))
-        self.render_scale_dd.value = f'{self._parse_float(cfg.get("Render Scale", DEFAULTS["Render Scale"]), DEFAULTS["Render Scale"]):.2f}'
+        self.render_scale_dd.value = self._render_scale_to_display(
+            cfg.get("Render Scale", DEFAULTS["Render Scale"]))
         fixed_width = self._parse_int(cfg.get("Render Fixed Width", DEFAULTS["Render Fixed Width"]), DEFAULTS["Render Fixed Width"])
         fixed_height = self._parse_int(cfg.get("Render Fixed Height", DEFAULTS["Render Fixed Height"]), DEFAULTS["Render Fixed Height"])
         self.render_fixed_dd.value = self._fixed_size_to_display(fixed_width, fixed_height)
@@ -243,7 +244,7 @@ class GUIConfigMixin:
             "Target FPS": self._target_fps_from_display(self.target_fps_dd.value),
             "Processing Resolution": self._config.get("Processing Resolution", DEFAULTS["Processing Resolution"]),
             "Render Size Policy": self._display_to_render_policy(self.render_policy_dd.value),
-            "Render Scale": self._parse_float(self.render_scale_dd.value, DEFAULTS["Render Scale"]),
+            "Render Scale": self._display_to_render_scale(self.render_scale_dd.value),
             "Render Fixed Width": render_fixed_width,
             "Render Fixed Height": render_fixed_height,
             "Render Max Pixels": self._parse_int(self.render_max_pixels_dd.value, DEFAULTS["Render Max Pixels"]),

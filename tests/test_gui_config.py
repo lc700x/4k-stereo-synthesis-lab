@@ -564,7 +564,13 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
 
     assert 'self.render_policy_dd = CompactDropdown(' in builders_text
     assert 'options=["Native", "Scaled", "Fixed", "Dynamic"]' in builders_text
-    assert 'self.render_scale_dd = CompactDropdown(options=["0.25", "0.50", "0.75", "1.00"]' in builders_text
+    assert 'self.render_scale_dd = CompactDropdown(options=self._render_scale_options()' in builders_text
+    assert '"1K / 1920x1080"' in handlers_text
+    assert '"2K / 2560x1440"' in handlers_text
+    assert '"3K / 3200x1800"' in handlers_text
+    assert '"4K / 3840x2160"' in handlers_text
+    assert 'def _display_to_render_scale' in handlers_text
+    assert 'def _render_scale_to_display' in handlers_text
     assert 'self.render_fixed_dd = CompactDropdown(' in builders_text
     assert '"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"' in builders_text
     assert 'self.row6d = ft.Row([self.render_policy_label, self.render_policy_dd' in builders_text
@@ -598,7 +604,8 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
     assert 'cfg.get("Render Fixed Width", DEFAULTS["Render Fixed Width"])' in config_mgr_text
     assert 'cfg.get("Render Fixed Height", DEFAULTS["Render Fixed Height"])' in config_mgr_text
     assert '"Render Size Policy": self._display_to_render_policy(self.render_policy_dd.value)' in config_mgr_text
-    assert '"Render Scale": self._parse_float(self.render_scale_dd.value, DEFAULTS["Render Scale"])' in config_mgr_text
+    assert '"Render Scale": self._display_to_render_scale(self.render_scale_dd.value)' in config_mgr_text
+    assert 'self.render_scale_dd.value = self._render_scale_to_display(' in config_mgr_text
     assert '"Render Fixed Width": render_fixed_width' in config_mgr_text
     assert '"Render Fixed Height": render_fixed_height' in config_mgr_text
     assert '"Render Max Pixels": self._parse_int(self.render_max_pixels_dd.value, DEFAULTS["Render Max Pixels"])' in config_mgr_text

@@ -23,6 +23,8 @@ _HOT_RELOAD_FIELDS = frozenset(
         "ipd_mm",
         "stereo_scale",
         "max_shift_ratio",
+        "max_disparity_px",
+        "parallax_preset",
         "temporal",
         "temporal_strength",
         "foreground_scale",
@@ -63,6 +65,8 @@ class RuntimeSettingsSnapshot:
     ipd_mm: float | None = None
     stereo_scale: float | None = None
     max_shift_ratio: float | None = None
+    max_disparity_px: float | None = None
+    parallax_preset: str | None = None
     temporal: bool | None = None
     temporal_strength: float | None = None
     foreground_scale: float | None = None

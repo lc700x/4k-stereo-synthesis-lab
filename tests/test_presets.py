@@ -10,6 +10,7 @@ from stereo_runtime.openxr_render import OpenXRRenderConfig
 from stereo_runtime.presets import (
     AutoModeRuntime,
     AutoModeSignals,
+    PARALLAX_BUDGET_PRESETS,
     PRESET_CHOICES,
     auto_detection_required,
     auto_mode_scores,
@@ -25,6 +26,11 @@ from stereo_runtime.synthesis import StereoConfig
 
 def test_preset_choices_are_public_and_stable():
     assert PRESET_CHOICES == ("auto", "traditional_fastest", "cinema", "game_low_latency", "still_image_hq", "debug_export")
+
+
+def test_parallax_budget_presets_are_public():
+    assert PARALLAX_BUDGET_PRESETS["standard"][1080] == 48.0
+    assert PARALLAX_BUDGET_PRESETS["extreme"][2160] == 160.0
 
 
 def test_stereo_presets_map_to_expected_modes():

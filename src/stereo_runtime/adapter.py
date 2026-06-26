@@ -56,6 +56,8 @@ class StereoRuntimeConfig:
     max_shift_ratio: float = 0.05
     ipd_mm: float | None = 32.0
     stereo_scale: float = 0.4
+    max_disparity_px: float | None = None
+    parallax_preset: str = "legacy"
     layers: int = 2
     occlusion: bool = True
     symmetric: bool = True
@@ -472,6 +474,8 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
             "max_shift_ratio": config.max_shift_ratio,
             "ipd_mm": config.ipd_mm,
             "stereo_scale": config.stereo_scale,
+            "max_disparity_px": config.max_disparity_px,
+            "parallax_preset": config.parallax_preset,
             "temporal_strength": temporal_strength,
             "auto_reset_temporal": auto_reset_temporal,
             "scene_reset_threshold": scene_reset_threshold,

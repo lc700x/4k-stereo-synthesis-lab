@@ -7,7 +7,7 @@ from typing import Literal
 
 import torch
 
-from .baseline_shift import ShiftParams, compute_shift_px, synthesize_baseline, warp_horizontal
+from .baseline_shift import ShiftParams, compute_shift_px, shift_debug_info, synthesize_baseline, warp_horizontal
 from .depth_postprocess import postprocess_depth
 from .hole_fill import (
     directional_edge_aware_fill,
@@ -42,6 +42,8 @@ class StereoConfig:
     max_shift_ratio: float = 0.05
     ipd_mm: float | None = 32.0
     stereo_scale: float = 0.4
+    max_disparity_px: float | None = None
+    parallax_preset: str = "legacy"
     temporal_strength: float = 0.85
     auto_reset_temporal: bool = False
     scene_reset_threshold: float = 0.22
@@ -79,6 +81,8 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         max_shift_ratio=config.max_shift_ratio,
         ipd_mm=config.ipd_mm,
         stereo_scale=config.stereo_scale,
+        max_disparity_px=config.max_disparity_px,
+        parallax_preset=config.parallax_preset,
     )
     rgb = ensure_bchw(rgb, name="rgb").float()
     depth = postprocess_depth(
@@ -87,6 +91,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         antialias_strength=config.depth_antialias_strength,
     )
     base_shift = compute_shift_px(depth, rgb.shape[-1], params)
+    parallax_debug = shift_debug_info(depth, rgb.shape[-1], params)
     stage_times["depth_postprocess_shift_ms"] = (time.perf_counter() - stage_start) * 1000.0
     stage_start = time.perf_counter()
 
@@ -198,6 +203,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         "hole_fill_mode": str(config.hole_fill_mode),
         "hole_fill_radius": int(radius) if config.hole_fill != "none" else 0,
         "hole_fill_strength": float(strength) if config.hole_fill != "none" else 0.0,
+        **parallax_debug,
         **stage_times,
     }
 
@@ -254,6 +260,8 @@ def synthesize_stereo(
             max_shift_ratio=config.max_shift_ratio,
             ipd_mm=config.ipd_mm,
             stereo_scale=config.stereo_scale,
+            max_disparity_px=config.max_disparity_px,
+            parallax_preset=config.parallax_preset,
         )
         depth = postprocess_depth(
             depth,
@@ -302,10 +310,11 @@ def synthesize_stereo(
                 "fast_plus_hole_fill_radius": 1,
                 "fast_plus_hole_fill_strength": 0.60,
                 "mask_feather_radius": int(config.mask_feather_radius),
+                **shift_debug_info(depth, left.shape[-1], params),
             }
         else:
             mask = None
-            debug = {"backend": config.backend, "shift_px": shift_px}
+            debug = {"backend": config.backend, "shift_px": shift_px, **shift_debug_info(depth, left.shape[-1], params)}
     else:
         if config.backend == "hq_4k" and config.layers < 3:
             config = StereoConfig(**{**config.__dict__, "layers": 3})

@@ -24,6 +24,8 @@ def runtime_stereo_overrides(runtime) -> dict:
         "ipd_mm": config.ipd_mm,
         "stereo_scale": config.stereo_scale,
         "max_shift_ratio": config.max_shift_ratio,
+        "max_disparity_px": getattr(config, "max_disparity_px", None),
+        "parallax_preset": getattr(config, "parallax_preset", "legacy"),
         "temporal": config.temporal,
         "temporal_strength": config.temporal_strength,
         "auto_reset_temporal": config.auto_reset_temporal,

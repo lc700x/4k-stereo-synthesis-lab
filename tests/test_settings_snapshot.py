@@ -47,6 +47,21 @@ def test_settings_snapshot_maps_ipd_mm_to_runtime_ipd():
     assert updates["depth_strength"] == 1.25
 
 
+def test_settings_snapshot_maps_parallax_budget_fields():
+    snapshot = RuntimeSettingsSnapshot(
+        version=6,
+        timestamp=1.0,
+        max_disparity_px=96.0,
+        parallax_preset="standard",
+    )
+
+    updates = snapshot.to_config_updates()
+
+    assert snapshot.classify() is SnapshotChangeClass.HOT_RELOAD
+    assert updates["max_disparity_px"] == 96.0
+    assert updates["parallax_preset"] == "standard"
+
+
 def test_runtime_applies_hot_settings_snapshot_without_rebuild():
     runtime = StereoRuntime(
         StereoRuntimeConfig(model_id="Distill-Any-Depth-Base", cache_dir="models", stereo_preset="cinema"),

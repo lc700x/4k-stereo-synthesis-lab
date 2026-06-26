@@ -6,6 +6,7 @@ import torch
 import torch.nn.functional as F
 
 from .output import ensure_bchw, match_depth
+from .parallax import parallax_debug_info, resolve_parallax_budget
 
 
 @dataclass(frozen=True)
@@ -16,6 +17,8 @@ class ShiftParams:
     max_shift_ratio: float = 0.05
     ipd_mm: float | None = 32.0
     stereo_scale: float = 0.4
+    max_disparity_px: float | None = None
+    parallax_preset: str = "legacy"
 
 
 _GRID_CACHE: dict[tuple[int, int, int, str, torch.dtype], torch.Tensor] = {}
@@ -48,17 +51,38 @@ def make_base_grid_components(height: int, width: int, device: torch.device, dty
     return xx, yy
 
 
-def _effective_ipd_m(params: ShiftParams) -> float:
-    if params.ipd_mm is None:
-        return max(0.0, float(params.ipd))
-    return max(0.0, float(params.ipd_mm)) / 1000.0 * max(0.0, float(params.stereo_scale))
-
-
 def compute_shift_px(depth: torch.Tensor, width: int, params: ShiftParams) -> torch.Tensor:
-    depth = depth.clamp(0, 1)
-    centered = depth - params.convergence
-    max_px = width * _effective_ipd_m(params) * params.max_shift_ratio
-    return -centered * params.depth_strength * max_px
+    height = int(depth.shape[-2]) if getattr(depth, "ndim", 0) >= 2 else 1
+    budget = resolve_parallax_budget(
+        render_width=width,
+        render_height=height,
+        preset=params.parallax_preset,
+        depth_strength=params.depth_strength,
+        stereo_scale=params.stereo_scale,
+        convergence=params.convergence,
+        ipd_mm=params.ipd_mm,
+        max_shift_ratio=params.max_shift_ratio,
+        ipd=params.ipd,
+        max_disparity_px=params.max_disparity_px,
+    )
+    return -budget.depth_response(depth) * budget.max_disparity_px * 0.5
+
+
+def shift_debug_info(depth: torch.Tensor, width: int, params: ShiftParams) -> dict[str, float | int | str]:
+    height = int(depth.shape[-2]) if getattr(depth, "ndim", 0) >= 2 else 1
+    budget = resolve_parallax_budget(
+        render_width=width,
+        render_height=height,
+        preset=params.parallax_preset,
+        depth_strength=params.depth_strength,
+        stereo_scale=params.stereo_scale,
+        convergence=params.convergence,
+        ipd_mm=params.ipd_mm,
+        max_shift_ratio=params.max_shift_ratio,
+        ipd=params.ipd,
+        max_disparity_px=params.max_disparity_px,
+    )
+    return parallax_debug_info(budget)
 
 
 def warp_horizontal(rgb: torch.Tensor, shift_px: torch.Tensor, eye_sign: float) -> torch.Tensor:

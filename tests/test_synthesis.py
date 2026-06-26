@@ -109,6 +109,27 @@ def test_layered_quality_uses_runtime_ipd_mm_with_stereo_scale():
         ),
     )
     assert torch.allclose(result.debug_info["shift_px"], expected_shift)
+    assert result.debug_info["parallax_budget_preset"] == "legacy"
+    assert result.debug_info["parallax_resolver_version"] == 1
+
+
+def test_synthesis_debug_records_resolved_parallax_budget_override():
+    rgb, depth = make_inputs(width=64, height=32)
+    result = synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(
+            backend="fast",
+            output_format="half_sbs",
+            debug_output=True,
+            temporal=False,
+            fused=False,
+            max_disparity_px=20.0,
+        ),
+    )
+
+    assert result.debug_info["resolved_max_disparity_px"] == 20.0
+    assert result.debug_info["parallax_budget_preset"] == "legacy"
 
 
 @pytest.mark.parametrize("backend", ["fast", "fast_plus", "quality_4k", "hq_4k"])

@@ -7,7 +7,7 @@ from typing import Literal
 import torch
 import torch.nn.functional as F
 
-from .baseline_shift import ShiftParams, compute_shift_px, warp_horizontal
+from .baseline_shift import ShiftParams, compute_shift_px, shift_debug_info, warp_horizontal
 from .output import ensure_bchw, match_depth
 
 PaddingMode = Literal["zeros", "border", "reflection"]
@@ -21,6 +21,8 @@ class OpenXRRenderConfig:
     max_shift_ratio: float = 0.05
     ipd_mm: float | None = 32.0
     stereo_scale: float = 0.4
+    max_disparity_px: float | None = None
+    parallax_preset: str = "legacy"
     screen_roll: float = 0.0
     padding_mode: PaddingMode = "reflection"
 
@@ -57,7 +59,7 @@ class OpenXREyeView:
 class OpenXRStereoResult:
     left_eye: torch.Tensor
     right_eye: torch.Tensor
-    debug_info: dict[str, torch.Tensor | float | str] = field(default_factory=dict)
+    debug_info: dict[str, torch.Tensor | float | int | str] = field(default_factory=dict)
 
 
 def is_pyopenxr_available() -> bool:
@@ -88,7 +90,8 @@ def render_openxr_stereo(
     rgb_bchw = ensure_bchw(rgb, name="rgb").float()
     _, _, h, w = rgb_bchw.shape
     depth_matched = match_depth(depth, h, w)
-    base_shift = compute_shift_px(depth_matched, w, _shift_params(config))
+    params = _shift_params(config)
+    base_shift = compute_shift_px(depth_matched, w, params)
     left = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=-1.0, config=config)
     right = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=1.0, config=config)
     return OpenXRStereoResult(
@@ -98,6 +101,7 @@ def render_openxr_stereo(
             "backend": "openxr_roll_adaptive_grid_sample",
             "screen_roll": float(config.screen_roll),
             "shift_px": base_shift,
+            **shift_debug_info(depth_matched, w, params),
         },
     )
 
@@ -299,6 +303,8 @@ def _shift_params(config: OpenXRRenderConfig) -> ShiftParams:
         max_shift_ratio=config.max_shift_ratio,
         ipd_mm=config.ipd_mm,
         stereo_scale=config.stereo_scale,
+        max_disparity_px=config.max_disparity_px,
+        parallax_preset=config.parallax_preset,
     )
 
 

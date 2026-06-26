@@ -5,9 +5,12 @@ from typing import Any, Literal
 
 from .openxr_render import OpenXRRenderConfig
 from .output import OutputFormat
+from .parallax import PARALLAX_BUDGET_TABLE
 from .synthesis import StereoConfig
 
 StereoModePreset = Literal["auto", "traditional_fastest", "cinema", "game_low_latency", "still_image_hq", "debug_export"]
+
+PARALLAX_BUDGET_PRESETS = PARALLAX_BUDGET_TABLE
 
 PRESET_CHOICES: tuple[StereoModePreset, ...] = (
     "auto",
@@ -348,6 +351,7 @@ def preset_summary() -> dict[str, dict[str, Any]]:
         name: {
             "stereo": asdict(_STEREO_PRESETS[name]),
             "openxr": asdict(_OPENXR_PRESETS[name]),
+            "parallax_budget_presets": PARALLAX_BUDGET_PRESETS,
         }
         for name in ("traditional_fastest", "cinema", "game_low_latency", "still_image_hq", "debug_export")
     }

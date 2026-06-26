@@ -101,6 +101,45 @@ Capture/runtime host integration: runtime-direct GPU paths integrated, real-devi
 
 ## Current Status
 
+### 2026-06-26 Parallax Budget Resolver
+
+Task 2 from `prompts/codex-refactor-prompt.md` is implemented with `docs/25-2d-to-3d-runtime-specification.md` taking precedence where it is stricter than the prompt.
+
+Implemented:
+
+- Added `src/stereo_runtime/parallax.py` with `resolve_parallax_budget()`, `ParallaxBudget`, `PARALLAX_BUDGET_TABLE`, and resolver debug metadata.
+- Implemented the `docs/25` short-side budget table for `comfort / standard / strong / extreme`, with interpolation and `aspect > 2.0` ultrawide protection.
+- Preserved legacy `IPD * stereo_scale * depth_strength * max_shift_ratio` behavior behind the `legacy` preset for compatibility.
+- Updated `compute_shift_px()` so normalized parallax budgets are treated as total left/right disparity and each eye receives half of that budget.
+- Added `max_disparity_px` and `parallax_preset` to `StereoConfig`, `OpenXRRenderConfig`, `StereoRuntimeConfig`, and `RuntimeSettingsSnapshot`.
+- Added `resolved_max_disparity_px`, `parallax_budget_preset`, and `parallax_resolver_version` to synthesis/OpenXR debug info.
+- Exposed parallax budget presets through `src/stereo_runtime/presets.py` and public lazy exports.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\parallax.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\adapter.py src\stereo_runtime\presets.py src\stereo_runtime\settings_snapshot.py tests\test_parallax.py tests\test_synthesis.py tests\test_openxr_render.py tests\test_presets.py tests\test_settings_snapshot.py
+src\python3\python.exe -m pytest tests\test_parallax.py tests\test_synthesis.py tests\test_openxr_render.py tests\test_presets.py tests\test_settings_snapshot.py -q
+src\python3\python.exe -m pytest tests\test_runtime_openxr.py tests\test_adapter_config.py tests\test_hot_reload.py tests\test_runtime_pipeline.py -q
+```
+
+Result:
+
+```text
+88 passed
+40 passed
+```
+
+Process improvement applied:
+
+- `docs/25-2d-to-3d-runtime-specification.md` is the canonical Parallax Budget spec. `codex-refactor-prompt.md` still contains an older width-percentage resolver shape, so future prompt-driven work should explicitly prefer `docs/25` when the two differ.
+
+Commit title:
+
+```text
+refactor: add parallax budget resolver
+```
+
 ### 2026-06-26 RuntimeSettingsSnapshot Queue - Phase 1
 
 Task 1 from `prompts/codex-refactor-prompt.md` has started against `docs/26-desktop2stereo-engineering-design-specification.md`.

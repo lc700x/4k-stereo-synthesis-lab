@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .runtime import openxr_result_from_stereo_result
+from .settings_snapshot import RuntimeSettingsRestartRequired
 
 _OPENXR_FULL_SYNTHESIS_PRESETS = {"cinema", "game_low_latency", "still_image_hq", "debug_export"}
 
@@ -42,7 +43,18 @@ class RuntimePipelineContext:
     apply_stereo_hot_reload_if_needed: Callable[[], None]
     warmup_stereo_once_for_frame: Callable[[object], None]
     log_fast_plus_fused_runtime_state: Callable[[object], None]
+    settings_update_q: object | None = None
 
+
+def _drain_latest_nowait(q: object | None):
+    if q is None:
+        return None
+    latest = None
+    while True:
+        try:
+            latest = q.get_nowait()
+        except queue.Empty:
+            return latest
 
 
 def _openxr_full_synthesis_enabled(ctx: RuntimePipelineContext) -> bool:
@@ -85,6 +97,18 @@ class RuntimePipelineLoop:
                     ctx.source_stat_inc("runtime_dropped_paused")
                     time.sleep(0.01)
                     continue
+
+                settings_snapshot = _drain_latest_nowait(ctx.settings_update_q)
+                if settings_snapshot is not None:
+                    change_class = ctx.stereo_runtime.apply_settings_snapshot(
+                        settings_snapshot,
+                        active_preset=ctx.stereo_active_preset,
+                    )
+                    ctx.source_stat_inc(
+                        "settings_updates",
+                        last_settings_version=int(settings_snapshot.version),
+                        last_settings_change_class=change_class.value,
+                    )
 
                 frame_raw, size, capture_start_time = ctx.queue_drain_latest(
                     ctx.raw_q,
@@ -173,6 +197,8 @@ class RuntimePipelineLoop:
             except queue.Empty:
                 ctx.source_stat_inc("raw_queue_empty")
                 continue
+            except RuntimeSettingsRestartRequired:
+                raise
             except Exception as exc:
                 ctx.source_stat_inc(
                     "runtime_errors",

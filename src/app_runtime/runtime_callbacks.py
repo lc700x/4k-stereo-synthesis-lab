@@ -78,6 +78,9 @@ class RuntimeCallbacks:
 
         return drain_latest(q, first_item, on_drop=on_drop)
 
+    def send_settings_snapshot(self, snapshot):
+        put_latest(self.context.settings_update_q, snapshot)
+
     def update_openxr_runtime_config(
         self,
         *,

@@ -13,6 +13,7 @@ from .adapter import StereoRuntimeConfig, depth_provider_config_from_runtime, st
 from .depth_postprocess import postprocess_depth
 from .depth_provider import DepthProfileResult, create_depth_provider
 from .openxr_render import OpenXRRenderConfig, render_openxr_stereo
+from .settings_snapshot import RuntimeSettingsRestartRequired, RuntimeSettingsSnapshot, SnapshotChangeClass
 from .synthesis import StereoResult, synthesize_stereo
 from .temporal import TemporalState
 
@@ -355,6 +356,7 @@ class StereoRuntime:
         self._loaded = False
         self.last_timing: dict[str, float] = {}
         self.last_memory: dict[str, float] = {}
+        self.active_settings_version = 0
         self.stats = RollingRuntimeStats(maxlen=stats_window)
         self.collect_memory_stats = bool(collect_memory_stats)
 
@@ -373,6 +375,38 @@ class StereoRuntime:
         self.stereo_config = stereo_config
         if reset_temporal:
             self.temporal_state.reset_stereo()
+
+    def apply_settings_snapshot(
+        self,
+        snapshot: RuntimeSettingsSnapshot,
+        *,
+        active_preset: str | None = None,
+    ) -> SnapshotChangeClass:
+        change_class = snapshot.classify()
+        if change_class is SnapshotChangeClass.NO_CHANGE:
+            self.active_settings_version = int(snapshot.version)
+            return change_class
+        if change_class is SnapshotChangeClass.SESSION_RESTART:
+            raise RuntimeSettingsRestartRequired(snapshot)
+
+        updates = snapshot.to_config_updates()
+        if active_preset is not None:
+            updates["stereo_preset"] = active_preset
+        self.config = replace(self.config, **updates)
+        self.stereo_config = stereo_config_from_runtime(self.config)
+        self.active_settings_version = int(snapshot.version)
+
+        if change_class is SnapshotChangeClass.PIPELINE_REBUILD:
+            self._rebuild_depth_provider()
+        return change_class
+
+    def _rebuild_depth_provider(self) -> None:
+        close = getattr(self.depth_provider, "close", None)
+        if callable(close):
+            close()
+        self.depth_config = depth_provider_config_from_runtime(self.config)
+        self.depth_provider = create_depth_provider(self.depth_config)
+        self._loaded = False
 
     def warmup_stereo_kernels_for_frame(self, rgb_frame: torch.Tensor) -> None:
         """Compile stereo synthesis kernels for the actual runtime frame shape."""
@@ -497,6 +531,7 @@ class StereoRuntime:
         debug["runtime_depth_backend"] = self.depth_config.backend
         debug["runtime_output_format"] = self.stereo_config.output_format
         debug["runtime_depth_upsample"] = self.config.depth_upsample
+        debug["active_settings_version"] = int(self.active_settings_version)
         if memory:
             debug.update(memory)
 
@@ -615,6 +650,7 @@ class StereoRuntime:
         debug = dict(render_backend)
         debug["runtime_depth_backend"] = self.depth_config.backend
         debug["runtime_output_format"] = output_format
+        debug["active_settings_version"] = int(self.active_settings_version)
         debug["runtime_output_dtype"] = _runtime_eye_dtype(left_eye, right_eye)
         debug["runtime_output_eye_size"] = _runtime_eye_size(left_eye)
         debug["runtime_output_pack_backend"] = pack_backend

@@ -101,6 +101,45 @@ Capture/runtime host integration: runtime-direct GPU paths integrated, real-devi
 
 ## Current Status
 
+### 2026-06-26 RuntimeSettingsSnapshot Queue - Phase 1
+
+Task 1 from `prompts/codex-refactor-prompt.md` has started against `docs/26-desktop2stereo-engineering-design-specification.md`.
+
+Implemented in this phase:
+
+- Added `src/stereo_runtime/settings_snapshot.py` with `RuntimeSettingsSnapshot`, `SnapshotChangeClass`, and `RuntimeSettingsRestartRequired`.
+- Added `settings_update_q` next to `raw_q` and `runtime_q` in `AppRuntimeContext`.
+- Added `RuntimeCallbacks.send_settings_snapshot()` for future GUI/host producers.
+- Added `RuntimePipelineLoop` handling for latest-only settings snapshots before processing each frame.
+- Added `StereoRuntime.apply_settings_snapshot()` for hot reload and depth-provider rebuild changes; session-restart snapshots raise `RuntimeSettingsRestartRequired` for the outer host layer.
+- Added `active_settings_version` to stereo and OpenXR runtime `debug_info`.
+- Added targeted tests in `tests/test_settings_snapshot.py` and `tests/test_runtime_pipeline.py`.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\settings_snapshot.py src\stereo_runtime\runtime.py src\stereo_runtime\pipeline.py src\app_runtime\runtime_context.py src\app_runtime\runtime_callbacks.py tests\test_settings_snapshot.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_settings_snapshot.py tests\test_runtime_pipeline.py -q
+```
+
+Result:
+
+```text
+10 passed
+```
+
+Notes / next improvements:
+
+- GUI still writes `settings.yaml`; this phase only adds the queue-backed runtime path and callback entry point. A follow-up should convert GUI hot-save values into `RuntimeSettingsSnapshot` objects and send them through a live host channel instead of relying only on YAML mtime polling.
+- OpenXR state updates still use the existing legacy callback path. Task 5 should move OpenXR uniform conversion into adapter-level snapshot handling.
+- Pipeline rebuild currently recreates the depth provider from the updated runtime config. If a real provider rebuild is expensive on target hardware, add structured telemetry around rebuild duration and provider fallback reason before enabling frequent depth-backend updates.
+
+Commit title:
+
+```text
+refactor: add runtime settings snapshot queue
+```
+
 ### 2026-06-20 Realtime Stereo GUI Defaults + Hot Parameters
 
 Latest pushed commit before the current uncommitted GUI/doc refresh:

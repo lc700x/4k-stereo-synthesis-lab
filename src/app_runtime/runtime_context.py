@@ -26,6 +26,7 @@ class AppRuntimeContext:
     openxr_runtime_direct: bool
     raw_q: queue.Queue
     runtime_q: queue.Queue
+    settings_update_q: queue.Queue
     runtime_config: object
     stereo_runtime: StereoRuntime
     stereo_auto_enabled: bool
@@ -90,6 +91,7 @@ def create_runtime_context(
 
     raw_q = queue.Queue(maxsize=1)
     runtime_q = queue.Queue(maxsize=1)
+    settings_update_q = queue.Queue(maxsize=1)
     runtime_config = runtime_config_from_d2s_settings(
         settings,
         cache_dir=cache_path,
@@ -130,6 +132,7 @@ def create_runtime_context(
         openxr_runtime_direct=openxr_runtime_direct,
         raw_q=raw_q,
         runtime_q=runtime_q,
+        settings_update_q=settings_update_q,
         runtime_config=runtime_config,
         stereo_runtime=stereo_runtime,
         stereo_auto_enabled=stereo_auto_enabled,
@@ -251,4 +254,5 @@ def build_runtime_pipeline_context(
         apply_stereo_hot_reload_if_needed=apply_stereo_hot_reload_if_needed,
         warmup_stereo_once_for_frame=warmup_stereo_once_for_frame,
         log_fast_plus_fused_runtime_state=log_fast_plus_fused_runtime_state,
+        settings_update_q=app_context.settings_update_q,
     )

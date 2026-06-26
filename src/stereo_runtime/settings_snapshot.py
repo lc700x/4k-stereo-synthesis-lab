@@ -1,0 +1,112 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from typing import Any
+
+from .adapter import OutputFormat, StereoQuality
+
+
+class SnapshotChangeClass(Enum):
+    NO_CHANGE = "no_change"
+    HOT_RELOAD = "hot_reload"
+    PIPELINE_REBUILD = "pipeline_rebuild"
+    SESSION_RESTART = "session_restart"
+
+
+_HOT_RELOAD_FIELDS = frozenset(
+    {
+        "stereo_quality",
+        "output_format",
+        "depth_strength",
+        "convergence",
+        "ipd_mm",
+        "stereo_scale",
+        "max_shift_ratio",
+        "temporal",
+        "temporal_strength",
+        "foreground_scale",
+        "depth_antialias_strength",
+        "edge_dilation",
+        "edge_threshold",
+        "mask_feather_radius",
+        "hole_fill_mode",
+        "hole_fill_radius",
+        "hole_fill_strength",
+        "screen_edge_mask_suppression",
+        "cross_eyed",
+        "anaglyph_method",
+        "fused",
+    }
+)
+
+_PIPELINE_REBUILD_FIELDS = frozenset(
+    {
+        "depth_backend",
+        "model_id",
+        "export_height",
+        "export_width",
+    }
+)
+
+_SESSION_RESTART_FIELDS = frozenset({"device"})
+
+
+@dataclass(frozen=True)
+class RuntimeSettingsSnapshot:
+    version: int
+    timestamp: float
+    stereo_quality: StereoQuality | None = None
+    output_format: OutputFormat | None = None
+    depth_strength: float | None = None
+    convergence: float | None = None
+    ipd_mm: float | None = None
+    stereo_scale: float | None = None
+    max_shift_ratio: float | None = None
+    temporal: bool | None = None
+    temporal_strength: float | None = None
+    foreground_scale: float | None = None
+    depth_antialias_strength: float | None = None
+    edge_dilation: int | None = None
+    edge_threshold: float | None = None
+    mask_feather_radius: int | None = None
+    hole_fill_mode: str | None = None
+    hole_fill_radius: int | None = None
+    hole_fill_strength: float | None = None
+    screen_edge_mask_suppression: int | None = None
+    cross_eyed: bool | None = None
+    anaglyph_method: str | None = None
+    fused: bool | None = None
+    depth_backend: str | None = None
+    model_id: str | None = None
+    export_height: int | None = None
+    export_width: int | None = None
+    device: str | None = None
+
+    def classify(self) -> SnapshotChangeClass:
+        if self._has_any(_SESSION_RESTART_FIELDS):
+            return SnapshotChangeClass.SESSION_RESTART
+        if self._has_any(_PIPELINE_REBUILD_FIELDS):
+            return SnapshotChangeClass.PIPELINE_REBUILD
+        if self._has_any(_HOT_RELOAD_FIELDS):
+            return SnapshotChangeClass.HOT_RELOAD
+        return SnapshotChangeClass.NO_CHANGE
+
+    def to_config_updates(self) -> dict[str, Any]:
+        updates: dict[str, Any] = {}
+        for field_name in _HOT_RELOAD_FIELDS | _PIPELINE_REBUILD_FIELDS | _SESSION_RESTART_FIELDS:
+            value = getattr(self, field_name)
+            if value is not None:
+                updates[field_name] = value
+        if "ipd_mm" in updates:
+            updates["ipd"] = float(updates["ipd_mm"]) / 1000.0
+        return updates
+
+    def _has_any(self, field_names: frozenset[str]) -> bool:
+        return any(getattr(self, field_name) is not None for field_name in field_names)
+
+
+class RuntimeSettingsRestartRequired(RuntimeError):
+    def __init__(self, snapshot: RuntimeSettingsSnapshot):
+        super().__init__(f"Runtime settings snapshot {snapshot.version} requires session restart")
+        self.snapshot = snapshot

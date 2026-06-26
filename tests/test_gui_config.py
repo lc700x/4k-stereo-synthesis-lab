@@ -573,6 +573,11 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
     row6d = builders_text[row6d_start:row6d_end]
     assert row6d.index('self.render_policy_dd') < row6d.index('self.render_align_label')
     assert 'self.row6e = ft.Row([self.render_scale_label, self.render_scale_dd' in builders_text
+    row6e_start = builders_text.index('self.row6e = ft.Row([')
+    row6e_end = builders_text.index('], spacing=1)', row6e_start)
+    row6e = builders_text[row6e_start:row6e_end]
+    assert 'ft.Container(width=S(40))' not in row6e
+    assert row6e.index('self.render_scale_dd') < row6e.index('self.render_fixed_label')
     assert 'self.row6f = ft.Row([self.render_min_dimension_label, self.render_min_dimension_dd' in builders_text
     row6f_start = builders_text.index('self.row6f = ft.Row([')
     row6f_end = builders_text.index('], spacing=1)', row6f_start)

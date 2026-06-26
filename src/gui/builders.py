@@ -438,7 +438,7 @@ class GUIBuilderMixin:
             options=["1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"],
             value="1920x1080", width=S(130))
         self.row6e = ft.Row([self.render_scale_label, self.render_scale_dd,
-            ft.Container(width=S(40)), self.render_fixed_label, self.render_fixed_dd], spacing=1)
+            self.render_fixed_label, self.render_fixed_dd], spacing=1)
         self.render_max_pixels_label = ft.Text("Render Pixel Cap:", size=FONT_SIZE, width=S(130))
         self.render_max_pixels_dd = CompactDropdown(
             options=["921600", "2073600", "3686400", "8294400"], value="8294400", width=S(130))

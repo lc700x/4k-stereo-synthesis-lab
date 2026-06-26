@@ -114,27 +114,21 @@ class GUIHandlerMixin:
         return mapping.get(text, text.strip().lower() or "native")
 
     def _update_render_size_control_visibility(self, show_render_size):
-        policy = self._display_to_render_policy(getattr(self.render_policy_dd, "value", None))
-        show_scaled = show_render_size and policy == "scaled"
-        show_fixed = show_render_size and policy == "fixed"
-        show_dynamic = show_render_size and policy == "dynamic"
-        show_align = show_render_size
-
         self.row6d.visible = show_render_size
-        self.row6e.visible = show_scaled or show_fixed
-        self.row6f.visible = show_dynamic
+        self.row6e.visible = False
+        self.row6f.visible = False
         for ctrl in [self.render_policy_label, self.render_policy_dd]:
-            ctrl.visible = show_render_size
+            ctrl.visible = False
         for ctrl in [self.render_scale_label, self.render_scale_dd]:
-            ctrl.visible = show_scaled
+            ctrl.visible = show_render_size
         for ctrl in [self.render_fixed_label, self.render_fixed_dd]:
-            ctrl.visible = show_fixed
+            ctrl.visible = False
         for ctrl in [self.render_max_pixels_label, self.render_max_pixels_dd]:
-            ctrl.visible = show_dynamic
+            ctrl.visible = False
         for ctrl in [self.render_min_dimension_label, self.render_min_dimension_dd]:
-            ctrl.visible = show_dynamic
+            ctrl.visible = False
         for ctrl in [self.render_align_label, self.render_align_dd]:
-            ctrl.visible = show_align
+            ctrl.visible = show_render_size
 
     def _preset_to_display(self, value):
         mapping = {
@@ -705,9 +699,8 @@ class GUIHandlerMixin:
         self.target_fps_dd.options = [t["Auto"], "60", "72", "80", "90", "120"]
         self.target_fps_dd.value = self._target_fps_to_display(target_fps_value)
         self.render_policy_label.value = t["Render Policy:"]
-        render_policy = self._display_to_render_policy(self.render_policy_dd.value)
-        self.render_policy_dd.options = self._render_policy_options()
-        self.render_policy_dd.value = self._render_policy_to_display(render_policy)
+        self.render_policy_dd.options = ["Scaled"]
+        self.render_policy_dd.value = "Scaled"
         self.render_scale_label.value = t["Render Scale:"]
         render_scale = self._display_to_render_scale(self.render_scale_dd.value)
         self.render_scale_dd.options = self._render_scale_options()

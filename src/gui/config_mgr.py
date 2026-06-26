@@ -67,8 +67,7 @@ class GUIConfigMixin:
         self.upscaler_sharpness_dd.value = "0.00"
         target_fps = self._parse_int(cfg.get("Target FPS", DEFAULTS["Target FPS"]), DEFAULTS["Target FPS"])
         self.target_fps_dd.value = self._target_fps_to_display(target_fps)
-        self.render_policy_dd.value = self._render_policy_to_display(
-            cfg.get("Render Size Policy", DEFAULTS["Render Size Policy"]))
+        self.render_policy_dd.value = self._render_policy_to_display("scaled")
         self.render_scale_dd.value = self._render_scale_to_display(
             cfg.get("Render Scale", DEFAULTS["Render Scale"]))
         fixed_width = self._parse_int(cfg.get("Render Fixed Width", DEFAULTS["Render Fixed Width"]), DEFAULTS["Render Fixed Width"])
@@ -243,7 +242,7 @@ class GUIConfigMixin:
             "VSync": self.local_vsync_cb.value,
             "Target FPS": self._target_fps_from_display(self.target_fps_dd.value),
             "Processing Resolution": self._config.get("Processing Resolution", DEFAULTS["Processing Resolution"]),
-            "Render Size Policy": self._display_to_render_policy(self.render_policy_dd.value),
+            "Render Size Policy": "scaled",
             "Render Scale": self._display_to_render_scale(self.render_scale_dd.value),
             "Render Fixed Width": render_fixed_width,
             "Render Fixed Height": render_fixed_height,

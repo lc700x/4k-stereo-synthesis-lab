@@ -35,10 +35,10 @@ def test_render_size_config_from_settings_parses_gui_fields():
     )
 
 
-def test_render_size_config_from_settings_defaults_invalid_policy_to_native():
+def test_render_size_config_from_settings_defaults_invalid_policy_to_scaled():
     config = render_size_config_from_settings({"Render Size Policy": "unknown"})
 
-    assert config.policy is RenderSizePolicy.NATIVE
+    assert config.policy is RenderSizePolicy.SCALED
 
 
 def test_resolve_render_size_native_aligns_capture_size():
@@ -47,10 +47,16 @@ def test_resolve_render_size_native_aligns_capture_size():
     assert resolve_render_size((1919, 1079), config) == (1904, 1072)
 
 
-def test_resolve_render_size_scaled_keeps_aspect_and_alignment():
+def test_resolve_render_size_scaled_uses_4k_tier_for_4k_input():
+    config = RenderSizeConfig(policy=RenderSizePolicy.SCALED, scale_factor=5 / 6, align=8)
+
+    assert resolve_render_size((3840, 2160), config) == (3200, 1800)
+
+
+def test_resolve_render_size_scaled_keeps_sub_4k_input_native():
     config = RenderSizeConfig(policy=RenderSizePolicy.SCALED, scale_factor=0.5, align=8)
 
-    assert resolve_render_size((1920, 1080), config) == (960, 536)
+    assert resolve_render_size((2560, 1440), config) == (2560, 1440)
 
 
 def test_resolve_render_size_fixed_uses_configured_size():

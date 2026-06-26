@@ -551,19 +551,20 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
     localization_text = _localization_source().read_text(encoding="utf-8")
 
     for key, value in {
-        "Render Size Policy": "native",
+        "Render Size Policy": "scaled",
         "Render Scale": 1.0,
         "Render Fixed Width": 1920,
         "Render Fixed Height": 1080,
         "Render Min Dimension": 480,
-        "Render Align": 16,
+        "Render Align": 8,
     }.items():
         expected = f'"{key}": "{value}"' if isinstance(value, str) else f'"{key}": {value}'
         assert expected in config_text
     assert '"Render Max Pixels": 3840 * 2160' in config_text
 
     assert 'self.render_policy_dd = CompactDropdown(' in builders_text
-    assert 'options=["Native", "Scaled", "Fixed", "Dynamic"]' in builders_text
+    assert 'options=["Scaled"]' in builders_text
+    assert 'self.render_policy_dd.visible = False' in builders_text
     assert 'self.render_scale_dd = CompactDropdown(options=self._render_scale_options()' in builders_text
     assert '"1K / 1920x1080"' in handlers_text
     assert '"2K / 2560x1440"' in handlers_text
@@ -571,52 +572,29 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
     assert '"4K / 3840x2160"' in handlers_text
     assert 'def _display_to_render_scale' in handlers_text
     assert 'def _render_scale_to_display' in handlers_text
-    assert 'self.render_fixed_dd = CompactDropdown(' in builders_text
-    assert '"1280x720", "1600x900", "1920x1080", "2560x1440", "3840x2160"' in builders_text
-    assert 'self.row6d = ft.Row([self.render_policy_label, self.render_policy_dd' in builders_text
+    assert 'self.render_fixed_dd.visible = False' in builders_text
+    assert 'self.row6d = ft.Row([self.render_scale_label, self.render_scale_dd' in builders_text
     row6d_start = builders_text.index('self.row6d = ft.Row([')
     row6d_end = builders_text.index('], spacing=1)', row6d_start)
     row6d = builders_text[row6d_start:row6d_end]
-    assert row6d.index('self.render_policy_dd') < row6d.index('self.render_align_label')
-    assert 'self.row6e = ft.Row([self.render_scale_label, self.render_scale_dd' in builders_text
-    row6e_start = builders_text.index('self.row6e = ft.Row([')
-    row6e_end = builders_text.index('], spacing=1)', row6e_start)
-    row6e = builders_text[row6e_start:row6e_end]
-    assert 'ft.Container(width=S(40))' not in row6e
-    assert row6e.index('self.render_scale_dd') < row6e.index('self.render_fixed_label')
-    assert 'self.row6f = ft.Row([self.render_min_dimension_label, self.render_min_dimension_dd' in builders_text
-    row6f_start = builders_text.index('self.row6f = ft.Row([')
-    row6f_end = builders_text.index('], spacing=1)', row6f_start)
-    row6f = builders_text[row6f_start:row6f_end]
-    assert row6f.index('self.render_min_dimension_dd') < row6f.index('self.render_max_pixels_label')
-    assert 'on_select=self.on_render_policy_change' in builders_text
+    assert row6d.index('self.render_scale_dd') < row6d.index('self.render_align_label')
+    assert 'self.row6e.visible = False' in handlers_text
+    assert 'self.row6f.visible = False' in handlers_text
     assert 'def on_render_policy_change' in handlers_text
     assert 'def _update_render_size_control_visibility' in handlers_text
-    assert 'show_scaled = show_render_size and policy == "scaled"' in handlers_text
-    assert 'show_fixed = show_render_size and policy == "fixed"' in handlers_text
-    assert 'show_dynamic = show_render_size and policy == "dynamic"' in handlers_text
-    assert 'self.row6e.visible = show_scaled or show_fixed' in handlers_text
-    assert 'self.row6f.visible = show_dynamic' in handlers_text
     assert 'self._update_render_size_control_visibility(show_render_size)' in handlers_text
 
-    assert 'cfg.get("Render Size Policy", DEFAULTS["Render Size Policy"])' in config_mgr_text
+    assert 'self.render_policy_dd.value = self._render_policy_to_display("scaled")' in config_mgr_text
     assert 'cfg.get("Render Scale", DEFAULTS["Render Scale"])' in config_mgr_text
-    assert 'cfg.get("Render Fixed Width", DEFAULTS["Render Fixed Width"])' in config_mgr_text
-    assert 'cfg.get("Render Fixed Height", DEFAULTS["Render Fixed Height"])' in config_mgr_text
-    assert '"Render Size Policy": self._display_to_render_policy(self.render_policy_dd.value)' in config_mgr_text
+    assert '"Render Size Policy": "scaled"' in config_mgr_text
     assert '"Render Scale": self._display_to_render_scale(self.render_scale_dd.value)' in config_mgr_text
     assert 'self.render_scale_dd.value = self._render_scale_to_display(' in config_mgr_text
-    assert '"Render Fixed Width": render_fixed_width' in config_mgr_text
-    assert '"Render Fixed Height": render_fixed_height' in config_mgr_text
-    assert '"Render Max Pixels": self._parse_int(self.render_max_pixels_dd.value, DEFAULTS["Render Max Pixels"])' in config_mgr_text
-    assert '"Render Min Dimension": self._parse_int(self.render_min_dimension_dd.value, DEFAULTS["Render Min Dimension"])' in config_mgr_text
     assert '"Render Align": self._parse_int(self.render_align_dd.value, DEFAULTS["Render Align"])' in config_mgr_text
 
-    assert '"Render Policy:": "Render Policy:"' in localization_text
-    assert '"Render Policy:": "渲染策略:"' in localization_text
-    assert '"Native": "原生"' in localization_text
-    assert '"tooltip_render_policy"' in localization_text
-    assert '(self.render_policy_dd, "tooltip_render_policy")' in handlers_text
+    assert '"Render Scale:": "4K Render Size:"' in localization_text
+    assert '"Render Scale:": "4K渲染档位:"' in localization_text
+    assert '"tooltip_render_scale"' in localization_text
+    assert '(self.render_scale_dd, "tooltip_render_scale")' in handlers_text
     assert '(self.render_align_dd, "tooltip_render_align")' in handlers_text
 
 

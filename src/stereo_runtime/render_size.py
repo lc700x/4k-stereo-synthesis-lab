@@ -21,25 +21,25 @@ _RENDER_SIZE_POLICY_ALIASES = {
 
 @dataclass(frozen=True)
 class RenderSizeConfig:
-    policy: RenderSizePolicy = RenderSizePolicy.NATIVE
+    policy: RenderSizePolicy = RenderSizePolicy.SCALED
     scale_factor: float = 1.0
     fixed_width: int = 1920
     fixed_height: int = 1080
     max_pixels: int = 3840 * 2160
     min_dimension: int = 480
-    align: int = 16
+    align: int = 8
 
 
 def render_size_config_from_settings(settings: dict | None) -> RenderSizeConfig:
     settings = settings or {}
     return RenderSizeConfig(
-        policy=_normalize_policy(settings.get("Render Size Policy", RenderSizePolicy.NATIVE.value)),
+        policy=_normalize_policy(settings.get("Render Size Policy", RenderSizePolicy.SCALED.value)),
         scale_factor=_float_setting(settings, "Render Scale", 1.0),
         fixed_width=_int_setting(settings, "Render Fixed Width", 1920),
         fixed_height=_int_setting(settings, "Render Fixed Height", 1080),
         max_pixels=_int_setting(settings, "Render Max Pixels", 3840 * 2160),
         min_dimension=_int_setting(settings, "Render Min Dimension", 480),
-        align=_int_setting(settings, "Render Align", 16),
+        align=_int_setting(settings, "Render Align", 8),
     )
 
 
@@ -56,8 +56,7 @@ def resolve_render_size(
         return _align_size(capture_width, capture_height, align)
 
     if config.policy is RenderSizePolicy.SCALED:
-        scale = max(0.01, float(config.scale_factor))
-        return _align_size(capture_width * scale, capture_height * scale, align)
+        return _resolve_4k_tier_size(capture_width, capture_height, config, align)
 
     if config.policy is RenderSizePolicy.FIXED:
         return _align_size(config.fixed_width, config.fixed_height, align)
@@ -78,8 +77,8 @@ def runtime_output_size_text(size: tuple[int, int] | None) -> str:
 def _normalize_policy(value) -> RenderSizePolicy:
     if isinstance(value, RenderSizePolicy):
         return value
-    key = str(value or "native").strip().lower().replace(" ", "_").replace("-", "_")
-    return _RENDER_SIZE_POLICY_ALIASES.get(key, RenderSizePolicy.NATIVE)
+    key = str(value or "scaled").strip().lower().replace(" ", "_").replace("-", "_")
+    return _RENDER_SIZE_POLICY_ALIASES.get(key, RenderSizePolicy.SCALED)
 
 
 def _int_setting(settings: dict, key: str, default: int) -> int:
@@ -94,6 +93,21 @@ def _float_setting(settings: dict, key: str, default: float) -> float:
         return float(settings.get(key, default))
     except (TypeError, ValueError):
         return float(default)
+
+
+def _resolve_4k_tier_size(width: int, height: int, config: RenderSizeConfig, align: int) -> tuple[int, int]:
+    if width < 3840 and height < 2160:
+        return _align_size(width, height, align)
+    scale = max(0.01, float(config.scale_factor))
+    if scale <= 0.58:
+        target = (1920, 1080)
+    elif scale <= 0.75:
+        target = (2560, 1440)
+    elif scale < 0.92:
+        target = (3200, 1800)
+    else:
+        target = (3840, 2160)
+    return _align_size(*target, align)
 
 
 def _resolve_dynamic_size(width: int, height: int, config: RenderSizeConfig, align: int) -> tuple[int, int]:

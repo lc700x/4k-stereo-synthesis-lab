@@ -64,6 +64,7 @@ def test_runtime_config_maps_modes_and_stereo_params():
     stereo = stereo_config_from_runtime(config)
 
     assert preset_for_runtime_mode("movie") == "cinema"
+    assert preset_for_runtime_mode("traditional_fastest") == "traditional_fastest"
     assert preset_for_runtime_mode("game") == "game_low_latency"
     assert preset_for_runtime_mode("image") == "still_image_hq"
     assert stereo.backend == "quality_4k"
@@ -185,6 +186,28 @@ def test_runtime_config_from_d2s_settings_uses_dtype_auto_for_gui_fp16_flag():
     assert config.depth_backend == "pytorch_cuda"
     assert config.onnx_dtype == "auto"
     assert config.build_trt_engine is False
+
+def test_runtime_config_from_d2s_settings_accepts_traditional_fastest_preset():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Stereo Preset": "Traditional / Fastest",
+            "Stereo Quality": "fast",
+            "Max Shift Ratio": 0.03,
+            "Edge Dilation": 0,
+            "Depth Antialias Strength": 0.0,
+        },
+        device="cuda",
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.stereo_preset == "Traditional / Fastest"
+    assert stereo.backend == "fast"
+    assert stereo.temporal is False
+    assert stereo.max_shift_ratio == 0.03
+    assert stereo.edge_dilation == 0
+    assert stereo.depth_antialias_strength == 0.0
+
 
 def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
     config = runtime_config_from_d2s_settings(
@@ -309,6 +332,25 @@ def test_runtime_config_hole_fill_mode_overrides_legacy_radius_strength_values()
     assert config.hole_fill_strength == 1.0
     assert stereo.hole_fill_mode == "sharp_test"
     assert stereo.hole_fill_radius == 1
+    assert stereo.hole_fill_strength == 1.0
+
+
+def test_runtime_config_accepts_content_aware_highest_quality_hole_fill_label():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Hole Fill Mode": "内容感知 / 最高质量",
+            "Hole Fill Radius": 1,
+            "Hole Fill Strength": 0.4,
+        }
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.hole_fill_mode == "quality"
+    assert config.hole_fill_radius == 3
+    assert config.hole_fill_strength == 1.0
+    assert stereo.hole_fill_mode == "quality"
+    assert stereo.hole_fill_radius == 3
     assert stereo.hole_fill_strength == 1.0
 
 

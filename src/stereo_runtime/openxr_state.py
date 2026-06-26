@@ -11,8 +11,9 @@ class OpenXRStateController:
         *,
         run_mode: str,
         ipd: float,
-        depth_strength: float,
-        convergence: float,
+        depth_ratio: float | None = None,
+        depth_strength: float | None = None,
+        convergence: float = 0.0,
         stereo_scale: float | None = None,
         max_shift_ratio: float | None = None,
     ):
@@ -22,9 +23,13 @@ class OpenXRStateController:
         self.wait_idle_active = threading.Event()
         self.bootstrap_done = threading.Event()
         self.runtime_config_lock = threading.Lock()
+        if depth_ratio is None:
+            depth_ratio = depth_strength
+        if depth_ratio is None:
+            raise TypeError("OpenXRStateController requires depth_ratio or depth_strength")
         self.runtime_config_state = {
             "ipd": float(ipd),
-            "depth_strength": float(depth_strength),
+            "depth_ratio": float(depth_ratio),
             "convergence": float(convergence),
             "stereo_scale": None if stereo_scale is None else float(stereo_scale),
             "max_shift_ratio": None if max_shift_ratio is None else float(max_shift_ratio),
@@ -71,6 +76,7 @@ class OpenXRStateController:
         self,
         *,
         ipd=None,
+        depth_ratio=None,
         depth_strength=None,
         convergence=None,
         stereo_scale=None,
@@ -80,8 +86,10 @@ class OpenXRStateController:
         with self.runtime_config_lock:
             if ipd is not None:
                 self.runtime_config_state["ipd"] = float(ipd)
-            if depth_strength is not None:
-                self.runtime_config_state["depth_strength"] = float(depth_strength)
+            if depth_ratio is None:
+                depth_ratio = depth_strength
+            if depth_ratio is not None:
+                self.runtime_config_state["depth_ratio"] = float(depth_ratio)
             if convergence is not None:
                 self.runtime_config_state["convergence"] = float(convergence)
             if stereo_scale is not None:
@@ -102,7 +110,7 @@ class OpenXRStateController:
                 if state["stereo_scale"] is None
                 else state["stereo_scale"]
             ),
-            depth_strength=state["depth_strength"],
+            depth_strength=state["depth_ratio"],
             convergence=state["convergence"],
             max_shift_ratio=(
                 runtime.stereo_config.max_shift_ratio

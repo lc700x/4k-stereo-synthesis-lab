@@ -82,6 +82,7 @@ class RuntimeCallbacks:
         self,
         *,
         ipd=None,
+        depth_ratio=None,
         depth_strength=None,
         convergence=None,
         stereo_scale=None,
@@ -90,6 +91,7 @@ class RuntimeCallbacks:
     ):
         self.context.openxr_state.update_runtime_config(
             ipd=ipd,
+            depth_ratio=depth_ratio,
             depth_strength=depth_strength,
             convergence=convergence,
             stereo_scale=stereo_scale,

@@ -570,7 +570,8 @@ def test_gui_render_size_policy_is_exposed_and_persisted():
     assert 'self.row6d = ft.Row([self.render_policy_label, self.render_policy_dd' in builders_text
     assert 'self.row6e = ft.Row([self.render_fixed_label, self.render_fixed_dd' in builders_text
     assert 'self.row6f = ft.Row([self.render_min_dimension_label, self.render_min_dimension_dd' in builders_text
-    assert 'on_select=lambda e: self.update_visibility()' in builders_text
+    assert 'on_select=self.on_render_policy_change' in builders_text
+    assert 'def on_render_policy_change' in handlers_text
     assert 'def _update_render_size_control_visibility' in handlers_text
     assert 'show_scaled = show_render_size and policy == "scaled"' in handlers_text
     assert 'show_fixed = show_render_size and policy == "fixed"' in handlers_text

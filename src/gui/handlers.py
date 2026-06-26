@@ -472,6 +472,11 @@ class GUIHandlerMixin:
         self._fit_window_to_content()
         self._safe_update(self.page)
 
+    def on_render_policy_change(self, e):
+        self._sync_visibility()
+        self._fit_window_to_content()
+        self._safe_update(self.page)
+
     def _sync_device_advanced_visibility(self, mode):
         advanced = bool(getattr(self, "advanced_device_cb", None) and self.advanced_device_cb.value)
         show_timing = advanced and mode in ["Local Viewer", "3D Monitor", "OpenXR Link"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Callable
 
-from .types import CaptureConfig
+from .types import CaptureConfig, FrameCopyMode, capture_frame_from_raw
 
 
 class PollingCaptureRunner:
@@ -56,7 +56,16 @@ class PollingCaptureRunner:
                     frame_raw, size = self._source.grab()
                     if shutdown_event.is_set():
                         break
-                    on_frame(frame_raw, size, capture_start_time)
+                    on_frame(
+                        capture_frame_from_raw(
+                            frame_raw,
+                            size,
+                            capture_start_time,
+                            config=self.config,
+                            copy_mode=FrameCopyMode.COPY,
+                            metadata={"backend": type(self._source).__name__},
+                        )
+                    )
                 except Exception as exc:
                     if on_error is not None:
                         on_error(exc)

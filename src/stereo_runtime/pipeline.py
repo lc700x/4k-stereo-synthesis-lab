@@ -6,6 +6,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from capture.types import CapturedFrame
+
 from .runtime import openxr_result_from_stereo_result
 from .settings_snapshot import RuntimeSettingsRestartRequired
 
@@ -65,6 +67,12 @@ def _openxr_full_synthesis_enabled(ctx: RuntimePipelineContext) -> bool:
     return str(ctx.stereo_active_preset or "").strip().lower() in _OPENXR_FULL_SYNTHESIS_PRESETS
 
 
+def _unpack_raw_queue_item(item):
+    if isinstance(item, CapturedFrame):
+        return item.frame, item.target_height, item.timestamp
+    return item
+
+
 def _rgb_size_text(frame) -> str:
     shape = tuple(getattr(frame, "shape", ()))
     if len(shape) == 4:
@@ -110,9 +118,11 @@ class RuntimePipelineLoop:
                         last_settings_change_class=change_class.value,
                     )
 
-                frame_raw, size, capture_start_time = ctx.queue_drain_latest(
-                    ctx.raw_q,
-                    ctx.raw_q.get(timeout=min(ctx.time_sleep, 0.01)),
+                frame_raw, size, capture_start_time = _unpack_raw_queue_item(
+                    ctx.queue_drain_latest(
+                        ctx.raw_q,
+                        ctx.raw_q.get(timeout=min(ctx.time_sleep, 0.01)),
+                    )
                 )
                 ctx.source_stat_inc("raw_get", last_raw_get_ts=time.perf_counter())
                 ctx.breakdown_inc("raw_get")

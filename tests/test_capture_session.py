@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 
-from capture.types import CaptureConfig
+from capture.types import CaptureConfig, CapturedFrame, FrameCopyMode, capture_frame_from_raw
 from capture.session import CaptureSessionCallbacks, CaptureSessionLoop
 
 
@@ -26,7 +26,16 @@ class FakeRunner:
         on_session_update("session", "control")
         on_tick()
         on_paused("paused")
-        on_frame("frame", (16, 9), 1.25)
+        on_frame(
+            capture_frame_from_raw(
+                "frame",
+                (16, 9),
+                1.25,
+                config=self.config,
+                copy_mode=FrameCopyMode.COPY,
+                metadata={"backend": "fake"},
+            )
+        )
         on_error(RuntimeError("boom"))
         on_closed()
 
@@ -80,7 +89,17 @@ def test_capture_session_loop_wires_runner_callbacks(monkeypatch):
     assert ("session", "session", "control") in events
     assert ("tick",) in events
     assert ("clear_raw",) in events
-    assert ("put", ("frame", (16, 9), 1.25)) in events
+    captured_frame = next(event[1] for event in events if event[0] == "put")
+    assert isinstance(captured_frame, CapturedFrame)
+    assert captured_frame.frame == "frame"
+    assert captured_frame.target_height == (16, 9)
+    assert captured_frame.timestamp == 1.25
+    assert captured_frame.capture_tool == "Fake"
+    assert captured_frame.capture_mode == "Window"
+    assert captured_frame.monitor_index == 0
+    assert captured_frame.window_title == "Example"
+    assert captured_frame.copy_mode is FrameCopyMode.COPY
+    assert captured_frame.metadata["backend"] == "fake"
     assert stats["capture_dropped_paused"] == 1
     assert stats["capture_frames"] == 1
     assert stats["last_capture_ts"] == 1.25

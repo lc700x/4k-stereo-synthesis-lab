@@ -6,6 +6,8 @@ import threading
 import time
 from ctypes import wintypes
 
+from capture.types import FrameCopyMode, capture_frame_from_raw
+
 
 CAPTURE_CURSOR_DELAY_S = 0.2
 
@@ -146,9 +148,21 @@ class WindowsCaptureEventRunner:
                     return
                 if hasattr(frame.frame_buffer, "copy"):
                     raw = frame.frame_buffer.copy()
+                    copy_mode = FrameCopyMode.COPY
                 else:
                     raw = frame.frame_buffer.clone()
-                on_frame(raw, self.config.output_resolution, capture_start_time)
+                    copy_mode = FrameCopyMode.CLONE
+                on_frame(
+                    capture_frame_from_raw(
+                        raw,
+                        self.config.output_resolution,
+                        capture_start_time,
+                        config=self.config,
+                        copy_mode=copy_mode,
+                        original_format=type(frame.frame_buffer).__name__,
+                        metadata={"backend": "windows_capture_event"},
+                    )
+                )
 
             @cap.event
             def closed():

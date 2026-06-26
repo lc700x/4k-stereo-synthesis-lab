@@ -14,10 +14,10 @@ GitHub:
 https://github.com/laiyangli001/4k-stereo-synthesis-lab
 ```
 
-Latest pushed commit:
+Latest pushed task commit:
 
 ```text
-8ca5b07 feat: refine stereo runtime controls
+refactor: add captured frame metadata contract
 ```
 
 Important docs:
@@ -100,6 +100,44 @@ Capture/runtime host integration: runtime-direct GPU paths integrated, real-devi
 ```
 
 ## Current Status
+
+### 2026-06-26 CaptureFrame Metadata Contract
+
+Task 3 from `prompts/codex-refactor-prompt.md` is implemented as a compatible upgrade from raw queue triples to `CapturedFrame` metadata objects.
+
+Implemented:
+
+- Added `FrameCopyMode` and expanded `CapturedFrame` with capture source, size, raw type/device/dtype, copy mode, original format, and free-form metadata fields.
+- Added `capture_frame_from_raw()` and `ensure_captured_frame()` helpers so producers can create metadata frames while legacy `(frame_raw, size, timestamp)` tuples remain accepted.
+- Updated `PollingCaptureRunner` and `WindowsCaptureEventRunner` to emit `CapturedFrame` objects through `on_frame`.
+- Added Windows event backend copy-mode tracking for `copy()` vs `clone()` buffers.
+- Updated `CaptureSessionLoop` to enqueue `CapturedFrame` while still accepting legacy three-argument frame callbacks.
+- Updated `RuntimePipelineLoop` to unpack either `CapturedFrame` or legacy tuples from `raw_q`.
+- Exported `FrameCopyMode` from `capture` public API.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\capture\types.py src\capture\runners.py src\capture\session.py src\capture\backends\windows_capture_event.py src\capture\__init__.py src\stereo_runtime\pipeline.py tests\test_capture_metadata.py tests\test_capture_session.py tests\test_windows_capture_event.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_capture_metadata.py tests\test_capture_session.py tests\test_windows_capture_event.py tests\test_runtime_pipeline.py -q
+```
+
+Result:
+
+```text
+12 passed
+```
+
+Related regression note:
+
+- `tests/test_capture_public_api.py tests/test_capture_factory.py tests/test_monitor_mapping.py` passed when run with adjacent capture tests.
+- `tests/test_capture_preprocess.py` currently fails three pre-existing assertions because the tests call `capture_frame_to_rgb(..., target_height=...)` while the implementation does not accept that keyword. This was not introduced by the metadata contract change and should be handled as a separate compatibility cleanup.
+
+Commit title:
+
+```text
+refactor: add captured frame metadata contract
+```
 
 ### 2026-06-26 Parallax Budget Resolver
 

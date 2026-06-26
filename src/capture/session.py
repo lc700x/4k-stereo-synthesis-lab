@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from . import CaptureConfig, create_capture_runner
+from .types import CapturedFrame, ensure_captured_frame
 
 
 @dataclass(frozen=True)
@@ -55,18 +56,28 @@ class CaptureSessionLoop:
         if reason == "paused":
             self.callbacks.inc_source_stat("capture_dropped_paused")
 
-    def _frame_arrived(self, frame_raw, size, capture_start_time: float) -> None:
+    def _frame_arrived(self, frame_or_capture, size=None, capture_start_time: float | None = None) -> None:
+        if isinstance(frame_or_capture, CapturedFrame):
+            captured_frame = frame_or_capture
+        else:
+            if capture_start_time is None:
+                raise ValueError("capture_start_time is required for legacy frame callbacks")
+            captured_frame = ensure_captured_frame(
+                (frame_or_capture, size, capture_start_time),
+                config=self.config,
+            )
         if not self._logged_frame_shape and os.environ.get('D2S_DEBUG', '0') in ('1', 'true', 'yes', 'on'):
             self._logged_frame_shape = True
             print(
-                f"[capture_loop] frame raw={_frame_size_text(frame_raw)} target={size}",
+                f"[capture_loop] frame raw={_frame_size_text(captured_frame.frame)} "
+                f"target={captured_frame.target_height}",
                 flush=True,
             )
-        self.callbacks.inc_source_stat("capture_frames", last_capture_ts=capture_start_time)
+        self.callbacks.inc_source_stat("capture_frames", last_capture_ts=captured_frame.timestamp)
         self.callbacks.inc_breakdown("capture")
         if self.callbacks.is_shutdown():
             return
-        if self.callbacks.put_raw_latest((frame_raw, size, capture_start_time)):
+        if self.callbacks.put_raw_latest(captured_frame):
             self.callbacks.inc_source_stat("raw_overwritten")
             self.callbacks.inc_breakdown("raw_overwritten")
         self.callbacks.inc_source_stat("raw_put")

@@ -2,7 +2,7 @@ import sys
 import threading
 import types
 
-from capture import CaptureConfig
+from capture import CaptureConfig, CapturedFrame, FrameCopyMode
 from capture.backends import windows_capture_event
 
 
@@ -92,8 +92,8 @@ def test_windows_capture_runner_uses_copy_or_clone_buffers(monkeypatch):
     received = []
     shutdown_event = threading.Event()
 
-    def on_frame(raw, size, timestamp):
-        received.append((raw, size, timestamp))
+    def on_frame(captured_frame):
+        received.append(captured_frame)
 
     def on_error(exc):
         shutdown_event.set()
@@ -108,14 +108,23 @@ def test_windows_capture_runner_uses_copy_or_clone_buffers(monkeypatch):
     copy_buffer = CopyBuffer()
     capture.handlers[0](FakeFrame(copy_buffer), FakeControl())
     assert copy_buffer.copied is True
-    assert received[-1][0] == "copied-buffer"
-    assert received[-1][1] == (3840, 2160)
+    assert isinstance(received[-1], CapturedFrame)
+    assert received[-1].frame == "copied-buffer"
+    assert received[-1].target_height == (3840, 2160)
+    assert received[-1].copy_mode is FrameCopyMode.COPY
+    assert received[-1].capture_tool == "WindowsCaptureCUDA"
+    assert received[-1].capture_mode == "Monitor"
+    assert received[-1].monitor_index == 3
+    assert received[-1].original_format == "CopyBuffer"
+    assert received[-1].metadata["backend"] == "windows_capture_event"
 
     shutdown_event.clear()
     clone_buffer = CloneBuffer()
     capture.handlers[0](FakeFrame(clone_buffer), FakeControl())
     assert clone_buffer.cloned is True
-    assert received[-1][0] == "cloned-buffer"
+    assert received[-1].frame == "cloned-buffer"
+    assert received[-1].copy_mode is FrameCopyMode.CLONE
+    assert received[-1].original_format == "CloneBuffer"
 
 
 def test_windows_capture_runner_uses_window_name_for_window_capture(monkeypatch):
@@ -138,7 +147,7 @@ def test_windows_capture_runner_uses_window_name_for_window_capture(monkeypatch)
 
     runner.run(
         shutdown_event=shutdown_event,
-        on_frame=lambda raw, size, timestamp: None,
+        on_frame=lambda captured_frame: None,
         on_error=on_error,
     )
 

@@ -16,6 +16,9 @@ class SnapshotChangeClass(Enum):
 
 _HOT_RELOAD_FIELDS = frozenset(
     {
+        "runtime_quality_mode",
+        "presentation_flags",
+        "debug_flags",
         "stereo_quality",
         "output_format",
         "depth_strength",
@@ -27,6 +30,9 @@ _HOT_RELOAD_FIELDS = frozenset(
         "parallax_preset",
         "temporal",
         "temporal_strength",
+        "auto_reset_temporal",
+        "scene_reset_threshold",
+        "reset_cooldown_frames",
         "foreground_scale",
         "depth_antialias_strength",
         "edge_dilation",
@@ -44,6 +50,10 @@ _HOT_RELOAD_FIELDS = frozenset(
 
 _PIPELINE_REBUILD_FIELDS = frozenset(
     {
+        "stereo_synthesis_mode",
+        "render_size_policy",
+        "stereo_render_scale",
+        "output_transport",
         "depth_backend",
         "model_id",
         "export_height",
@@ -51,13 +61,60 @@ _PIPELINE_REBUILD_FIELDS = frozenset(
     }
 )
 
-_SESSION_RESTART_FIELDS = frozenset({"device"})
+_SESSION_RESTART_FIELDS = frozenset({"application_runtime_target", "capture_source", "capture_target", "device"})
+
+_CONFIG_UPDATE_FIELDS = frozenset(
+    {
+        "stereo_quality",
+        "output_format",
+        "depth_strength",
+        "convergence",
+        "ipd_mm",
+        "stereo_scale",
+        "max_shift_ratio",
+        "max_disparity_px",
+        "parallax_preset",
+        "temporal",
+        "temporal_strength",
+        "auto_reset_temporal",
+        "scene_reset_threshold",
+        "reset_cooldown_frames",
+        "foreground_scale",
+        "depth_antialias_strength",
+        "edge_dilation",
+        "edge_threshold",
+        "mask_feather_radius",
+        "hole_fill_mode",
+        "hole_fill_radius",
+        "hole_fill_strength",
+        "screen_edge_mask_suppression",
+        "cross_eyed",
+        "anaglyph_method",
+        "fused",
+        "depth_backend",
+        "model_id",
+        "export_height",
+        "export_width",
+        "device",
+    }
+)
 
 
 @dataclass(frozen=True)
 class RuntimeSettingsSnapshot:
     version: int
     timestamp: float
+    source: str | None = None
+    application_runtime_target: str | None = None
+    runtime_quality_mode: str | None = None
+    stereo_synthesis_mode: str | None = None
+    render_size_policy: str | None = None
+    stereo_render_scale: float | None = None
+    output_transport: str | None = None
+    capture_source: str | None = None
+    capture_target: str | None = None
+    presentation_flags: dict[str, Any] | None = None
+    debug_flags: dict[str, Any] | None = None
     stereo_quality: StereoQuality | None = None
     output_format: OutputFormat | None = None
     depth_strength: float | None = None
@@ -69,6 +126,9 @@ class RuntimeSettingsSnapshot:
     parallax_preset: str | None = None
     temporal: bool | None = None
     temporal_strength: float | None = None
+    auto_reset_temporal: bool | None = None
+    scene_reset_threshold: float | None = None
+    reset_cooldown_frames: int | None = None
     foreground_scale: float | None = None
     depth_antialias_strength: float | None = None
     edge_dilation: int | None = None
@@ -98,7 +158,7 @@ class RuntimeSettingsSnapshot:
 
     def to_config_updates(self) -> dict[str, Any]:
         updates: dict[str, Any] = {}
-        for field_name in _HOT_RELOAD_FIELDS | _PIPELINE_REBUILD_FIELDS | _SESSION_RESTART_FIELDS:
+        for field_name in _CONFIG_UPDATE_FIELDS:
             value = getattr(self, field_name)
             if value is not None:
                 updates[field_name] = value

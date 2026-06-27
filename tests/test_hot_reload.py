@@ -6,10 +6,12 @@ from stereo_runtime.adapter import StereoRuntimeConfig
 from stereo_runtime.hot_reload import (
     StereoHotReloader,
     clamp_foreground_scale_hot_reload,
+    hot_reload_runtime_settings_snapshot,
     hot_reload_value_snapshot,
     runtime_stereo_overrides,
     to_bool_hot_reload,
 )
+from stereo_runtime.settings_snapshot import SnapshotChangeClass
 
 
 def make_config(**overrides):
@@ -142,6 +144,36 @@ def test_hot_reload_fast_quality_disables_temporal_and_postprocess():
     assert values["depth_antialias_strength"] == 0.0
 
 
+def test_hot_reload_builds_runtime_settings_snapshot():
+    config = make_config()
+    settings = {
+        "Depth Strength": "1.25",
+        "IPD mm": "65",
+        "Temporal Strength": "0.3",
+        "Scene Reset Threshold": "0.4",
+        "Reset Cooldown Frames": "8",
+    }
+
+    snapshot = hot_reload_runtime_settings_snapshot(
+        settings,
+        config,
+        version=12,
+        timestamp=3.5,
+    )
+
+    assert snapshot.version == 12
+    assert snapshot.timestamp == 3.5
+    assert snapshot.source == "settings_yaml_hot_reload"
+    assert snapshot.depth_strength == 1.25
+    assert snapshot.ipd_mm == 65.0
+    assert snapshot.temporal is True
+    assert snapshot.temporal_strength == 0.3
+    assert snapshot.auto_reset_temporal is True
+    assert snapshot.scene_reset_threshold == 0.4
+    assert snapshot.reset_cooldown_frames == 8
+    assert snapshot.classify() is SnapshotChangeClass.HOT_RELOAD
+
+
 def test_hot_reload_pushes_all_openxr_stereo_controls(tmp_path):
     settings_path = tmp_path / "settings.yaml"
     settings_path.write_text("", encoding="utf-8")
@@ -154,6 +186,7 @@ def test_hot_reload_pushes_all_openxr_stereo_controls(tmp_path):
     runtime = SimpleNamespace(
         config=runtime_config,
         stereo_config=SimpleNamespace(output_format="half_sbs"),
+        apply_settings_snapshot=lambda snapshot, active_preset=None: setattr(runtime, "applied_snapshot", snapshot),
         configure_stereo=lambda stereo_config, reset_temporal=False: setattr(runtime, "stereo_config", stereo_config),
     )
     pushed = {}
@@ -178,10 +211,10 @@ def test_hot_reload_pushes_all_openxr_stereo_controls(tmp_path):
         on_mode_log=lambda _reason: None,
     )
 
-    assert pushed == {
-        "ipd": 0.064,
-        "depth_strength": 2.0,
-        "convergence": 0.25,
-        "stereo_scale": 0.35,
-        "max_shift_ratio": 0.05,
-    }
+    assert pushed["snapshot"] is runtime.applied_snapshot
+    assert runtime.applied_snapshot.source == "settings_yaml_hot_reload"
+    assert runtime.applied_snapshot.ipd_mm == 64.0
+    assert runtime.applied_snapshot.depth_strength == 2.0
+    assert runtime.applied_snapshot.convergence == 0.25
+    assert runtime.applied_snapshot.stereo_scale == 0.35
+    assert runtime.applied_snapshot.max_shift_ratio == 0.05

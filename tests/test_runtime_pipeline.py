@@ -261,10 +261,10 @@ def test_runtime_pipeline_accepts_captured_frame_queue_item():
     assert runtime_result.debug_info["preprocess_device_transfer"] == "cuda->cpu"
 
 
-def test_runtime_pipeline_resolves_render_size_before_preprocess():
+def test_runtime_pipeline_resolves_4k_render_size_before_preprocess():
     raw_q = queue.Queue(maxsize=1)
     runtime_q = queue.Queue(maxsize=1)
-    raw_q.put(("raw", (1920, 1080), 10.0))
+    raw_q.put(("raw", (3840, 2160), 10.0))
     shutdown = OneShotShutdown()
     seen = {}
 
@@ -312,7 +312,7 @@ def test_runtime_pipeline_resolves_render_size_before_preprocess():
 
     RuntimePipelineLoop(context).run()
 
-    assert seen == {"frame": "raw", "size": (960, 536)}
+    assert seen == {"frame": "raw", "size": (1920, 1080)}
     _runtime_result, capture_start_time = runtime_q.get_nowait()
     assert capture_start_time == 10.0
 

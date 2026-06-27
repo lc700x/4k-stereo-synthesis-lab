@@ -336,6 +336,50 @@ def _percentile_sorted(values: list[float], q: float) -> float:
     return float(values[lo] * (1.0 - frac) + values[hi] * frac)
 
 
+def _snapshot_changed_fields(snapshot: RuntimeSettingsSnapshot) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            name
+            for name in snapshot.__dataclass_fields__
+            if getattr(snapshot, name) is not None and name not in {"version", "timestamp"}
+        )
+    )
+
+
+def _merge_runtime_settings_snapshot(
+    base: RuntimeSettingsSnapshot,
+    updates: RuntimeSettingsSnapshot,
+) -> RuntimeSettingsSnapshot:
+    values = {"version": int(updates.version), "timestamp": float(updates.timestamp)}
+    for name in updates.__dataclass_fields__:
+        if name in {"version", "timestamp"}:
+            continue
+        value = getattr(updates, name)
+        if value is not None:
+            values[name] = value
+        else:
+            values[name] = getattr(base, name)
+    return RuntimeSettingsSnapshot(**values)
+
+
+_DEPTH_PROVIDER_REBUILD_FIELDS = frozenset({"depth_backend", "model_id", "export_height", "export_width"})
+
+
+def _add_active_settings_debug_info(debug: dict[str, Any], snapshot: RuntimeSettingsSnapshot) -> None:
+    for field_name in (
+        "source",
+        "application_runtime_target",
+        "runtime_quality_mode",
+        "stereo_synthesis_mode",
+        "render_size_policy",
+        "stereo_render_scale",
+        "output_transport",
+    ):
+        value = getattr(snapshot, field_name)
+        if value is not None:
+            debug[field_name] = value
+
+
 class StereoRuntime:
     """Persistent host-facing runtime for RGB frame -> depth -> stereo output."""
 
@@ -358,7 +402,10 @@ class StereoRuntime:
         self._loaded = False
         self.last_timing: dict[str, float] = {}
         self.last_memory: dict[str, float] = {}
+        self.active_settings_snapshot = RuntimeSettingsSnapshot(version=0, timestamp=0.0)
         self.active_settings_version = 0
+        self.last_settings_change_class = SnapshotChangeClass.NO_CHANGE.value
+        self.last_settings_changed_fields: tuple[str, ...] = ()
         self.stats = RollingRuntimeStats(maxlen=stats_window)
         self.collect_memory_stats = bool(collect_memory_stats)
 
@@ -385,8 +432,13 @@ class StereoRuntime:
         active_preset: str | None = None,
     ) -> SnapshotChangeClass:
         change_class = snapshot.classify()
+        changed_fields = _snapshot_changed_fields(snapshot)
+        merged_snapshot = _merge_runtime_settings_snapshot(self.active_settings_snapshot, snapshot)
         if change_class is SnapshotChangeClass.NO_CHANGE:
+            self.active_settings_snapshot = merged_snapshot
             self.active_settings_version = int(snapshot.version)
+            self.last_settings_change_class = change_class.value
+            self.last_settings_changed_fields = changed_fields
             return change_class
         if change_class is SnapshotChangeClass.SESSION_RESTART:
             raise RuntimeSettingsRestartRequired(snapshot)
@@ -396,9 +448,12 @@ class StereoRuntime:
             updates["stereo_preset"] = active_preset
         self.config = replace(self.config, **updates)
         self.stereo_config = stereo_config_from_runtime(self.config)
+        self.active_settings_snapshot = merged_snapshot
         self.active_settings_version = int(snapshot.version)
+        self.last_settings_change_class = change_class.value
+        self.last_settings_changed_fields = changed_fields
 
-        if change_class is SnapshotChangeClass.PIPELINE_REBUILD:
+        if change_class is SnapshotChangeClass.PIPELINE_REBUILD and _DEPTH_PROVIDER_REBUILD_FIELDS.intersection(changed_fields):
             self._rebuild_depth_provider()
         return change_class
 
@@ -534,6 +589,9 @@ class StereoRuntime:
         debug["runtime_output_format"] = self.stereo_config.output_format
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         debug["active_settings_version"] = int(self.active_settings_version)
+        debug["hot_reload_class"] = self.last_settings_change_class
+        debug["hot_reload_changed_fields"] = list(self.last_settings_changed_fields)
+        _add_active_settings_debug_info(debug, self.active_settings_snapshot)
         _add_preprocess_debug_info(debug, rgb_frame)
         if memory:
             debug.update(memory)
@@ -656,6 +714,9 @@ class StereoRuntime:
         debug["runtime_output_format"] = output_format
         debug["active_settings_version"] = int(self.active_settings_version)
         debug["runtime_output_dtype"] = _runtime_eye_dtype(left_eye, right_eye)
+        debug["hot_reload_class"] = self.last_settings_change_class
+        debug["hot_reload_changed_fields"] = list(self.last_settings_changed_fields)
+        _add_active_settings_debug_info(debug, self.active_settings_snapshot)
         _add_runtime_output_size_debug_info(debug, left_eye, left_eye)
         debug["runtime_output_pack_backend"] = pack_backend
         if openxr_config is not None:

@@ -197,7 +197,7 @@ Render Size Policy 定义实际合成尺寸。它直接影响 `max_disparity_px`
 | Policy | 规则 | 用途 |
 |---|---|---|
 | native | render_size = capture_size | 最高保真，成本最高 |
-| scaled | render_size = capture_size * stereo_render_scale | OpenXR 降上传量、网络降码率、本地稳帧率 |
+| scaled | 仅 4K 级输入按 `stereo_render_scale` 映射到稳定档位；低于 4K 的输入保持 capture_size | OpenXR 降上传量、网络降码率、本地稳帧率 |
 | fixed | render_size = 用户或 profile 指定尺寸 | 录制、推流、固定设备输出 |
 | dynamic | 在稳定档位间切换 | 按 FPS/GPU 压力稳帧率 |
 
@@ -205,6 +205,7 @@ Render Size Policy 定义实际合成尺寸。它直接影响 `max_disparity_px`
 
 ```text
 max_disparity_px 必须按 render_size 解析。
+scaled policy 只在 capture_size 达到 4K 级时改变 render_size；低于 4K 时 render_size 保持 capture_size。
 render_size 变化后，depth、mask、temporal state、OpenXR eye texture 都要按新尺寸重建或重置。
 dynamic policy 只能跨稳定档位切换，不应每帧连续改变。
 ```
@@ -546,7 +547,7 @@ timing
 
 ### render_size
 
-`render_size` 是实际 stereo synthesis 和 OpenXR upload 使用的尺寸。它由 capture size、质量档、OpenXR render scale、动态分辨率策略共同决定。
+`render_size` 是实际 stereo synthesis 和 OpenXR upload 使用的尺寸。它由 capture size、质量档、OpenXR render scale、动态分辨率策略共同决定。当前 `scaled` 策略只对 4K 级输入启用档位下采样；低于 4K 的输入默认保持原始 capture size。
 
 用途：
 
@@ -868,7 +869,7 @@ short_side = min(width, height)
 
 ## OpenXR 下采样和 render size
 
-OpenXR 为了降低 GPU 上传量、提高输出帧率，后续可能把 4K 输入下采样到 3K 或 2K 级 eye texture。这个因素必须进入 `max_disparity_px` 解析。
+OpenXR 为了降低 GPU 上传量、提高输出帧率，可以把 4K 输入下采样到较低的稳定 eye texture 档位。当前策略只对 4K 级输入启用下采样；低于 4K 的输入保持原始 capture size，不再按 `stereo_render_scale` 继续缩小。这个因素必须进入 `max_disparity_px` 解析。
 
 核心规则：
 
@@ -895,9 +896,11 @@ max_disparity_px = resolve_parallax_budget(render_width, render_height, strength
 示例：
 
 ```text
-4K 输入，4K 合成 / 上传: 3840x2160 -> 标准 96px
-4K 输入，3K 合成 / 上传: 2880x1620 -> 标准约 72px，可由档位插值得到
-4K 输入，2K 合成 / 上传: 1920x1080 -> 标准 48px
+低于 4K 输入，保持原尺寸: 1920x1080 -> 标准 48px
+4K 输入，scale >= 0.92: 3840x2160 -> 标准 96px
+4K 输入，0.75 < scale < 0.92: 3200x1800 -> 标准约 80px，可由档位插值得到
+4K 输入，0.58 < scale <= 0.75: 2560x1440 -> 标准 64px
+4K 输入，scale <= 0.58: 1920x1080 -> 标准 48px
 ```
 
 推荐处理顺序：
@@ -912,30 +915,36 @@ capture RGB
 
 不要在 4K 上用 4K 预算先合成再下采，也不要在 2K 上合成却继续使用 4K 的 `max_disparity_px`。前者浪费算力且让补洞尺度复杂，后者会导致立体强度失真。
 
-可以新增一个独立概念：
+当前使用一个独立概念控制 4K 输入的档位选择：
 
 ```text
-stereo_render_scale:
-1.00 = 原始输出尺寸
-0.75 = 3K 级
-0.50 = 2K 级
+stereo_render_scale / Render Scale:
+>= 0.92 = 4K 级，3840x2160
+> 0.75 且 < 0.92 = 3200x1800
+> 0.58 且 <= 0.75 = 2560x1440
+<= 0.58 = 2K 级，1920x1080
 ```
 
 解析方式：
 
 ```text
-render_width  = round_to_even(capture_width  * stereo_render_scale)
-render_height = round_to_even(capture_height * stereo_render_scale)
+if capture_width < 3840 and capture_height < 2160:
+    render_size = align(capture_size)
+else:
+    render_size = resolve_4k_tier_size(stereo_render_scale)
+
 max_disparity_px = resolve_parallax_budget(render_width, render_height, strength_preset)
 ```
+
+这里的 `stereo_render_scale` 不是任意输入尺寸的连续缩放比例，而是 4K 级输入的稳定档位选择信号。
 
 如果后续做动态分辨率稳帧率，也不要每帧改变预算。只有在这些情况下重算：
 
 ```text
 用户切换质量档
-OpenXR render scale 改变
-输入源尺寸变化超过阈值
-动态分辨率稳定跨档，例如 4K -> 3K -> 2K
+OpenXR render scale 改变并导致 4K 档位变化
+输入源尺寸跨入或离开 4K 缩放条件，或尺寸变化超过阈值
+动态分辨率稳定跨档，例如 4K -> 3200x1800 -> 2560x1440 -> 2K
 ```
 
 ## 宽高比处理

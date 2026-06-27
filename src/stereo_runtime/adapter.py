@@ -57,7 +57,7 @@ class StereoRuntimeConfig:
     ipd_mm: float | None = 32.0
     stereo_scale: float = 0.4
     max_disparity_px: float | None = None
-    parallax_preset: str = "legacy"
+    parallax_preset: str = "standard"
     layers: int = 2
     occlusion: bool = True
     symmetric: bool = True
@@ -222,6 +222,8 @@ def runtime_config_from_d2s_settings(
         max_shift_ratio=float(settings.get("Max Shift Ratio", 0.05)),
         ipd_mm=ipd_mm,
         stereo_scale=float(settings.get("Stereo Scale", settings.get("Stereo Strength Scale", 0.4))),
+        max_disparity_px=_optional_float_setting(settings, "Max Disparity Px", "Max Disparity PX"),
+        parallax_preset=str(settings.get("Parallax Preset", settings.get("Parallax Budget Preset", "standard"))),
         temporal=_to_bool(settings.get("Temporal", True)),
         temporal_strength=float(settings.get("Temporal Strength", 0.75)),
         auto_reset_temporal=_to_bool(settings.get("Auto Scene Reset", settings.get("Auto Reset Temporal", True))),
@@ -241,6 +243,13 @@ def runtime_config_from_d2s_settings(
         debug_output=_to_bool(settings.get("Debug Stereo Output", False)),
         profile_sync=_to_bool(settings.get("Depth Profile Sync", settings.get("Profile Sync", False))),
     )
+
+
+def _optional_float_setting(settings: dict[str, Any], *keys: str) -> float | None:
+    for key in keys:
+        if key in settings and settings[key] is not None:
+            return float(settings[key])
+    return None
 
 
 def _normalize_ipd_mm(settings: dict[str, Any]) -> float:

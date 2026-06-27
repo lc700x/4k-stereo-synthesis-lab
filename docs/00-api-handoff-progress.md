@@ -1,4 +1,4 @@
-# Handoff - 2026-06-26
+# Handoff - 2026-06-27
 
 ## Project
 
@@ -46,6 +46,73 @@ Canonical specs for current work:
 - None currently recorded for this handoff.
 
 ## Current Status
+
+### 2026-06-27 GUI Hot Reload Snapshot Compliance Follow-up
+
+Continued the 2D-to-3D runtime specification compliance pass by closing the gap where GUI hot-save changes were persisted to `settings.yaml` and then applied through the legacy loose hot-reload path instead of the unified runtime settings snapshot contract.
+
+Implemented in this follow-up:
+
+- Added `auto_reset_temporal`, `scene_reset_threshold`, and `reset_cooldown_frames` to `RuntimeSettingsSnapshot` hot-reload classification and runtime config update mapping.
+- Added `hot_reload_runtime_settings_snapshot()` so YAML-driven GUI hot-save updates are converted into a `RuntimeSettingsSnapshot` with source metadata.
+- Updated `StereoHotReloader.apply_if_needed()` to apply settings through `StereoRuntime.apply_settings_snapshot()` when available, while preserving the legacy direct config replacement fallback for compatibility tests and simple callers.
+- Updated OpenXR hot-reload propagation to send the same snapshot through `update_openxr_runtime_config(snapshot=...)` instead of separate loose stereo parameter arguments.
+- Added tests covering hot-reload snapshot construction and the snapshot-based OpenXR/runtime propagation path.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\settings_snapshot.py src\stereo_runtime\hot_reload.py tests\test_hot_reload.py tests\test_settings_snapshot.py
+src\python3\python.exe -m pytest tests/test_hot_reload.py tests/test_settings_snapshot.py tests/test_runtime_pipeline.py -q
+```
+
+Result:
+
+```text
+23 passed
+```
+
+Notes / next improvements:
+
+- GUI is still a separate parent process from `src/main.py`; this follow-up routes the current persisted hot-save handoff through the snapshot contract inside the runtime process, rather than adding a new inter-process settings channel.
+- A future IPC-backed GUI live settings channel can call `RuntimeCallbacks.send_settings_snapshot()` directly if the host/runtime process model is changed.
+
+### 2026-06-27 2D-to-3D Runtime Specification Compliance Pass
+
+A local compliance pass was completed against `docs/25-2d-to-3d-runtime-specification.md`. The focus was to align current code, tests, and the runtime handoff/debug surface with the spec without removing explicit legacy compatibility paths.
+
+Implemented in this pass:
+
+- Updated `docs/25-2d-to-3d-runtime-specification.md` so `scaled` render-size policy matches the current implementation: only 4K-class inputs are mapped to stable downsample tiers, while sub-4K inputs keep `capture_size`.
+- Updated `tests/test_runtime_pipeline.py` so pipeline render-size coverage validates the 4K tier path instead of the previous continuous-scale assumption for 1080p input.
+- Added runtime debug fields for `hot_reload_class` and `hot_reload_changed_fields` in both RGB and OpenXR runtime result paths.
+- Expanded `RuntimeSettingsSnapshot` to carry spec-layer fields such as `application_runtime_target`, `runtime_quality_mode`, `stereo_synthesis_mode`, `render_size_policy`, `stereo_render_scale`, `output_transport`, capture fields, presentation flags, and debug flags.
+- Split snapshot field classification from fields that are allowed to update `StereoRuntimeConfig`, preventing spec-layer fields from being passed into `replace(self.config, **updates)`.
+- Added active settings snapshot merge/retention in `StereoRuntime`, and surfaced active high-level settings into runtime debug info when present.
+- Narrowed depth-provider rebuilds so only depth-provider-relevant fields (`depth_backend`, `model_id`, `export_height`, `export_width`) recreate the provider; render-size and synthesis-mode pipeline rebuild fields no longer replace the depth provider.
+- Changed host-facing `StereoRuntimeConfig.parallax_preset` default from `legacy` to `standard`, so the default normalized-depth runtime path now uses the explicit parallax budget model.
+- Preserved explicit `parallax_preset="legacy"` compatibility and added settings mapping for `Parallax Preset` / `Parallax Budget Preset` plus `Max Disparity Px` / `Max Disparity PX`.
+- Added tests covering spec-layer snapshot classification, non-config spec fields, active settings debug visibility, default standard parallax behavior, explicit legacy compatibility, and parallax settings mapping.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\adapter.py src\stereo_runtime\runtime.py src\stereo_runtime\settings_snapshot.py tests\test_adapter_config.py tests\test_settings_snapshot.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests/test_adapter_config.py tests/test_presets.py tests/test_synthesis.py tests/test_runtime.py tests/test_parallax.py tests/test_render_size.py tests/test_settings_snapshot.py tests/test_runtime_pipeline.py tests/test_runtime_openxr.py tests/test_openxr_state.py
+```
+
+Result:
+
+```text
+146 passed
+```
+
+Notes / next improvements:
+
+- `StereoConfig` and `OpenXRRenderConfig` still keep `legacy` defaults for low-level direct construction and compatibility; the host-facing `StereoRuntimeConfig` default now selects `standard`.
+- OpenXR direct path still exposes legacy debug/uniform names such as `openxr_ipd`, `openxr_depth_strength`, `openxr_stereo_scale`, and `openxr_max_shift_ratio` alongside normalized parallax debug fields.
+- GUI hot-save still needs a follow-up to emit full `RuntimeSettingsSnapshot` objects for live runtime settings instead of relying only on persisted settings and legacy callbacks.
+- `src/settings.yaml` already had unrelated local edits in the working tree and was not intentionally modified as part of this compliance pass.
 
 ### 2026-06-27 Streaming Encoder Profile Runtime Wiring
 
@@ -387,4 +454,3 @@ Commit title:
 ```text
 refactor: add runtime settings snapshot queue
 ```
-

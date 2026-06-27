@@ -7,6 +7,7 @@ from typing import Callable
 
 from stereo_runtime import stereo_config_for_preset
 from stereo_runtime.adapter import _normalize_hole_fill_mode, preset_for_runtime_mode
+from stereo_runtime.settings_snapshot import RuntimeSettingsSnapshot
 
 def read_yaml(path: str) -> dict:
     import yaml
@@ -136,6 +137,27 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
     return values
 
 
+def hot_reload_runtime_settings_snapshot(
+    settings_dict: dict,
+    config,
+    *,
+    version: int,
+    timestamp: float,
+) -> RuntimeSettingsSnapshot:
+    values = hot_reload_value_snapshot(settings_dict, config)
+    snapshot_values = {
+        key: value
+        for key, value in values.items()
+        if key in RuntimeSettingsSnapshot.__dataclass_fields__
+    }
+    return RuntimeSettingsSnapshot(
+        version=version,
+        timestamp=timestamp,
+        source="settings_yaml_hot_reload",
+        **snapshot_values,
+    )
+
+
 class StereoHotReloader:
     def __init__(
         self,
@@ -173,6 +195,12 @@ class StereoHotReloader:
             return False
         try:
             settings_dict = self.read_settings(self.settings_path)
+            snapshot = hot_reload_runtime_settings_snapshot(
+                settings_dict,
+                runtime.config,
+                version=int(mtime * 1_000_000_000),
+                timestamp=mtime,
+            )
             values = hot_reload_value_snapshot(settings_dict, runtime.config)
         except Exception as exc:
             print(f"[Main] Stereo hot reload skipped: {type(exc).__name__}: {exc}", flush=True)
@@ -182,23 +210,20 @@ class StereoHotReloader:
             self.last_mtime = mtime
             return False
 
-        runtime.config = replace(runtime.config, **values)
-        current = runtime.stereo_config
-        runtime.configure_stereo(
-            stereo_config_for_preset(
-                active_preset or runtime.config.stereo_preset or preset_for_runtime_mode(runtime.config.mode),
-                output_format=current.output_format,
-                overrides=runtime_stereo_overrides(runtime),
-            ),
-            reset_temporal=False,
-        )
-        on_openxr_config_update(
-            ipd=values["ipd"],
-            depth_strength=values["depth_strength"],
-            convergence=values["convergence"],
-            stereo_scale=values["stereo_scale"],
-            max_shift_ratio=values["max_shift_ratio"],
-        )
+        if hasattr(runtime, "apply_settings_snapshot"):
+            runtime.apply_settings_snapshot(snapshot, active_preset=active_preset)
+        else:
+            runtime.config = replace(runtime.config, **values)
+            current = runtime.stereo_config
+            runtime.configure_stereo(
+                stereo_config_for_preset(
+                    active_preset or runtime.config.stereo_preset or preset_for_runtime_mode(runtime.config.mode),
+                    output_format=current.output_format,
+                    overrides=runtime_stereo_overrides(runtime),
+                ),
+                reset_temporal=False,
+            )
+        on_openxr_config_update(snapshot=snapshot)
         self.last_values = values
         self.last_mtime = mtime
         if os.environ.get('D2S_DEBUG', '0') in ('1', 'true', 'yes', 'on'):

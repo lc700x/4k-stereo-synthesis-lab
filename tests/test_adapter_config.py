@@ -69,10 +69,40 @@ def test_runtime_config_maps_modes_and_stereo_params():
     assert preset_for_runtime_mode("image") == "still_image_hq"
     assert stereo.backend == "quality_4k"
     assert stereo.output_format == "full_sbs"
+    assert config.parallax_preset == "standard"
+    assert stereo.parallax_preset == "standard"
     assert stereo.depth_strength == 1.6
     assert stereo.temporal_strength == 0.6
     assert stereo.hole_fill == "fast"
     assert stereo.layers == 2
+
+
+def test_runtime_config_allows_explicit_legacy_parallax_compatibility():
+    config = StereoRuntimeConfig(
+        model_id="lc700x/Distill-Any-Depth-Base-hf",
+        model_dir=r"D:\Desktop2Stereo\models\models--lc700x--Distill-Any-Depth-Base-hf",
+        parallax_preset="legacy",
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert stereo.parallax_preset == "legacy"
+
+
+def test_runtime_config_from_d2s_settings_maps_parallax_budget_fields():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Parallax Preset": "strong",
+            "Max Disparity Px": 88,
+        },
+        device="cuda",
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.parallax_preset == "strong"
+    assert config.max_disparity_px == 88.0
+    assert stereo.parallax_preset == "strong"
+    assert stereo.max_disparity_px == 88.0
 
 
 def test_hq_quality_raises_layers_to_at_least_three():

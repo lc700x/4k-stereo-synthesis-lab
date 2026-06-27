@@ -68,6 +68,36 @@ def frame_size_from_output(output_frame, *, stream_mode):
     return width, height
 
 
+def frame_size_from_runtime_result(runtime_result, *, stream_mode):
+    display_size = getattr(runtime_result, "output_display_size", None)
+    if display_size is None:
+        debug = getattr(runtime_result, "debug_info", None) or {}
+        display_size = _parse_size_text(debug.get("runtime_output_display_size"))
+    if display_size is None:
+        display_size = frame_size_from_output(runtime_result.sbs, stream_mode=True)
+    width, height = display_size
+    if not stream_mode:
+        height = int(1280 / width * height)
+        width = 1280
+    return width, height
+
+
+def _parse_size_text(value):
+    if value is None:
+        return None
+    parts = str(value).strip().lower().split("x", 1)
+    if len(parts) != 2:
+        return None
+    try:
+        width = int(parts[0])
+        height = int(parts[1])
+    except ValueError:
+        return None
+    if width <= 0 or height <= 0:
+        return None
+    return width, height
+
+
 def start_viewer_streaming(window, config: ViewerRuntimeConfig, callbacks: ViewerRuntimeCallbacks):
     if config.stream_mode == "RTMP":
         if config.os_name == "Windows":
@@ -115,7 +145,7 @@ def run_viewer_mode(runtime_q, config: ViewerRuntimeConfig, callbacks: ViewerRun
     stats = FrameStats(low_percentile=0.1).start(time.perf_counter())
     latency_stats = LatencyStats()
     runtime_result, capture_start_time = runtime_q.get()
-    width, height = frame_size_from_output(runtime_result.sbs, stream_mode=config.stream_mode)
+    width, height = frame_size_from_runtime_result(runtime_result, stream_mode=config.stream_mode)
 
     window = StereoWindow(
         capture_mode=config.capture_mode,

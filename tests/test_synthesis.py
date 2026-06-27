@@ -132,6 +132,38 @@ def test_synthesis_debug_records_resolved_parallax_budget_override():
     assert result.debug_info["parallax_budget_preset"] == "legacy"
 
 
+def test_synthesis_debug_keeps_runtime_contract_scalars_without_debug_output():
+    rgb, depth = make_inputs(width=64, height=32)
+    config = StereoConfig(
+        backend="fast",
+        output_format="half_sbs",
+        debug_output=False,
+        temporal=True,
+        temporal_strength=0.35,
+        convergence=0.42,
+        hole_fill_mode="quality",
+        hole_fill_radius=5,
+        hole_fill_strength=0.8,
+        edge_threshold=0.07,
+        edge_dilation=3,
+        mask_feather_radius=2,
+        fused=False,
+    )
+
+    result = synthesize_stereo(rgb, depth, config, temporal_state=TemporalState())
+
+    assert result.debug_info["convergence"] == 0.42
+    assert result.debug_info["temporal_enabled"] == 1
+    assert result.debug_info["temporal_strength"] == 0.35
+    assert result.debug_info["hole_fill_mode"] == "quality"
+    assert result.debug_info["hole_fill_radius"] == 5
+    assert result.debug_info["hole_fill_strength"] == 0.8
+    assert result.debug_info["edge_threshold"] == 0.07
+    assert result.debug_info["edge_dilation"] == 3
+    assert result.debug_info["mask_feather_radius"] == 2
+    assert "shift_px" not in result.debug_info
+
+
 @pytest.mark.parametrize("backend", ["fast", "fast_plus", "quality_4k", "hq_4k"])
 def test_zero_stereo_scale_bypasses_all_binocular_difference(backend):
     rgb, depth = make_inputs(width=64, height=32)

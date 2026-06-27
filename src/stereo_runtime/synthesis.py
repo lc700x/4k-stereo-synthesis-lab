@@ -339,6 +339,15 @@ def synthesize_stereo(
             debug["temporal_reset_count"] = int(temporal_state.reset_count)
     debug["cross_eyed"] = int(config.cross_eyed)
     debug["anaglyph_method"] = config.anaglyph_method
+    debug["convergence"] = float(config.convergence)
+    debug["temporal_enabled"] = int(bool(config.temporal))
+    debug["temporal_strength"] = float(config.temporal_strength)
+    debug["hole_fill_mode"] = str(config.hole_fill_mode)
+    debug["hole_fill_radius"] = int(config.hole_fill_radius)
+    debug["hole_fill_strength"] = float(config.hole_fill_strength)
+    debug["edge_threshold"] = float(config.edge_threshold)
+    debug["edge_dilation"] = int(config.edge_dilation)
+    debug["mask_feather_radius"] = int(config.mask_feather_radius)
     debug["sbs_backend"] = sbs_backend(
         left,
         right,

@@ -1,7 +1,13 @@
 ﻿import queue
 from types import SimpleNamespace
 
-from app_runtime.runtime_context import build_capture_callbacks, build_runtime_pipeline_context, env_flag, initial_stereo_preset_state
+from app_runtime.runtime_context import (
+    _runtime_contract_from_settings,
+    build_capture_callbacks,
+    build_runtime_pipeline_context,
+    env_flag,
+    initial_stereo_preset_state,
+)
 from stereo_runtime.render_size import RenderSizeConfig
 
 
@@ -22,6 +28,25 @@ def test_initial_stereo_preset_state_falls_back_to_runtime_mode():
     config = SimpleNamespace(stereo_preset=None, mode="cinema")
 
     assert initial_stereo_preset_state(config) == (False, "cinema")
+
+
+def test_runtime_contract_from_settings_maps_targets_and_transports():
+    assert _runtime_contract_from_settings({"Run Mode": "OpenXR Link"}, os_name="Windows") == (
+        "openxr",
+        "openxr_swapchain",
+    )
+    assert _runtime_contract_from_settings({"Run Mode": "MJPEG Streamer"}, os_name="Windows") == (
+        "network_stream",
+        "encoded_stream",
+    )
+    assert _runtime_contract_from_settings({"Run Mode": "3D Monitor"}, os_name="Windows") == (
+        "local_display",
+        "local_fullscreen",
+    )
+    assert _runtime_contract_from_settings({"Run Mode": "Local Viewer"}, os_name="Windows") == (
+        "local_display",
+        "local_window",
+    )
 
 
 def test_build_capture_callbacks_wires_raw_queue_clear():
@@ -63,6 +88,8 @@ def test_build_runtime_pipeline_context_uses_app_context_queues():
         thread_latencies={},
         stereo_runtime=object(),
         render_size_config=render_size_config,
+        application_runtime_target="local_display",
+        output_transport="local_window",
     )
     shutdown = SimpleNamespace(is_set=lambda: False)
 
@@ -97,3 +124,5 @@ def test_build_runtime_pipeline_context_uses_app_context_queues():
     assert context.render_size_config is render_size_config
     assert context.run_mode == "Viewer"
     assert context.device == "cpu"
+    assert context.application_runtime_target == "local_display"
+    assert context.output_transport == "local_window"

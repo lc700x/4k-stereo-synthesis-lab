@@ -429,8 +429,34 @@ src/stereo_runtime/runtime.py:StereoRuntime
 主要方法：
 
 ```text
-process_rgb_frame(rgb_frame) -> StereoRuntimeResult(depth, left_eye, right_eye, sbs, debug_info, timing, provider_info)
-process_openxr_frame(rgb_frame, openxr_config) -> OpenXRRuntimeResult(depth, left_eye, right_eye, source_rgb, debug_info, timing, provider_info)
+process_rgb_frame(rgb_frame) -> StereoRuntimeResult(
+    depth,
+    left_eye,
+    right_eye,
+    sbs,
+    output_eye_size,
+    output_display_size,
+    output_format,
+    output_dtype,
+    output_pack_backend,
+    debug_info,
+    timing,
+    provider_info,
+)
+process_openxr_frame(rgb_frame, openxr_config) -> OpenXRRuntimeResult(
+    depth,
+    left_eye,
+    right_eye,
+    source_rgb,
+    output_eye_size,
+    output_display_size,
+    output_format,
+    output_dtype,
+    output_pack_backend,
+    debug_info,
+    timing,
+    provider_info,
+)
 openxr_result_from_stereo_result(stereo_result) -> OpenXRRuntimeResult
 ```
 
@@ -464,24 +490,28 @@ rgb_frame
 -> runtime_output_format = openxr_full_synthesis_eyes
 ```
 
-Debug/timing contract：
+Structured output contract：
 
 ```text
-depth_preprocess_ms
-depth_model_ms
-depth_postprocess_ms
-depth_total_ms
-synthesis_ms / openxr_render_ms
-pack_ms
-total_ms
-runtime_depth_backend
-runtime_output_format
-runtime_output_dtype
-runtime_output_eye_size
-runtime_output_display_size
-runtime_output_pack_backend
+output_eye_size: (width, height)
+output_display_size: (width, height)
+output_format
+output_dtype
+output_pack_backend
+timing
 provider_info
-cuda_memory_* when enabled
+```
+
+Compatibility debug contract:
+
+```text
+debug_info["runtime_output_format"]
+debug_info["runtime_output_dtype"]
+debug_info["runtime_output_eye_size"]
+debug_info["runtime_output_display_size"]
+debug_info["runtime_output_pack_backend"]
+debug_info["runtime_depth_backend"]
+debug_info["cuda_memory_*"] when enabled
 ```
 
 ## Stereo synthesis 设计
@@ -809,7 +839,19 @@ Debug log 应记录 warmup configs、resolution、elapsed_ms。
 
 ## Debug、日志和回归测试
 
-每帧 debug_info 应优先记录：
+每帧 result 应优先通过结构化字段暴露 host 需要消费的输出合同：
+
+```text
+output_format
+output_eye_size
+output_display_size
+output_dtype
+output_pack_backend
+timing
+provider_info
+```
+
+每帧 debug_info 继续保留诊断与兼容字段：
 
 ```text
 application_runtime_target
@@ -818,17 +860,22 @@ stereo_synthesis_mode
 capture_tool
 capture_size
 render_size
-runtime_output_format
-runtime_output_eye_size
-runtime_output_display_size
-runtime_output_dtype
 runtime_depth_backend
 sbs_backend
+packing_format
+transport
+output_transport
 hole_fill_backend
 occlusion_mask_backend
+depth_response
+convergence
+hole_fill_mode
+edge_threshold
+edge_dilation
+mask_feather_radius
+temporal_enabled
+temporal_strength
 active_settings_version
-timing
-provider_info
 ```
 
 现有测试/工具覆盖方向：

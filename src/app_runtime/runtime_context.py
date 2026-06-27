@@ -17,6 +17,7 @@ from stereo_runtime.presets import normalize_preset
 from stereo_runtime.render_size import RenderSizeConfig
 from stereo_runtime.session_helpers import StereoRuntimeLogger, StereoWarmupTracker
 from utils.breakdown import FPSBreakdown
+from utils.run_mode import resolve_run_mode
 
 
 @dataclass
@@ -44,6 +45,8 @@ class AppRuntimeContext:
     thread_latencies: dict
     capture_config: CaptureConfig
     render_size_config: RenderSizeConfig
+    application_runtime_target: str
+    output_transport: str
 
 
 def initial_stereo_preset_state(config):
@@ -63,6 +66,22 @@ def env_flag(name, default="0"):
         "yes",
         "on",
     )
+
+
+def _runtime_contract_from_settings(settings: dict, *, os_name: str):
+    run_mode_config = resolve_run_mode(
+        settings.get("Run Mode", "Local Viewer"),
+        os_name=os_name,
+        fix_viewer_aspect=bool(settings.get("Fix Viewer Aspect", True)),
+        lossless_scaling_support=bool(settings.get("Lossless Scaling Support", False)),
+    )
+    if run_mode_config.run_mode == "OpenXR":
+        return "openxr", "openxr_swapchain"
+    if run_mode_config.stream_mode:
+        return "network_stream", "encoded_stream"
+    if run_mode_config.use_3d_monitor:
+        return "local_display", "local_fullscreen"
+    return "local_display", "local_window"
 
 
 def create_runtime_context(
@@ -117,6 +136,7 @@ def create_runtime_context(
         "D2S_SOURCE_HEALTH_LOG",
         os.environ.get("D2S_OPENXR_DEBUG", "0"),
     )
+    application_runtime_target, output_transport = _runtime_contract_from_settings(settings, os_name=os_name)
     source_health = SourceHealth(
         enabled=source_health_log,
         run_mode=run_mode,
@@ -174,6 +194,8 @@ def create_runtime_context(
             os_name=os_name,
         ),
         render_size_config=render_size_config or RenderSizeConfig(),
+        application_runtime_target=application_runtime_target,
+        output_transport=output_transport,
     )
 
 
@@ -258,6 +280,8 @@ def build_runtime_pipeline_context(
         apply_stereo_hot_reload_if_needed=apply_stereo_hot_reload_if_needed,
         warmup_stereo_once_for_frame=warmup_stereo_once_for_frame,
         log_fast_plus_fused_runtime_state=log_fast_plus_fused_runtime_state,
+        application_runtime_target=getattr(app_context, "application_runtime_target", None),
+        output_transport=getattr(app_context, "output_transport", None),
         settings_update_q=app_context.settings_update_q,
         render_size_config=app_context.render_size_config,
     )

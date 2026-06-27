@@ -44,8 +44,10 @@ def frame_size_from_eye(first_eye):
 
 
 def frame_size_from_runtime_result(runtime_result):
-    debug = getattr(runtime_result, "debug_info", None) or {}
-    display_size = _parse_size_text(debug.get("runtime_output_display_size"))
+    display_size = getattr(runtime_result, "output_display_size", None)
+    if display_size is None:
+        debug = getattr(runtime_result, "debug_info", None) or {}
+        display_size = _parse_size_text(debug.get("runtime_output_display_size"))
     if display_size is not None:
         return display_size
     return frame_size_from_eye(runtime_result.left_eye)

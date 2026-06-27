@@ -159,21 +159,48 @@ def test_runtime_result_debug_info_tracks_active_settings_snapshot_fields():
             render_size_policy="scaled",
             stereo_render_scale=0.5,
             output_transport="openxr_swapchain",
+            presentation_flags={"eye_order": "left_first"},
+            debug_flags={"timing": True},
         )
     )
     assert runtime.depth_provider is provider
-    runtime.apply_settings_snapshot(RuntimeSettingsSnapshot(version=13, timestamp=2.0, depth_strength=1.2))
+    runtime.apply_settings_snapshot(
+        RuntimeSettingsSnapshot(
+            version=13,
+            timestamp=2.0,
+            depth_strength=1.2,
+            output_format="half_sbs",
+            max_disparity_px=42.0,
+            parallax_preset="strong",
+            convergence=0.15,
+            hole_fill_mode="balanced",
+        )
+    )
 
     result = runtime.process_openxr_frame(torch.zeros((1, 3, 2, 2), dtype=torch.float32))
 
     assert result.debug_info["active_settings_version"] == 13
     assert result.debug_info["hot_reload_class"] == SnapshotChangeClass.HOT_RELOAD.value
-    assert result.debug_info["hot_reload_changed_fields"] == ["depth_strength"]
+    assert result.debug_info["hot_reload_changed_fields"] == [
+        "convergence",
+        "depth_strength",
+        "hole_fill_mode",
+        "max_disparity_px",
+        "output_format",
+        "parallax_preset",
+    ]
     assert result.debug_info["runtime_quality_mode"] == "movie"
     assert result.debug_info["stereo_synthesis_mode"] == "full_synthesis_eyes"
     assert result.debug_info["render_size_policy"] == "scaled"
     assert result.debug_info["stereo_render_scale"] == 0.5
     assert result.debug_info["output_transport"] == "openxr_swapchain"
+    assert result.debug_info["presentation_flags"] == {"eye_order": "left_first"}
+    assert result.debug_info["debug_flags"] == {"timing": True}
+    assert result.debug_info["output_format"] == "half_sbs"
+    assert result.debug_info["max_disparity_px"] == 42.0
+    assert result.debug_info["parallax_preset"] == "strong"
+    assert result.debug_info["convergence"] == 0.15
+    assert result.debug_info["hole_fill_mode"] == "balanced"
 
 
 def test_runtime_result_debug_info_tracks_active_settings_version():

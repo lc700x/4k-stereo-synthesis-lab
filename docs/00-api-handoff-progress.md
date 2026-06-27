@@ -23,7 +23,7 @@ Desktop2Stereo engineering-spec refactor tasks from prompts/codex-refactor-promp
 Latest pushed task commit:
 
 ```text
-refactor: add streaming encoder profile runtime wiring
+refactor: route runtime settings through snapshots
 ```
 
 Canonical specs for current work:
@@ -46,6 +46,248 @@ Canonical specs for current work:
 - None currently recorded for this handoff.
 
 ## Current Status
+
+### 2026-06-27 Host Target And Transport Contract Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` runtime-result debug compliance pass by moving application target and transport labeling to the host/pipeline boundary, where the resolved GUI run mode is known.
+
+Implemented in this follow-up:
+
+- Added `application_runtime_target` and `output_transport` to `AppRuntimeContext` and `RuntimePipelineContext`.
+- Mapped GUI run modes to spec contracts: OpenXR Link -> `openxr/openxr_swapchain`, MJPEG/RTMP streamer -> `network_stream/encoded_stream`, 3D Monitor -> `local_display/local_fullscreen`, Local Viewer -> `local_display/local_window`.
+- Propagated these host-resolved fields into each runtime result `debug_info` after pipeline processing.
+- Updated runtime context and pipeline tests to cover the mapping and per-frame debug metadata.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\app_runtime\runtime_context.py src\stereo_runtime\pipeline.py tests\test_runtime_context.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_runtime_context.py tests\test_runtime_pipeline.py -q
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_runtime_context.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py tests\test_parallax.py tests\test_synthesis.py -q
+```
+
+Result:
+
+```text
+131 passed
+```
+
+### 2026-06-27 Runtime And Pipeline Contract Defaults Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` runtime-result debug compliance pass by filling contract fields that were previously present only when an active `RuntimeSettingsSnapshot` supplied them.
+
+Implemented in this follow-up:
+
+- Added runtime-config default debug fields for `runtime_quality_mode`, `output_format`, `max_disparity_px`, and `parallax_preset` in both RGB and OpenXR runtime result paths. Active snapshot values still take precedence.
+- Added pipeline-owned `render_size_policy` and `stereo_render_scale` debug fields when `RuntimePipelineLoop` has a `RenderSizeConfig`.
+- Updated runtime and pipeline tests to cover these defaults.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\stereo_runtime\pipeline.py tests\test_runtime.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_runtime_pipeline.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py -q
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py tests\test_parallax.py tests\test_synthesis.py -q
+```
+
+Result:
+
+```text
+125 passed
+```
+
+### 2026-06-27 Runtime Contract Scalar Debug Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` runtime/debug compliance pass by making the hot-reload and synthesis-control scalar fields stable in normal runtime debug metadata, not only in active-setting snapshots or quality-branch debug output.
+
+Implemented in this follow-up:
+
+- Added common `synthesize_stereo()` debug scalars for `convergence`, `temporal_enabled`, `temporal_strength`, `hole_fill_mode`, `hole_fill_radius`, `hole_fill_strength`, `edge_threshold`, `edge_dilation`, and `mask_feather_radius`.
+- Kept these fields scalar so they survive the existing non-`debug_output` pruning path.
+- Added a regression test proving the fast backend still exposes the spec contract scalars when tensor-heavy debug output is disabled.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\synthesis.py tests\test_synthesis.py
+src\python3\python.exe -m pytest tests\test_synthesis.py tests\test_runtime_openxr.py -q
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py tests\test_parallax.py tests\test_synthesis.py -q
+```
+
+Result:
+
+```text
+125 passed
+```
+
+### 2026-06-27 Packing And Transport Debug Contract Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` runtime-result debug compliance pass by exposing packing and transport as separate debug concepts. This keeps the spec-layer distinction explicit: packing is owned by stereo runtime output, while transport is owned by the host/pipeline path.
+
+Implemented in this follow-up:
+
+- Added `packing_format` to RGB and OpenXR runtime debug metadata.
+- Added pipeline-level `transport` debug metadata: `openxr_swapchain` for OpenXR runtime mode and `local_window` for the current viewer pipeline path.
+- Added tests covering local render-size pipeline transport, OpenXR pipeline transport, and runtime packing metadata.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\stereo_runtime\pipeline.py tests\test_runtime_openxr.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py tests\test_parallax.py -q
+```
+
+Result:
+
+```text
+67 passed
+```
+
+### 2026-06-27 Depth Response Debug Contract Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` parallax/debug compliance pass by making the active depth-response curve explicit in parallax debug metadata. Runtime results already exposed `resolved_max_disparity_px` and `parallax_budget_preset`; this follow-up adds the missing `depth_response` contract label.
+
+Implemented in this follow-up:
+
+- Added `depth_response_name="linear_clamp_convergence_v1"` to `ParallaxBudget`.
+- Added `depth_response` to `parallax_debug_info()`, which flows into synthesis and OpenXR render/debug paths.
+- Added tests covering the debug contract directly and through OpenXR runtime result debug info.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\parallax.py tests\test_parallax.py tests\test_runtime_openxr.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py tests\test_parallax.py -q
+```
+
+Result:
+
+```text
+67 passed
+```
+
+### 2026-06-27 OpenXR Direct Shader Uniform Bundle Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` OpenXR direct-path compliance pass by bundling adapter/runtime-generated legacy shader uniforms before the viewer consumes them. This keeps existing legacy scalar debug fields for compatibility, but gives the viewer a single structured source for RGB+depth direct shader parameters.
+
+Implemented in this follow-up:
+
+- Added `debug_info["openxr_legacy_shader_uniforms"]` from `OpenXRRenderConfig` in `StereoRuntime.process_openxr_frame()`.
+- Updated `CoreRuntimeEyeMixin._apply_runtime_rgb_depth_config()` to prefer the bundled shader uniform dict, with existing scattered `openxr_*` fields retained as fallback.
+- Added tests that verify runtime emits the bundle and the viewer prefers it even when legacy scattered fields contain stale values.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\xr_viewer\core_runtime_eye.py tests\test_runtime_openxr.py tests\test_openxr_runtime.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py -q
+```
+
+Result:
+
+```text
+61 passed
+```
+
+### 2026-06-27 OpenXR Result Conversion Struct Field Follow-up
+
+Continued the runtime-output metadata cleanup by removing a remaining production dependency on `debug_info["runtime_output_format"]` inside `openxr_result_from_stereo_result()`. The conversion now uses `StereoRuntimeResult.output_format` first when deciding whether a fast-plus half-SBS result should be split into full OpenXR eye textures.
+
+Implemented in this follow-up:
+
+- Updated `openxr_result_from_stereo_result()` to prefer structured `output_format`, with legacy debug metadata only as a fallback.
+- Updated `tests/test_runtime_openxr.py` so the split-half-SBS conversion still works when legacy `debug_info["runtime_output_format"]` is stale or wrong but `output_format` is correct.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py tests\test_runtime_openxr.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py -q
+```
+
+Result:
+
+```text
+60 passed
+```
+
+### 2026-06-27 Pipeline Render Size Debug Contract Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` compliance pass by making the pipeline-resolved coordinate system visible on each runtime result. `RuntimePipelineLoop` already resolves the actual render size before preprocessing; this follow-up records that boundary in result debug metadata so capture size and synthesis/render size are no longer inferred indirectly from tensor shapes.
+
+Implemented in this follow-up:
+
+- Added pipeline-level `capture_size` and `render_size` debug fields after runtime processing and before queueing the result.
+- Kept the logic outside `StereoRuntime` because capture/session sizing remains a host/pipeline responsibility; `StereoRuntime` still receives the already prepared render RGB.
+- Updated `tests/test_runtime_pipeline.py` to verify a 4K capture with scaled render policy records `capture_size=3840x2160` and `render_size=1920x1080`.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\pipeline.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py -q
+```
+
+Result:
+
+```text
+60 passed
+```
+
+### 2026-06-27 Active Settings Debug Contract Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` compliance pass by expanding the runtime result debug surface for active `RuntimeSettingsSnapshot` fields. This keeps the snapshot application path unchanged, but makes it easier to distinguish whether GUI/API settings reached runtime and which normalized-depth controls are active.
+
+Implemented in this follow-up:
+
+- Expanded active settings debug propagation to include `presentation_flags`, `debug_flags`, `output_format`, `max_disparity_px`, `parallax_preset`, `convergence`, and `hole_fill_mode`.
+- Preserved the existing session-restart boundary for `application_runtime_target` and capture source/target fields; this follow-up does not pretend those fields are hot-applied.
+- Updated `tests/test_settings_snapshot.py` to verify merged active snapshot fields survive a later hot reload and appear in `OpenXRRuntimeResult.debug_info`.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py tests\test_settings_snapshot.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py -q
+```
+
+Result:
+
+```text
+60 passed
+```
+
+### 2026-06-27 Runtime Output Metadata Struct Fields Follow-up
+
+Continued the render-size/runtime-output compliance pass by promoting host-consumed runtime output metadata from debug-only keys into structured runtime result fields. Local Viewer and OpenXR host startup now consume `output_display_size` directly, with legacy `debug_info["runtime_output_display_size"]` retained only as a compatibility fallback.
+
+Implemented in this follow-up:
+
+- Added structured output contract fields to `StereoRuntimeResult` and `OpenXRRuntimeResult`: `output_eye_size`, `output_display_size`, `output_format`, `output_dtype`, and `output_pack_backend`.
+- Kept legacy debug keys such as `runtime_output_eye_size` and `runtime_output_display_size` populated for existing logs/tests/compatibility.
+- Updated Local Viewer and OpenXR startup helpers to prefer `runtime_result.output_display_size`, then fall back to legacy debug metadata, then fall back to tensor shape inference.
+- Updated FPS breakdown runtime stats to prefer structured output fields before legacy debug metadata.
+- Added `frame_size_from_runtime_result()` in `src/viewer/viewer_runtime.py`.
+- Preserved the existing local viewer display policy that constrains non-stream local windows to 1280 px width while retaining the runtime output aspect ratio.
+- Added tests covering structured runtime result fields, structured viewer/OpenXR consumption, and legacy debug fallback behavior.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\stereo_runtime\session_helpers.py src\viewer\viewer.py src\viewer\viewer_runtime.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\openxr_runtime.py src\utils\breakdown.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_session_helpers.py tests\test_breakdown.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py -q
+```
+
+Result:
+
+```text
+50 passed
+```
+
+Notes / next improvements:
+
+- `debug_info` still carries the old runtime output keys for compatibility, but new host code should consume the structured fields.
+- The network-only legacy stream path still consumes the packed SBS tensor directly, which matches its transport contract and does not own a display window size.
 
 ### 2026-06-27 GUI Hot Reload Snapshot Compliance Follow-up
 

@@ -49,6 +49,8 @@ def test_runtime_process_rgb_frame_uses_persistent_provider_and_returns_report()
         stereo_quality="fast",
         output_format="half_sbs",
         temporal=False,
+        max_disparity_px=18.0,
+        parallax_preset="comfort",
     )
     runtime = StereoRuntime(config, depth_provider=provider, stats_window=4, collect_memory_stats=False)
     rgb = torch.rand(1, 3, 8, 12)
@@ -68,6 +70,10 @@ def test_runtime_process_rgb_frame_uses_persistent_provider_and_returns_report()
     assert first.timing["synthesis_ms"] >= 0.0
     assert first.debug_info["runtime_depth_backend"] == "pytorch_cuda"
     assert first.debug_info["runtime_output_format"] == "half_sbs"
+    assert first.debug_info["runtime_quality_mode"] == "fast"
+    assert first.debug_info["output_format"] == "half_sbs"
+    assert first.debug_info["max_disparity_px"] == 18.0
+    assert first.debug_info["parallax_preset"] == "comfort"
     assert first.provider_info["provider"] == "fake"
     assert second.timing["total_ms"] >= 0.0
 

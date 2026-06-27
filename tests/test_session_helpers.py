@@ -72,7 +72,8 @@ def test_stereo_warmup_tracker_runs_for_openxr_full_synthesis_preset():
     assert runtime.warmup_calls == 1
 
 
-def test_stereo_runtime_logger_deduplicates_mode_logs(capsys):
+def test_stereo_runtime_logger_deduplicates_mode_logs(capsys, monkeypatch):
+    monkeypatch.setenv("D2S_DEBUG", "1")
     runtime = FakeRuntime()
     logger = StereoRuntimeLogger(runtime, active_preset_getter=lambda: "cinema")
 
@@ -84,7 +85,8 @@ def test_stereo_runtime_logger_deduplicates_mode_logs(capsys):
     assert "preset=cinema" in output
 
 
-def test_stereo_runtime_logger_deduplicates_fused_logs(capsys):
+def test_stereo_runtime_logger_deduplicates_fused_logs(capsys, monkeypatch):
+    monkeypatch.setenv("D2S_DEBUG", "1")
     runtime = FakeRuntime()
     logger = StereoRuntimeLogger(runtime, active_preset_getter=lambda: "cinema")
     result = SimpleNamespace(
@@ -106,7 +108,8 @@ def test_stereo_runtime_logger_deduplicates_fused_logs(capsys):
     assert output.count("[Main] Stereo runtime output:") == 1
     assert "fast_plus_fused=triton" in output
 
-def test_stereo_runtime_logger_openxr_output_log(capsys):
+def test_stereo_runtime_logger_openxr_output_log(capsys, monkeypatch):
+    monkeypatch.setenv("D2S_DEBUG", "1")
     runtime = FakeRuntime()
     logger = StereoRuntimeLogger(runtime, active_preset_getter=lambda: "cinema")
     result = SimpleNamespace(
@@ -128,3 +131,27 @@ def test_stereo_runtime_logger_openxr_output_log(capsys):
     assert "eye=3840x2160" in output
     assert "fast_plus_fused" not in output
     assert "pack=" not in output
+
+
+def test_stereo_runtime_logger_prefers_structured_output_fields(capsys, monkeypatch):
+    monkeypatch.setenv("D2S_DEBUG", "1")
+    runtime = FakeRuntime()
+    logger = StereoRuntimeLogger(runtime, active_preset_getter=lambda: "cinema")
+    result = SimpleNamespace(
+        output_format="openxr_eye_views",
+        output_dtype="uint8",
+        output_eye_size=(3840, 2160),
+        debug_info={
+            "backend": "openxr_roll_adaptive_grid_sample",
+            "runtime_output_format": "legacy_format",
+            "runtime_output_dtype": "legacy_dtype",
+            "runtime_output_eye_size": "1x1",
+        },
+    )
+
+    logger.log_fast_plus_fused_runtime_state(result)
+
+    output = capsys.readouterr().out
+    assert "output=openxr_eye_views" in output
+    assert "dtype=uint8" in output
+    assert "eye=3840x2160" in output

@@ -57,6 +57,16 @@ def test_frame_size_from_eye_uses_height_width_shape_for_array_like():
 def test_frame_size_from_runtime_result_prefers_display_size_metadata():
     result = SimpleNamespace(
         left_eye=SimpleNamespace(shape=(1, 3, 2160, 1920)),
+        output_display_size=(3840, 2160),
+        debug_info={"runtime_output_display_size": "1920x1080"},
+    )
+
+    assert frame_size_from_runtime_result(result) == (3840, 2160)
+
+
+def test_frame_size_from_runtime_result_supports_legacy_debug_display_size():
+    result = SimpleNamespace(
+        left_eye=SimpleNamespace(shape=(1, 3, 2160, 1920)),
         debug_info={"runtime_output_display_size": "3840x2160"},
     )
 
@@ -110,7 +120,8 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
         (
             SimpleNamespace(
                 left_eye=SimpleNamespace(shape=(1, 3, 2160, 1920)),
-                debug_info={"runtime_output_display_size": "3840x2160"},
+                output_display_size=(3840, 2160),
+                debug_info={"runtime_output_display_size": "1920x1080"},
             ),
             123.0,
         )
@@ -158,3 +169,29 @@ def test_runtime_eye_tensor_hwc_u8_scales_near_normalized_float_range(monkeypatc
     assert tuple(out.shape) == (2, 2, 3)
     assert int(out[1, 1, 0]) == 127
     assert int(out[0, 0, 0]) == 255
+
+
+def test_runtime_rgb_depth_config_prefers_legacy_shader_uniform_bundle(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
+
+    viewer = CoreRuntimeEyeMixin()
+    viewer._apply_runtime_rgb_depth_config(
+        {
+            "openxr_legacy_shader_uniforms": {
+                "convergence": 0.25,
+                "ipd": 0.061,
+                "stereo_scale": 0.42,
+                "max_shift_ratio": 0.07,
+            },
+            "openxr_convergence": 9.0,
+            "openxr_ipd": 9.0,
+            "openxr_stereo_scale": 9.0,
+            "openxr_max_shift_ratio": 9.0,
+        }
+    )
+
+    assert viewer.convergence == 0.25
+    assert viewer.ipd_uv == 0.061
+    assert viewer._runtime_rgb_depth_stereo_scale == 0.42
+    assert viewer._runtime_rgb_depth_max_shift_ratio == 0.07

@@ -169,6 +169,11 @@ class StereoRuntimeResult:
     left_eye: torch.Tensor
     right_eye: torch.Tensor
     sbs: torch.Tensor
+    output_eye_size: tuple[int, int] | None = None
+    output_display_size: tuple[int, int] | None = None
+    output_format: str | None = None
+    output_dtype: str | None = None
+    output_pack_backend: str | None = None
     debug_info: dict[str, Any] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
     provider_info: dict[str, Any] = field(default_factory=dict)
@@ -180,6 +185,11 @@ class OpenXRRuntimeResult:
     left_eye: torch.Tensor
     right_eye: torch.Tensor
     source_rgb: torch.Tensor | None = None
+    output_eye_size: tuple[int, int] | None = None
+    output_display_size: tuple[int, int] | None = None
+    output_format: str | None = None
+    output_dtype: str | None = None
+    output_pack_backend: str | None = None
     debug_info: dict[str, Any] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
     provider_info: dict[str, Any] = field(default_factory=dict)
@@ -190,7 +200,8 @@ def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> Open
     left_eye = stereo_result.left_eye
     right_eye = stereo_result.right_eye
     display_size = _runtime_frame_size(left_eye)
-    if debug.get("runtime_output_format") == "half_sbs" and _should_split_half_sbs_for_openxr(debug):
+    stereo_output_format = getattr(stereo_result, "output_format", None) or debug.get("runtime_output_format")
+    if stereo_output_format == "half_sbs" and _should_split_half_sbs_for_openxr(debug):
         split_eyes = _split_half_sbs_frame(stereo_result.sbs)
         if split_eyes is not None:
             left_eye, right_eye = split_eyes
@@ -202,12 +213,19 @@ def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> Open
     debug["runtime_output_eye_size"] = _runtime_eye_size(left_eye)
     debug["runtime_output_display_size"] = _runtime_size_text(display_size)
     debug.setdefault("runtime_output_pack_backend", "none")
+    output_eye_size = _runtime_frame_size(left_eye)
+    output_display_size = display_size
 
     return OpenXRRuntimeResult(
         depth=stereo_result.depth,
         left_eye=left_eye,
         right_eye=right_eye,
         source_rgb=None,
+        output_eye_size=output_eye_size,
+        output_display_size=output_display_size,
+        output_format="openxr_full_synthesis_eyes",
+        output_dtype=debug["runtime_output_dtype"],
+        output_pack_backend=debug.get("runtime_output_pack_backend"),
         debug_info=debug,
         timing=dict(stereo_result.timing or {}),
         provider_info=dict(stereo_result.provider_info or {}),
@@ -374,10 +392,24 @@ def _add_active_settings_debug_info(debug: dict[str, Any], snapshot: RuntimeSett
         "render_size_policy",
         "stereo_render_scale",
         "output_transport",
+        "presentation_flags",
+        "debug_flags",
+        "output_format",
+        "max_disparity_px",
+        "parallax_preset",
+        "convergence",
+        "hole_fill_mode",
     ):
         value = getattr(snapshot, field_name)
         if value is not None:
             debug[field_name] = value
+
+
+def _add_runtime_config_debug_info(debug: dict[str, Any], config: StereoConfig) -> None:
+    debug.setdefault("runtime_quality_mode", str(config.backend))
+    debug.setdefault("output_format", str(config.output_format))
+    debug.setdefault("max_disparity_px", None if config.max_disparity_px is None else float(config.max_disparity_px))
+    debug.setdefault("parallax_preset", str(config.parallax_preset))
 
 
 class StereoRuntime:
@@ -587,11 +619,13 @@ class StereoRuntime:
         debug = dict(stereo.debug_info)
         debug["runtime_depth_backend"] = self.depth_config.backend
         debug["runtime_output_format"] = self.stereo_config.output_format
+        debug["packing_format"] = self.stereo_config.output_format
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         debug["active_settings_version"] = int(self.active_settings_version)
         debug["hot_reload_class"] = self.last_settings_change_class
         debug["hot_reload_changed_fields"] = list(self.last_settings_changed_fields)
         _add_active_settings_debug_info(debug, self.active_settings_snapshot)
+        _add_runtime_config_debug_info(debug, self.stereo_config)
         _add_preprocess_debug_info(debug, rgb_frame)
         if memory:
             debug.update(memory)
@@ -613,7 +647,7 @@ class StereoRuntime:
                 debug["runtime_output_dtype"] = "uint8"
             else:
                 debug["runtime_output_dtype"] = str(sbs.dtype).replace("torch.", "")
-        _add_runtime_output_size_debug_info(debug, stereo.left_eye, sbs)
+        output_eye_size, output_display_size = _add_runtime_output_size_debug_info(debug, stereo.left_eye, sbs)
         pack_ms = (time.perf_counter() - pack_start) * 1000.0
         timing["pack_ms"] = float(pack_ms)
         if total_ms >= float(os.environ.get("D2S_SLOW_RUNTIME_LOG_MS", "200") or "200"):
@@ -645,6 +679,11 @@ class StereoRuntime:
             left_eye=stereo.left_eye,
             right_eye=stereo.right_eye,
             sbs=sbs,
+            output_eye_size=output_eye_size,
+            output_display_size=output_display_size,
+            output_format=str(debug.get("runtime_output_format")),
+            output_dtype=str(debug.get("runtime_output_dtype")),
+            output_pack_backend=_optional_debug_str(debug.get("runtime_output_pack_backend")),
             debug_info=debug,
             timing=timing,
             provider_info=self.provider_report(),
@@ -712,12 +751,14 @@ class StereoRuntime:
         debug = dict(render_backend)
         debug["runtime_depth_backend"] = self.depth_config.backend
         debug["runtime_output_format"] = output_format
+        debug["packing_format"] = "none"
         debug["active_settings_version"] = int(self.active_settings_version)
         debug["runtime_output_dtype"] = _runtime_eye_dtype(left_eye, right_eye)
         debug["hot_reload_class"] = self.last_settings_change_class
         debug["hot_reload_changed_fields"] = list(self.last_settings_changed_fields)
         _add_active_settings_debug_info(debug, self.active_settings_snapshot)
-        _add_runtime_output_size_debug_info(debug, left_eye, left_eye)
+        _add_runtime_config_debug_info(debug, self.stereo_config)
+        output_eye_size, output_display_size = _add_runtime_output_size_debug_info(debug, left_eye, left_eye)
         debug["runtime_output_pack_backend"] = pack_backend
         if openxr_config is not None:
             _add_openxr_config_debug_info(debug, openxr_config, left_eye)
@@ -746,6 +787,11 @@ class StereoRuntime:
             left_eye=left_eye,
             right_eye=right_eye,
             source_rgb=source_rgb,
+            output_eye_size=output_eye_size,
+            output_display_size=output_display_size,
+            output_format=str(debug.get("runtime_output_format")),
+            output_dtype=str(debug.get("runtime_output_dtype")),
+            output_pack_backend=_optional_debug_str(debug.get("runtime_output_pack_backend")),
             debug_info=debug,
             timing=timing,
             provider_info=self.provider_report(),
@@ -933,9 +979,20 @@ def _validate_runtime_rgb_frame(rgb_frame: Any) -> torch.Tensor:
     return rgb_frame
 
 
-def _add_runtime_output_size_debug_info(debug: dict[str, Any], eye_frame: torch.Tensor, display_frame: torch.Tensor) -> None:
-    debug["runtime_output_eye_size"] = runtime_output_size_text(_runtime_frame_size(eye_frame))
-    debug["runtime_output_display_size"] = runtime_output_size_text(_runtime_frame_size(display_frame))
+def _add_runtime_output_size_debug_info(
+    debug: dict[str, Any],
+    eye_frame: torch.Tensor,
+    display_frame: torch.Tensor,
+) -> tuple[tuple[int, int] | None, tuple[int, int] | None]:
+    output_eye_size = _runtime_frame_size(eye_frame)
+    output_display_size = _runtime_frame_size(display_frame)
+    debug["runtime_output_eye_size"] = runtime_output_size_text(output_eye_size)
+    debug["runtime_output_display_size"] = runtime_output_size_text(output_display_size)
+    return output_eye_size, output_display_size
+
+
+def _optional_debug_str(value: Any) -> str | None:
+    return None if value is None else str(value)
 
 
 def _add_openxr_config_debug_info(debug: dict[str, Any], config: OpenXRRenderConfig, eye_frame: torch.Tensor) -> None:
@@ -965,6 +1022,15 @@ def _add_openxr_config_debug_info(debug: dict[str, Any], config: OpenXRRenderCon
     if config.max_disparity_px is not None:
         debug["openxr_max_disparity_px"] = float(config.max_disparity_px)
     debug["openxr_parallax_preset"] = str(config.parallax_preset)
+    debug["openxr_legacy_shader_uniforms"] = {
+        "ipd": float(config.ipd),
+        "depth_strength": float(config.depth_strength),
+        "stereo_scale": float(config.stereo_scale),
+        "max_shift_ratio": float(config.max_shift_ratio),
+        "convergence": float(config.convergence),
+        "max_disparity_px": None if config.max_disparity_px is None else float(config.max_disparity_px),
+        "parallax_preset": str(config.parallax_preset),
+    }
 
 
 def _add_preprocess_debug_info(debug: dict[str, Any], rgb_frame: torch.Tensor) -> None:

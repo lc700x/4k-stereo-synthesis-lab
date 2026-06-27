@@ -112,13 +112,20 @@ class StereoRuntimeLogger:
 
     def log_fast_plus_fused_runtime_state(self, runtime_result) -> None:
         debug = getattr(runtime_result, "debug_info", None) or {}
-        output_format = str(debug.get("runtime_output_format", "unknown"))
+        output_format = str(getattr(runtime_result, "output_format", None) or debug.get("runtime_output_format", "unknown"))
+        output_dtype = str(getattr(runtime_result, "output_dtype", None) or debug.get("runtime_output_dtype", "unknown"))
+        output_pack_backend = str(
+            getattr(runtime_result, "output_pack_backend", None) or debug.get("runtime_output_pack_backend", "n/a")
+        )
         if output_format == "openxr_eye_views":
+            output_eye_size = _runtime_output_size_label(
+                getattr(runtime_result, "output_eye_size", None) or debug.get("runtime_output_eye_size", "unknown")
+            )
             state = (
                 str(debug.get("backend", "unknown")),
                 output_format,
-                str(debug.get("runtime_output_dtype", "unknown")),
-                str(debug.get("runtime_output_eye_size", "unknown")),
+                output_dtype,
+                output_eye_size,
             )
             if state == self.last_fused_state:
                 return
@@ -141,8 +148,8 @@ class StereoRuntimeLogger:
         state = (
             str(debug.get("backend", "unknown")),
             output_format,
-            str(debug.get("runtime_output_dtype", "unknown")),
-            str(debug.get("runtime_output_pack_backend", "n/a")),
+            output_dtype,
+            output_pack_backend,
             str(debug.get("fast_plus_fused_backend", "n/a")),
             str(debug.get("fast_plus_fused_skip", "n/a")),
             str(debug.get("fast_plus_fused_temporal_bypass", "n/a")),
@@ -166,3 +173,12 @@ class StereoRuntimeLogger:
                 f" convergence={float(debug.get('openxr_convergence', 0.0)):.3f}",
                 flush=True,
             )
+
+
+def _runtime_output_size_label(value) -> str:
+    if isinstance(value, (tuple, list)) and len(value) == 2:
+        try:
+            return f"{int(value[0])}x{int(value[1])}"
+        except (TypeError, ValueError):
+            pass
+    return str(value)

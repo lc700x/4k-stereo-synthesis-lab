@@ -7,6 +7,7 @@ from typing import Any
 DepthResponseFn = Callable[[Any], Any]
 
 PARALLAX_RESOLVER_VERSION = 1
+DEPTH_RESPONSE_NAME = "linear_clamp_convergence_v1"
 
 PARALLAX_BUDGET_TABLE: dict[str, dict[int, float]] = {
     "comfort": {720: 24.0, 1080: 32.0, 1440: 48.0, 2160: 64.0},
@@ -36,6 +37,7 @@ class ParallaxBudget:
     max_disparity_px: float
     depth_response: DepthResponseFn
     preset: str
+    depth_response_name: str = DEPTH_RESPONSE_NAME
     resolver_version: int = PARALLAX_RESOLVER_VERSION
 
 
@@ -77,6 +79,7 @@ def resolve_parallax_budget(
         max_disparity_px=float(resolved_max_disparity),
         depth_response=depth_response,
         preset=normalized_preset,
+        depth_response_name=DEPTH_RESPONSE_NAME,
     )
 
 
@@ -84,6 +87,7 @@ def parallax_debug_info(budget: ParallaxBudget) -> dict[str, float | int | str]:
     return {
         "resolved_max_disparity_px": float(budget.max_disparity_px),
         "parallax_budget_preset": str(budget.preset),
+        "depth_response": str(budget.depth_response_name),
         "parallax_resolver_version": int(budget.resolver_version),
     }
 

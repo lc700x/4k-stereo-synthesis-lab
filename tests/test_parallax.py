@@ -4,7 +4,7 @@ import pytest
 import torch
 
 from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px
-from stereo_runtime.parallax import PARALLAX_BUDGET_TABLE, resolve_parallax_budget
+from stereo_runtime.parallax import PARALLAX_BUDGET_TABLE, parallax_debug_info, resolve_parallax_budget
 
 
 def test_resolve_parallax_budget_uses_short_side_table():
@@ -17,6 +17,23 @@ def test_resolve_parallax_budget_uses_short_side_table():
 
     assert budget.max_disparity_px == 48.0
     assert budget.preset == "standard"
+    assert budget.depth_response_name == "linear_clamp_convergence_v1"
+
+
+def test_parallax_debug_info_records_depth_response_contract():
+    budget = resolve_parallax_budget(
+        render_width=1920,
+        render_height=1080,
+        preset="standard",
+        convergence=0.0,
+    )
+
+    debug = parallax_debug_info(budget)
+
+    assert debug["resolved_max_disparity_px"] == 48.0
+    assert debug["parallax_budget_preset"] == "standard"
+    assert debug["depth_response"] == "linear_clamp_convergence_v1"
+    assert debug["parallax_resolver_version"] == 1
 
 
 def test_resolve_parallax_budget_interpolates_between_resolution_levels():

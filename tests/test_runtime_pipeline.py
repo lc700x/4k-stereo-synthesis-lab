@@ -303,6 +303,8 @@ def test_runtime_pipeline_resolves_4k_render_size_before_preprocess():
         apply_stereo_hot_reload_if_needed=lambda: None,
         warmup_stereo_once_for_frame=lambda frame: None,
         log_fast_plus_fused_runtime_state=lambda result: None,
+        application_runtime_target="local_display",
+        output_transport="local_window",
         render_size_config=RenderSizeConfig(
             policy=RenderSizePolicy.SCALED,
             scale_factor=0.5,
@@ -313,8 +315,15 @@ def test_runtime_pipeline_resolves_4k_render_size_before_preprocess():
     RuntimePipelineLoop(context).run()
 
     assert seen == {"frame": "raw", "size": (1920, 1080)}
-    _runtime_result, capture_start_time = runtime_q.get_nowait()
+    runtime_result, capture_start_time = runtime_q.get_nowait()
     assert capture_start_time == 10.0
+    assert runtime_result.debug_info["capture_size"] == "3840x2160"
+    assert runtime_result.debug_info["render_size"] == "1920x1080"
+    assert runtime_result.debug_info["render_size_policy"] == "scaled"
+    assert runtime_result.debug_info["stereo_render_scale"] == 0.5
+    assert runtime_result.debug_info["transport"] == "local_window"
+    assert runtime_result.debug_info["application_runtime_target"] == "local_display"
+    assert runtime_result.debug_info["output_transport"] == "local_window"
 
 
 def test_runtime_pipeline_passes_current_openxr_config_to_runtime():
@@ -364,6 +373,7 @@ def test_runtime_pipeline_passes_current_openxr_config_to_runtime():
     assert runtime.openxr_config is openxr_config
     runtime_result, _capture_start_time = runtime_q.get_nowait()
     assert runtime_result.debug_info["runtime_output_format"] == "openxr_rgb_depth"
+    assert runtime_result.debug_info["transport"] == "openxr_swapchain"
     assert runtime.openxr_calls == 1
     assert runtime.rgb_calls == 0
 

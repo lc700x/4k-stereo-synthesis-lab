@@ -8,7 +8,7 @@ from typing import Callable
 
 from capture.types import CapturedFrame
 
-from .render_size import RenderSizeConfig, resolve_render_size
+from .render_size import RenderSizeConfig, resolve_render_size, runtime_output_size_text
 from .runtime import openxr_result_from_stereo_result
 from .settings_snapshot import RuntimeSettingsRestartRequired
 
@@ -46,6 +46,8 @@ class RuntimePipelineContext:
     apply_stereo_hot_reload_if_needed: Callable[[], None]
     warmup_stereo_once_for_frame: Callable[[object], None]
     log_fast_plus_fused_runtime_state: Callable[[object], None]
+    application_runtime_target: str | None = None
+    output_transport: str | None = None
     settings_update_q: object | None = None
     render_size_config: RenderSizeConfig | None = None
 
@@ -132,6 +134,31 @@ def _attach_capture_debug(runtime_result, captured_frame: CapturedFrame | None, 
     debug_info = getattr(runtime_result, "debug_info", None)
     if isinstance(debug_info, dict):
         debug_info.update(_capture_debug_fields(captured_frame, frame_rgb))
+
+
+def _attach_pipeline_debug(runtime_result, *, capture_size, render_size, run_mode, render_size_config) -> None:
+    debug_info = getattr(runtime_result, "debug_info", None)
+    if not isinstance(debug_info, dict):
+        return
+    debug_info["capture_size"] = _size_debug_text(capture_size)
+    debug_info["render_size"] = _size_debug_text(render_size)
+    debug_info["transport"] = _transport_debug_label(run_mode)
+    if render_size_config is not None:
+        debug_info["render_size_policy"] = render_size_config.policy.value
+        debug_info["stereo_render_scale"] = float(render_size_config.scale_factor)
+
+
+def _transport_debug_label(run_mode) -> str:
+    return "openxr_swapchain" if run_mode == "OpenXR" else "local_window"
+
+
+def _size_debug_text(size) -> str:
+    if isinstance(size, (tuple, list)) and len(size) == 2:
+        try:
+            return runtime_output_size_text((int(size[0]), int(size[1])))
+        except (TypeError, ValueError):
+            pass
+    return str(size)
 
 
 class RuntimePipelineLoop:
@@ -238,6 +265,19 @@ class RuntimePipelineLoop:
                     if ctx.run_mode == "OpenXR":
                         runtime_result = openxr_result_from_stereo_result(runtime_result)
                 ctx.breakdown_add_time("rt_call", time.perf_counter() - runtime_call_start_time)
+                _attach_pipeline_debug(
+                    runtime_result,
+                    capture_size=size,
+                    render_size=render_size,
+                    run_mode=ctx.run_mode,
+                    render_size_config=ctx.render_size_config,
+                )
+                debug_info = getattr(runtime_result, "debug_info", None)
+                if isinstance(debug_info, dict):
+                    if ctx.application_runtime_target:
+                        debug_info["application_runtime_target"] = ctx.application_runtime_target
+                    if ctx.output_transport:
+                        debug_info["output_transport"] = ctx.output_transport
                 _attach_capture_debug(runtime_result, captured_frame, frame_rgb)
                 ctx.breakdown_add_runtime_timing(runtime_result)
                 ctx.log_fast_plus_fused_runtime_state(runtime_result)

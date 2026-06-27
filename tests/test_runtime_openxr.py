@@ -62,6 +62,11 @@ def test_process_openxr_frame_defaults_to_rgb_depth_runtime_result():
     assert result.debug_info["runtime_output_eye_size"] == "16x12"
     assert result.debug_info["runtime_output_display_size"] == "16x12"
     assert result.debug_info["backend"] == "openxr_viewer_shader_dibr"
+    assert result.output_format == "openxr_rgb_depth"
+    assert result.output_dtype == "float32"
+    assert result.output_eye_size == (16, 12)
+    assert result.output_display_size == (16, 12)
+    assert result.output_pack_backend == "none"
 
 
 def test_process_openxr_frame_debug_info_carries_preprocess_device_metadata():
@@ -80,6 +85,8 @@ def test_process_openxr_frame_debug_info_carries_preprocess_device_metadata():
     assert result.debug_info["preprocess_device_transfer"] == "cpu->cpu"
     assert result.debug_info["runtime_output_eye_size"] == "16x12"
     assert result.debug_info["runtime_output_display_size"] == "16x12"
+    assert result.output_eye_size == (16, 12)
+    assert result.output_display_size == (16, 12)
 
 
 def test_runtime_debug_info_carries_preprocess_device_metadata():
@@ -107,6 +114,11 @@ def test_runtime_debug_info_carries_preprocess_device_metadata():
     assert result.debug_info["preprocess_device_transfer"] == "cpu->cpu"
     assert result.debug_info["runtime_output_eye_size"] == "16x12"
     assert result.debug_info["runtime_output_display_size"] == "16x12"
+    assert result.debug_info["packing_format"] == "half_sbs"
+    assert result.output_format == "half_sbs"
+    assert result.output_dtype in {"float32", "uint8"}
+    assert result.output_eye_size == (16, 12)
+    assert result.output_display_size == (16, 12)
 
 
 def test_runtime_debug_info_records_eye_and_display_sizes_for_sbs_output():
@@ -125,6 +137,8 @@ def test_runtime_debug_info_records_eye_and_display_sizes_for_sbs_output():
 
     assert result.debug_info["runtime_output_eye_size"] == "16x12"
     assert result.debug_info["runtime_output_display_size"] == "32x12"
+    assert result.output_eye_size == (16, 12)
+    assert result.output_display_size == (32, 12)
 
 
 def test_openxr_result_from_stereo_result_keeps_full_size_eye_views_for_quality_half_sbs():
@@ -157,6 +171,11 @@ def test_openxr_result_from_stereo_result_keeps_full_size_eye_views_for_quality_
     assert result.debug_info["runtime_output_eye_size"] == "4x2"
     assert result.debug_info["runtime_output_display_size"] == "4x2"
     assert result.debug_info["runtime_output_pack_backend"] == "none"
+    assert result.output_format == "openxr_full_synthesis_eyes"
+    assert result.output_dtype == "float32"
+    assert result.output_eye_size == (4, 2)
+    assert result.output_display_size == (4, 2)
+    assert result.output_pack_backend == "none"
 
 
 def test_openxr_result_from_stereo_result_splits_fused_half_sbs_eye_views_and_preserves_display_size():
@@ -169,9 +188,10 @@ def test_openxr_result_from_stereo_result_splits_fused_half_sbs_eye_views_and_pr
         left_eye=source_left,
         right_eye=source_right,
         sbs=sbs,
+        output_format="half_sbs",
         debug_info={
             "backend": "fast_plus",
-            "runtime_output_format": "half_sbs",
+            "runtime_output_format": "legacy_wrong_format",
             "fast_plus_fused_backend": "triton_half_sbs_uint8",
         },
         timing={"total_ms": 5.0},
@@ -187,6 +207,11 @@ def test_openxr_result_from_stereo_result_splits_fused_half_sbs_eye_views_and_pr
     assert result.debug_info["runtime_output_eye_size"] == "4x2"
     assert result.debug_info["runtime_output_display_size"] == "8x2"
     assert result.debug_info["runtime_output_pack_backend"] == "split_half_sbs"
+    assert result.output_format == "openxr_full_synthesis_eyes"
+    assert result.output_dtype == "uint8"
+    assert result.output_eye_size == (4, 2)
+    assert result.output_display_size == (8, 2)
+    assert result.output_pack_backend == "split_half_sbs"
 
 
 def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
@@ -207,6 +232,15 @@ def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
     assert result.debug_info["openxr_ipd"] == 0.064
     assert result.debug_info["openxr_stereo_scale"] == 0.35
     assert result.debug_info["openxr_max_shift_ratio"] == 0.0
+    assert result.debug_info["openxr_legacy_shader_uniforms"] == {
+        "ipd": 0.064,
+        "depth_strength": 2.0,
+        "stereo_scale": 0.35,
+        "max_shift_ratio": 0.0,
+        "convergence": 0.0,
+        "max_disparity_px": None,
+        "parallax_preset": "legacy",
+    }
 
 
 def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
@@ -234,6 +268,7 @@ def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
 
     assert result.debug_info["resolved_max_disparity_px"] == 18.0
     assert result.debug_info["parallax_budget_preset"] == "standard"
+    assert result.debug_info["depth_response"] == "linear_clamp_convergence_v1"
     assert result.debug_info["parallax_resolver_version"] == 1
     assert result.debug_info["openxr_max_disparity_px"] == 18.0
     assert result.debug_info["openxr_parallax_preset"] == "standard"
@@ -242,9 +277,13 @@ def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
 def test_openxr_rgb_depth_viewer_keeps_ipd_separate_from_stereo_scale():
     source = (ROOT / "src" / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
 
-    assert 'self.ipd_uv = max(0.0, float(debug_info["openxr_ipd"]))' in source
-    assert "self._runtime_rgb_depth_stereo_scale = max(0.0, float(debug_info.get(\"openxr_stereo_scale\", 1.0)))" in source
-    assert "self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(debug_info.get(\"openxr_max_shift_ratio\", 0.05)))" in source
+    assert "output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')" in source
+    assert "if output_format == 'openxr_rgb_depth':" in source
+    assert 'debug_info.get("openxr_legacy_shader_uniforms")' in source
+    assert 'self.ipd_uv = max(0.0, float(uniforms["ipd"]))' in source
+    assert 'debug_info.get("openxr_stereo_scale", 1.0)' in source
+    assert 'max_shift_ratio = uniforms.get("max_shift_ratio", debug_info.get("openxr_max_shift_ratio", 0.05))' in source
+    assert "self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(max_shift_ratio))" in source
     assert 'float(debug_info["openxr_ipd"])) * max(0.0, stereo_scale)' not in source
 
 
@@ -309,6 +348,7 @@ def test_process_openxr_frame_rgb_depth_applies_gamma_curve(monkeypatch):
     result = runtime.process_openxr_frame(rgb, OpenXRRenderConfig())
 
     assert result.debug_info["runtime_output_format"] == "openxr_rgb_depth"
+    assert result.debug_info["packing_format"] == "none"
     assert torch.allclose(result.depth, torch.full_like(result.depth, 0.25))
 
 

@@ -2545,9 +2545,8 @@ class StereoWindow:
 
     def update_runtime_frame(self, runtime_result, current_fps=None, current_latency=None):
         """Display a stereo_runtime result that already contains the final output frame."""
-        self._runtime_output_format = (
-            getattr(runtime_result, "debug_info", {}) or {}
-        ).get("runtime_output_format")
+        debug_info = getattr(runtime_result, "debug_info", {}) or {}
+        self._runtime_output_format = getattr(runtime_result, "output_format", None) or debug_info.get("runtime_output_format")
         if current_fps is not None:
             self.actual_fps = current_fps
         if current_latency is not None:

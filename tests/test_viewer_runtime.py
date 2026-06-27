@@ -1,7 +1,13 @@
 from types import SimpleNamespace
 
 from streaming.encoder_profile import EncoderProfile
-from viewer.viewer_runtime import ViewerRuntimeCallbacks, ViewerRuntimeConfig, frame_size_from_output, start_viewer_streaming
+from viewer.viewer_runtime import (
+    ViewerRuntimeCallbacks,
+    ViewerRuntimeConfig,
+    frame_size_from_output,
+    frame_size_from_runtime_result,
+    start_viewer_streaming,
+)
 
 
 def _config(**overrides):
@@ -52,6 +58,36 @@ def test_frame_size_from_output_scales_local_viewer_width():
 
     assert frame_size_from_output(frame, stream_mode="") == (1280, 720)
     assert frame_size_from_output(frame, stream_mode="MJPEG") == (1280, 720)
+
+
+def test_frame_size_from_runtime_result_prefers_structured_display_size():
+    result = SimpleNamespace(
+        sbs=SimpleNamespace(shape=(720, 1280, 3)),
+        output_display_size=(3840, 2160),
+        debug_info={"runtime_output_display_size": "1920x1080"},
+    )
+
+    assert frame_size_from_runtime_result(result, stream_mode="MJPEG") == (3840, 2160)
+    assert frame_size_from_runtime_result(result, stream_mode="") == (1280, 720)
+
+
+def test_frame_size_from_runtime_result_supports_legacy_debug_display_size():
+    result = SimpleNamespace(
+        sbs=SimpleNamespace(shape=(720, 1280, 3)),
+        debug_info={"runtime_output_display_size": "3840x2160"},
+    )
+
+    assert frame_size_from_runtime_result(result, stream_mode="MJPEG") == (3840, 2160)
+    assert frame_size_from_runtime_result(result, stream_mode="") == (1280, 720)
+
+
+def test_frame_size_from_runtime_result_falls_back_to_sbs_shape():
+    result = SimpleNamespace(
+        sbs=SimpleNamespace(shape=(720, 1280, 3)),
+        debug_info={"runtime_output_display_size": "invalid"},
+    )
+
+    assert frame_size_from_runtime_result(result, stream_mode="MJPEG") == (1280, 720)
 
 
 def test_start_viewer_streaming_returns_none_for_local_mode(capsys):

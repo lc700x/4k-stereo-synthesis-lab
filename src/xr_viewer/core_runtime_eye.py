@@ -72,13 +72,17 @@ class CoreRuntimeEyeMixin:
                 return f"{label}: stats unavailable {type(exc).__name__}: {exc}"
 
         debug = getattr(runtime_result, 'debug_info', {}) or {}
+        output_format = getattr(runtime_result, 'output_format', None) or debug.get('runtime_output_format', 'unknown')
+        output_dtype = getattr(runtime_result, 'output_dtype', None) or debug.get('runtime_output_dtype', 'unknown')
+        output_eye_size = getattr(runtime_result, 'output_eye_size', None) or debug.get('runtime_output_eye_size', 'unknown')
+        output_pack_backend = getattr(runtime_result, 'output_pack_backend', None) or debug.get('runtime_output_pack_backend', 'unknown')
         print(
             "[OpenXRViewer] runtime eye stats:"
             f" upload={upload_path}"
-            f" format={debug.get('runtime_output_format', 'unknown')}"
-            f" runtime_dtype={debug.get('runtime_output_dtype', 'unknown')}"
-            f" eye_size={debug.get('runtime_output_eye_size', 'unknown')}"
-            f" pack={debug.get('runtime_output_pack_backend', 'unknown')}"
+            f" format={output_format}"
+            f" runtime_dtype={output_dtype}"
+            f" eye_size={output_eye_size}"
+            f" pack={output_pack_backend}"
             f" left=({_stats('left', runtime_result.left_eye)})"
             f" right=({_stats('right', runtime_result.right_eye)})",
             flush=True,
@@ -445,7 +449,8 @@ class CoreRuntimeEyeMixin:
 
     def _update_runtime_frame(self, runtime_result):
         debug_info = getattr(runtime_result, 'debug_info', {}) or {}
-        if debug_info.get('runtime_output_format') == 'openxr_rgb_depth':
+        output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')
+        if output_format == 'openxr_rgb_depth':
             self._apply_runtime_rgb_depth_config(debug_info)
             source_rgb = getattr(runtime_result, 'source_rgb', None)
             if source_rgb is None:
@@ -513,12 +518,21 @@ class CoreRuntimeEyeMixin:
         # Depth strength is controlled by the viewer in OpenXR mode. Do not copy
         # it back from runtime debug_info, or controller changes can be overwritten
         # by the previous frame's config before the runtime sees the new value.
-        if "openxr_convergence" in debug_info:
+        uniforms = debug_info.get("openxr_legacy_shader_uniforms")
+        if not isinstance(uniforms, dict):
+            uniforms = {}
+        if "convergence" in uniforms:
+            self.convergence = float(uniforms["convergence"])
+        elif "openxr_convergence" in debug_info:
             self.convergence = float(debug_info["openxr_convergence"])
-        if "openxr_ipd" in debug_info:
+        if "ipd" in uniforms:
+            self.ipd_uv = max(0.0, float(uniforms["ipd"]))
+        elif "openxr_ipd" in debug_info:
             self.ipd_uv = max(0.0, float(debug_info["openxr_ipd"]))
-        self._runtime_rgb_depth_stereo_scale = max(0.0, float(debug_info.get("openxr_stereo_scale", 1.0)))
-        self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(debug_info.get("openxr_max_shift_ratio", 0.05)))
+        stereo_scale = uniforms.get("stereo_scale", debug_info.get("openxr_stereo_scale", 1.0))
+        max_shift_ratio = uniforms.get("max_shift_ratio", debug_info.get("openxr_max_shift_ratio", 0.05))
+        self._runtime_rgb_depth_stereo_scale = max(0.0, float(stereo_scale))
+        self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(max_shift_ratio))
 
     def _normalize_rgb_depth_runtime_source(self, rgb, depth):
         import torch

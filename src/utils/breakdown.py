@@ -73,9 +73,15 @@ class FPSBreakdown:
                     self.stats[f"rt_{key}"] = float(value)
             self.stats["rt_backend"] = str(debug.get("backend", "unknown"))
             self.stats["rt_depth_backend"] = str(debug.get("runtime_depth_backend", "unknown"))
-            self.stats["rt_output_format"] = str(debug.get("runtime_output_format", "unknown"))
-            self.stats["rt_output_dtype"] = str(debug.get("runtime_output_dtype", "unknown"))
-            self.stats["rt_output_pack"] = str(debug.get("runtime_output_pack_backend", "n/a"))
+            self.stats["rt_output_format"] = str(
+                getattr(runtime_result, "output_format", None) or debug.get("runtime_output_format", "unknown")
+            )
+            self.stats["rt_output_dtype"] = str(
+                getattr(runtime_result, "output_dtype", None) or debug.get("runtime_output_dtype", "unknown")
+            )
+            self.stats["rt_output_pack"] = str(
+                getattr(runtime_result, "output_pack_backend", None) or debug.get("runtime_output_pack_backend", "n/a")
+            )
             if "sbs_backend" in debug:
                 self.stats["rt_sbs_backend"] = str(debug.get("sbs_backend"))
             if "occlusion_mask_backend" in debug:

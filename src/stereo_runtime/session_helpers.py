@@ -117,6 +117,7 @@ class StereoRuntimeLogger:
         output_pack_backend = str(
             getattr(runtime_result, "output_pack_backend", None) or debug.get("runtime_output_pack_backend", "n/a")
         )
+        openxr_uniforms = _openxr_legacy_shader_uniforms(runtime_result, debug)
         if output_format == "openxr_eye_views":
             output_eye_size = _runtime_output_size_label(
                 getattr(runtime_result, "output_eye_size", None) or debug.get("runtime_output_eye_size", "unknown")
@@ -137,10 +138,10 @@ class StereoRuntimeLogger:
                     f" output={state[1]}"
                     f" dtype={state[2]}"
                     f" eye={state[3]}"
-                    f" depth_strength={float(debug.get('openxr_depth_strength', 0.0)):.3f}"
-                    f" stereo_scale={float(debug.get('openxr_stereo_scale', 0.0)):.3f}"
-                    f" max_shift={float(debug.get('openxr_max_shift_ratio', 0.0)):.3f}"
-                    f" convergence={float(debug.get('openxr_convergence', 0.0)):.3f}",
+                    f" depth_strength={float(openxr_uniforms.get('depth_strength', 0.0)):.3f}"
+                    f" stereo_scale={float(openxr_uniforms.get('stereo_scale', 0.0)):.3f}"
+                    f" max_shift={float(openxr_uniforms.get('max_shift_ratio', 0.0)):.3f}"
+                    f" convergence={float(openxr_uniforms.get('convergence', 0.0)):.3f}",
                     flush=True,
                 )
             return
@@ -167,12 +168,27 @@ class StereoRuntimeLogger:
                 f" fast_plus_fused={state[4]}"
                 f" fast_plus_fused_skip={state[5]}"
                 f" fast_plus_fused_temporal_bypass={state[6]}",
-                f" depth_strength={float(debug.get('openxr_depth_strength', 0.0)):.3f}"
-                f" stereo_scale={float(debug.get('openxr_stereo_scale', 0.0)):.3f}"
-                f" max_shift={float(debug.get('openxr_max_shift_ratio', 0.0)):.3f}"
-                f" convergence={float(debug.get('openxr_convergence', 0.0)):.3f}",
+                f" depth_strength={float(openxr_uniforms.get('depth_strength', 0.0)):.3f}"
+                f" stereo_scale={float(openxr_uniforms.get('stereo_scale', 0.0)):.3f}"
+                f" max_shift={float(openxr_uniforms.get('max_shift_ratio', 0.0)):.3f}"
+                f" convergence={float(openxr_uniforms.get('convergence', 0.0)):.3f}",
                 flush=True,
             )
+
+
+def _openxr_legacy_shader_uniforms(runtime_result, debug: dict) -> dict:
+    uniforms = getattr(runtime_result, "legacy_shader_uniforms", None)
+    if isinstance(uniforms, dict):
+        return uniforms
+    uniforms = debug.get("openxr_legacy_shader_uniforms")
+    if isinstance(uniforms, dict):
+        return uniforms
+    return {
+        "depth_strength": debug.get("openxr_depth_strength", 0.0),
+        "stereo_scale": debug.get("openxr_stereo_scale", 0.0),
+        "max_shift_ratio": debug.get("openxr_max_shift_ratio", 0.0),
+        "convergence": debug.get("openxr_convergence", 0.0),
+    }
 
 
 def _runtime_output_size_label(value) -> str:

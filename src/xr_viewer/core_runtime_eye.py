@@ -451,7 +451,10 @@ class CoreRuntimeEyeMixin:
         debug_info = getattr(runtime_result, 'debug_info', {}) or {}
         output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')
         if output_format == 'openxr_rgb_depth':
-            self._apply_runtime_rgb_depth_config(debug_info)
+            self._apply_runtime_rgb_depth_config(
+                debug_info,
+                legacy_shader_uniforms=getattr(runtime_result, 'legacy_shader_uniforms', None),
+            )
             source_rgb = getattr(runtime_result, 'source_rgb', None)
             if source_rgb is None:
                 source_rgb = runtime_result.left_eye
@@ -514,11 +517,13 @@ class CoreRuntimeEyeMixin:
         if self._d3d11_native_renderer is not None:
             self._d3d11_native_renderer.has_frame = False
 
-    def _apply_runtime_rgb_depth_config(self, debug_info):
+    def _apply_runtime_rgb_depth_config(self, debug_info, *, legacy_shader_uniforms=None):
         # Depth strength is controlled by the viewer in OpenXR mode. Do not copy
         # it back from runtime debug_info, or controller changes can be overwritten
         # by the previous frame's config before the runtime sees the new value.
-        uniforms = debug_info.get("openxr_legacy_shader_uniforms")
+        uniforms = legacy_shader_uniforms
+        if not isinstance(uniforms, dict):
+            uniforms = debug_info.get("openxr_legacy_shader_uniforms")
         if not isinstance(uniforms, dict):
             uniforms = {}
         if "convergence" in uniforms:

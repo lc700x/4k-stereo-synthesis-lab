@@ -46,6 +46,8 @@ def make_config(**overrides):
         "reset_cooldown_frames": 4,
         "stereo_preset": "cinema",
         "mode": "cinema",
+        "export_height": 294,
+        "export_width": 518,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -59,6 +61,9 @@ def test_hot_reload_value_snapshot_parses_expected_fields():
         "IPD mm": "65",
         "Stereo Scale": "1.5",
         "Max Shift Ratio": "0.04",
+        "Stereo Quality": "Quality",
+        "Stereo Preset": "Game / Low Latency",
+        "Runtime Quality Mode": "Still Image / HQ",
         "Display Mode": "Full-SBS",
         "Max Disparity Px": "88",
         "Parallax Preset": "strong",
@@ -87,6 +92,10 @@ def test_hot_reload_value_snapshot_parses_expected_fields():
     assert values["ipd_mm"] == 65.0
     assert values["stereo_scale"] == 1.5
     assert values["max_shift_ratio"] == 0.04
+    assert values["stereo_quality"] == "quality_4k"
+    assert values["stereo_preset"] == "game_low_latency"
+    assert values["runtime_quality_mode"] == "image"
+    assert values["mode"] == "image"
     assert values["output_format"] == "full_sbs"
     assert values["max_disparity_px"] == 88.0
     assert values["parallax_preset"] == "strong"
@@ -129,6 +138,78 @@ def test_runtime_stereo_overrides_maps_runtime_config():
     assert overrides["fused"] is True
 
 
+def test_hot_reload_depth_provider_rebuild_fields_only_when_changed():
+    config = make_config(
+        model_id="Distill-Any-Depth-Base",
+        depth_backend="pytorch_cuda",
+        profile_sync=False,
+    )
+
+    unchanged = hot_reload_value_snapshot(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "TensorRT": False,
+            "Depth Profile Sync": False,
+            "Depth Resolution": 518,
+        },
+        config,
+    )
+    changed = hot_reload_runtime_settings_snapshot(
+        {
+            "Depth Model": "DepthPro-Large",
+            "TensorRT": True,
+            "Depth Profile Sync": True,
+            "Depth Resolution": 756,
+        },
+        config,
+        version=31,
+        timestamp=1.0,
+    )
+
+    assert "model_id" not in unchanged
+    assert "depth_backend" not in unchanged
+    assert "profile_sync" not in unchanged
+    assert "export_height" not in unchanged
+    assert "export_width" not in unchanged
+    assert changed.model_id == "DepthPro-Large"
+    assert changed.depth_backend == "tensorrt_native"
+    assert changed.profile_sync is True
+    assert changed.export_height == 429
+    assert changed.export_width == 756
+    assert changed.classify() is SnapshotChangeClass.PIPELINE_REBUILD
+
+
+def test_hot_reload_ignores_run_mode_as_runtime_quality_mode():
+    config = make_config(mode="movie")
+
+    values = hot_reload_value_snapshot({"Run Mode": "OpenXR Link"}, config)
+    snapshot = hot_reload_runtime_settings_snapshot({"Run Mode": "OpenXR Link"}, config, version=22, timestamp=1.0)
+
+    assert "runtime_quality_mode" not in values
+    assert "mode" not in values
+    assert snapshot.runtime_quality_mode is None
+
+
+def test_hot_reload_explicit_temporal_toggles_override_positive_values():
+    config = make_config(temporal=True, auto_reset_temporal=True, temporal_strength=0.7, scene_reset_threshold=0.22)
+    settings = {
+        "Temporal": "false",
+        "Temporal Strength": "0.7",
+        "Auto Scene Reset": "false",
+        "Scene Reset Threshold": "0.22",
+    }
+
+    values = hot_reload_value_snapshot(settings, config)
+    snapshot = hot_reload_runtime_settings_snapshot(settings, config, version=21, timestamp=1.0)
+
+    assert values["temporal"] is False
+    assert values["temporal_strength"] == 0.7
+    assert values["auto_reset_temporal"] is False
+    assert values["scene_reset_threshold"] == 0.22
+    assert snapshot.temporal is False
+    assert snapshot.auto_reset_temporal is False
+
+
 def test_hot_reload_bool_and_foreground_helpers():
     assert to_bool_hot_reload(True) is True
     assert to_bool_hot_reload("on") is True
@@ -151,6 +232,7 @@ def test_hot_reload_fast_quality_disables_temporal_and_postprocess():
 
     values = hot_reload_value_snapshot(settings, config)
 
+    assert values["stereo_quality"] == "fast"
     assert values["temporal"] is False
     assert values["temporal_strength"] == 0.0
     assert values["auto_reset_temporal"] is False
@@ -165,6 +247,8 @@ def test_hot_reload_builds_runtime_settings_snapshot():
     settings = {
         "Depth Strength": "1.25",
         "IPD mm": "65",
+        "Synthetic View": "HQ",
+        "Stereo Mode Preset": "Still Image / HQ",
         "Display Mode": "Half-TAB",
         "Max Disparity PX": "96",
         "Parallax Budget Preset": "comfort",
@@ -187,6 +271,8 @@ def test_hot_reload_builds_runtime_settings_snapshot():
     assert snapshot.source == "settings_yaml_hot_reload"
     assert snapshot.depth_strength == 1.25
     assert snapshot.ipd_mm == 65.0
+    assert snapshot.stereo_quality == "hq_4k"
+    assert snapshot.stereo_preset == "still_image_hq"
     assert snapshot.output_format == "half_tab"
     assert snapshot.max_disparity_px == 96.0
     assert snapshot.parallax_preset == "comfort"
@@ -213,7 +299,10 @@ def test_hot_reload_pushes_all_openxr_stereo_controls(tmp_path):
     runtime = SimpleNamespace(
         config=runtime_config,
         stereo_config=SimpleNamespace(output_format="half_sbs"),
-        apply_settings_snapshot=lambda snapshot, active_preset=None: setattr(runtime, "applied_snapshot", snapshot),
+        apply_settings_snapshot=lambda snapshot, active_preset=None: (
+            setattr(runtime, "applied_snapshot", snapshot),
+            setattr(runtime, "applied_active_preset", active_preset),
+        ),
         configure_stereo=lambda stereo_config, reset_temporal=False: setattr(runtime, "stereo_config", stereo_config),
     )
     pushed = {}
@@ -222,6 +311,7 @@ def test_hot_reload_pushes_all_openxr_stereo_controls(tmp_path):
         interval_s=0.0,
         read_settings=lambda _path: {
             "Stereo Quality": "fast",
+            "Stereo Preset": "Game / Low Latency",
             "Depth Strength": "2.0",
             "Convergence": "0.25",
             "IPD mm": "64",
@@ -250,9 +340,91 @@ def test_hot_reload_pushes_all_openxr_stereo_controls(tmp_path):
     assert runtime.applied_snapshot.convergence == 0.25
     assert runtime.applied_snapshot.stereo_scale == 0.35
     assert runtime.applied_snapshot.max_shift_ratio == 0.05
+    assert runtime.applied_snapshot.stereo_quality == "fast"
+    assert runtime.applied_snapshot.stereo_preset == "game_low_latency"
+    assert runtime.applied_active_preset == "game_low_latency"
     assert runtime.applied_snapshot.output_format == "full_tab"
     assert runtime.applied_snapshot.max_disparity_px == 72.0
     assert runtime.applied_snapshot.parallax_preset == "standard"
     assert runtime.applied_snapshot.screen_edge_mask_suppression == 4
     assert runtime.applied_snapshot.debug_output is True
     assert runtime.applied_snapshot.debug_flags == {"debug_output": True}
+
+
+def test_hot_reload_fallback_filters_snapshot_only_fields(tmp_path):
+    settings_path = tmp_path / "settings.yaml"
+    settings_path.write_text("", encoding="utf-8")
+    runtime = SimpleNamespace(
+        config=StereoRuntimeConfig(
+            model_id="Distill-Any-Depth-Base",
+            cache_dir="models",
+            stereo_quality="fast_plus",
+            stereo_preset="cinema",
+        ),
+        stereo_config=SimpleNamespace(output_format="half_sbs"),
+        configure_stereo=lambda stereo_config, reset_temporal=False: setattr(runtime, "stereo_config", stereo_config),
+    )
+    pushed = {}
+    reloader = StereoHotReloader(
+        settings_path=str(settings_path),
+        interval_s=0.0,
+        read_settings=lambda _path: {
+            "Stereo Quality": "Quality",
+            "Stereo Preset": "Still Image / HQ",
+            "Debug Stereo Output": "yes",
+            "Display Mode": "Full-SBS",
+        },
+        clock=lambda: 1.0,
+    )
+
+    assert reloader.apply_if_needed(
+        runtime=runtime,
+        active_preset="cinema",
+        on_openxr_config_update=lambda **kwargs: pushed.update(kwargs),
+        on_mode_log=lambda _reason: None,
+    )
+
+    assert runtime.config.stereo_quality == "quality_4k"
+    assert runtime.config.stereo_preset == "still_image_hq"
+    assert runtime.config.debug_output is True
+    assert not hasattr(runtime.config, "debug_flags")
+    assert runtime.stereo_config.backend == "quality_4k"
+    assert pushed["snapshot"].stereo_quality == "quality_4k"
+    assert pushed["snapshot"].stereo_preset == "still_image_hq"
+    assert pushed["snapshot"].debug_flags == {"debug_output": True}
+
+
+def test_hot_reload_auto_preset_preserves_active_preset(tmp_path):
+    settings_path = tmp_path / "settings.yaml"
+    settings_path.write_text("", encoding="utf-8")
+    runtime_config = StereoRuntimeConfig(
+        model_id="Distill-Any-Depth-Base",
+        cache_dir="models",
+        stereo_quality="fast_plus",
+        stereo_preset="auto",
+    )
+    runtime = SimpleNamespace(
+        config=runtime_config,
+        stereo_config=SimpleNamespace(output_format="half_sbs"),
+        apply_settings_snapshot=lambda snapshot, active_preset=None: (
+            setattr(runtime, "applied_snapshot", snapshot),
+            setattr(runtime, "applied_active_preset", active_preset),
+        ),
+        configure_stereo=lambda stereo_config, reset_temporal=False: setattr(runtime, "stereo_config", stereo_config),
+    )
+    reloader = StereoHotReloader(
+        settings_path=str(settings_path),
+        interval_s=0.0,
+        read_settings=lambda _path: {"Stereo Preset": "auto"},
+        clock=lambda: 1.0,
+    )
+
+    assert reloader.apply_if_needed(
+        runtime=runtime,
+        active_preset="game_low_latency",
+        on_openxr_config_update=lambda **_kwargs: None,
+        on_mode_log=lambda _reason: None,
+    )
+
+    assert runtime.applied_snapshot.stereo_preset == "auto"
+    assert runtime.applied_active_preset == "game_low_latency"

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from .adapter import OutputFormat, StereoQuality
+from .adapter import OutputFormat, StereoQuality, _normalize_runtime_mode
 
 
 class SnapshotChangeClass(Enum):
@@ -21,6 +21,7 @@ _HOT_RELOAD_FIELDS = frozenset(
         "debug_flags",
         "debug_output",
         "stereo_quality",
+        "stereo_preset",
         "output_format",
         "depth_strength",
         "convergence",
@@ -59,6 +60,7 @@ _PIPELINE_REBUILD_FIELDS = frozenset(
         "model_id",
         "export_height",
         "export_width",
+        "profile_sync",
     }
 )
 
@@ -67,6 +69,7 @@ _SESSION_RESTART_FIELDS = frozenset({"application_runtime_target", "capture_sour
 _CONFIG_UPDATE_FIELDS = frozenset(
     {
         "stereo_quality",
+        "stereo_preset",
         "output_format",
         "depth_strength",
         "convergence",
@@ -97,6 +100,7 @@ _CONFIG_UPDATE_FIELDS = frozenset(
         "model_id",
         "export_height",
         "export_width",
+        "profile_sync",
         "device",
     }
 )
@@ -119,6 +123,7 @@ class RuntimeSettingsSnapshot:
     debug_flags: dict[str, Any] | None = None
     debug_output: bool | None = None
     stereo_quality: StereoQuality | None = None
+    stereo_preset: str | None = None
     output_format: OutputFormat | None = None
     depth_strength: float | None = None
     convergence: float | None = None
@@ -148,6 +153,7 @@ class RuntimeSettingsSnapshot:
     model_id: str | None = None
     export_height: int | None = None
     export_width: int | None = None
+    profile_sync: bool | None = None
     device: str | None = None
 
     def classify(self) -> SnapshotChangeClass:
@@ -165,6 +171,8 @@ class RuntimeSettingsSnapshot:
             value = getattr(self, field_name)
             if value is not None:
                 updates[field_name] = value
+        if self.runtime_quality_mode is not None:
+            updates["mode"] = _normalize_runtime_mode(self.runtime_quality_mode)
         if "ipd_mm" in updates:
             updates["ipd"] = float(updates["ipd_mm"]) / 1000.0
         return updates

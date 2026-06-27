@@ -201,6 +201,7 @@ def runtime_config_from_d2s_settings(
     if not has_hole_fill_mode:
         hole_fill_radius = int(settings.get("Hole Fill Radius", hole_fill_radius))
         hole_fill_strength = float(settings.get("Hole Fill Strength", hole_fill_strength))
+    export_height, export_width = _depth_export_size_from_settings(settings)
 
     return StereoRuntimeConfig(
         model_id=str(model_name),
@@ -216,6 +217,8 @@ def runtime_config_from_d2s_settings(
         force_rebuild_trt=bool(settings.get("Recompile TensorRT", False)),
         build_migraphx_graph=bool(settings.get("MIGraphX", False)),
         force_rebuild_migraphx=bool(settings.get("Recompile MIGraphX", False)),
+        export_height=export_height,
+        export_width=export_width,
         depth_strength=float(settings.get("Depth Strength", 2.0)),
         convergence=float(settings.get("Convergence", 0.0)),
         ipd=ipd_mm / 1000.0,
@@ -250,6 +253,34 @@ def _optional_float_setting(settings: dict[str, Any], *keys: str) -> float | Non
         if key in settings and settings[key] is not None:
             return float(settings[key])
     return None
+
+
+def _optional_int_setting(settings: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        if key in settings and settings[key] is not None:
+            return int(settings[key])
+    return None
+
+
+def _depth_export_size_from_settings(
+    settings: dict[str, Any],
+    *,
+    default_height: int = 294,
+    default_width: int = 518,
+) -> tuple[int, int]:
+    explicit_height = _optional_int_setting(settings, "Export Height", "export_height")
+    explicit_width = _optional_int_setting(settings, "Export Width", "export_width")
+    depth_resolution = _optional_int_setting(settings, "Depth Resolution", "depth_resolution")
+    width = explicit_width if explicit_width is not None else depth_resolution
+    if width is None:
+        width = int(default_width)
+    if explicit_height is not None:
+        height = explicit_height
+    elif int(width) != int(default_width):
+        height = round(float(width) * float(default_height) / float(default_width))
+    else:
+        height = int(default_height)
+    return max(1, int(height)), max(1, int(width))
 
 
 def _normalize_ipd_mm(settings: dict[str, Any]) -> float:
@@ -428,6 +459,7 @@ def depth_provider_config_from_runtime(config: StereoRuntimeConfig) -> "DepthPro
         cache_dir=config.model_path.parent,
         onnx_path=onnx_path,
         engine_path=engine_path,
+        depth_resolution=int(config.export_width),
         local_files_only=False,
         prefer_native_tensorrt=backend == "tensorrt_native",
         prefer_tensorrt=backend == "tensorrt_native",

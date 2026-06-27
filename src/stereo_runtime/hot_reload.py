@@ -6,7 +6,16 @@ from dataclasses import replace
 from typing import Callable
 
 from stereo_runtime import stereo_config_for_preset
-from stereo_runtime.adapter import _normalize_hole_fill_mode, _normalize_output_format, preset_for_runtime_mode
+from stereo_runtime.adapter import (
+    _depth_export_size_from_settings,
+    _normalize_depth_backend,
+    _normalize_hole_fill_mode,
+    _normalize_output_format,
+    _normalize_runtime_mode,
+    _normalize_stereo_quality,
+    preset_for_runtime_mode,
+)
+from stereo_runtime.presets import normalize_preset
 from stereo_runtime.settings_snapshot import RuntimeSettingsSnapshot
 
 def read_yaml(path: str) -> dict:
@@ -74,6 +83,57 @@ def _is_fast_quality(settings_dict: dict, config) -> bool:
     return key == "fast"
 
 
+def _depth_backend_hot_reload(settings_dict: dict, config):
+    backend_keys = {"Depth Backend", "MIGraphX", "TensorRT", "ONNX"}
+    if not backend_keys.intersection(settings_dict):
+        return None
+    if to_bool_hot_reload(settings_dict.get("MIGraphX", False)):
+        return "migraphx_rocm"
+    if to_bool_hot_reload(settings_dict.get("TensorRT", False)):
+        return "tensorrt_native"
+    if to_bool_hot_reload(settings_dict.get("ONNX", False)):
+        return "onnx_cuda"
+    if settings_dict.get("Depth Backend"):
+        return _normalize_depth_backend(settings_dict["Depth Backend"])
+    return "pytorch_cuda"
+
+
+def _add_runtime_quality_mode_if_changed(values: dict, settings_dict: dict, config) -> None:
+    mode_keys = ("Runtime Quality Mode", "Stereo Runtime Mode")
+    raw = next((settings_dict[key] for key in mode_keys if key in settings_dict), None)
+    if raw is None:
+        return
+    mode = _normalize_runtime_mode(raw)
+    if mode != getattr(config, "mode", None):
+        values["runtime_quality_mode"] = mode
+        values["mode"] = mode
+
+
+def _add_rebuild_fields_if_changed(values: dict, settings_dict: dict, config) -> None:
+    if "Depth Model" in settings_dict or "model_id" in settings_dict:
+        model_id = str(settings_dict.get("Depth Model") or settings_dict.get("model_id"))
+        if model_id != getattr(config, "model_id", None):
+            values["model_id"] = model_id
+    depth_backend = _depth_backend_hot_reload(settings_dict, config)
+    if depth_backend is not None and depth_backend != getattr(config, "depth_backend", None):
+        values["depth_backend"] = depth_backend
+    if "Depth Profile Sync" in settings_dict or "Profile Sync" in settings_dict:
+        profile_sync = to_bool_hot_reload(settings_dict.get("Depth Profile Sync", settings_dict.get("Profile Sync")))
+        if profile_sync != getattr(config, "profile_sync", None):
+            values["profile_sync"] = profile_sync
+    size_keys = {"Depth Resolution", "depth_resolution", "Export Height", "export_height", "Export Width", "export_width"}
+    if size_keys.intersection(settings_dict):
+        export_height, export_width = _depth_export_size_from_settings(
+            settings_dict,
+            default_height=getattr(config, "export_height", 294),
+            default_width=getattr(config, "export_width", 518),
+        )
+        if export_height != getattr(config, "export_height", None):
+            values["export_height"] = export_height
+        if export_width != getattr(config, "export_width", None):
+            values["export_width"] = export_width
+
+
 def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
     ipd_raw = settings_dict.get(
         "IPD mm",
@@ -92,6 +152,27 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
     debug_output_enabled = to_bool_hot_reload(
         settings_dict.get("Debug Stereo Output", getattr(config, "debug_output", False))
     )
+    stereo_preset = normalize_preset(
+        settings_dict.get(
+            "Stereo Preset",
+            settings_dict.get(
+                "Stereo Mode Preset",
+                config.stereo_preset or preset_for_runtime_mode(config.mode),
+            ),
+        )
+    )
+    temporal_strength = float(settings_dict.get("Temporal Strength", config.temporal_strength))
+    scene_reset_threshold = float(settings_dict.get("Scene Reset Threshold", config.scene_reset_threshold))
+    temporal_enabled = (
+        to_bool_hot_reload(settings_dict["Temporal"])
+        if "Temporal" in settings_dict
+        else temporal_strength > 0.0
+    )
+    auto_reset_temporal = (
+        to_bool_hot_reload(settings_dict.get("Auto Scene Reset", settings_dict.get("Auto Reset Temporal")))
+        if "Auto Scene Reset" in settings_dict or "Auto Reset Temporal" in settings_dict
+        else scene_reset_threshold > 0.0
+    )
     values = {
         "depth_strength": float(settings_dict.get("Depth Strength", config.depth_strength)),
         "convergence": float(settings_dict.get("Convergence", config.convergence)),
@@ -104,6 +185,10 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
             )
         ),
         "max_shift_ratio": float(settings_dict.get("Max Shift Ratio", config.max_shift_ratio)),
+        "stereo_quality": _normalize_stereo_quality(
+            settings_dict.get("Stereo Quality", settings_dict.get("Synthetic View", config.stereo_quality))
+        ),
+        "stereo_preset": stereo_preset,
         "output_format": _normalize_output_format(settings_dict.get("Display Mode", config.output_format)),
         "max_disparity_px": optional_float_hot_reload(
             settings_dict.get(
@@ -117,15 +202,10 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
                 settings_dict.get("Parallax Budget Preset", getattr(config, "parallax_preset", "standard")),
             )
         ),
-        "temporal": float(settings_dict.get("Temporal Strength", config.temporal_strength)) > 0.0,
-        "temporal_strength": float(settings_dict.get("Temporal Strength", config.temporal_strength)),
-        "auto_reset_temporal": float(
-            settings_dict.get("Scene Reset Threshold", config.scene_reset_threshold)
-        )
-        > 0.0,
-        "scene_reset_threshold": float(
-            settings_dict.get("Scene Reset Threshold", config.scene_reset_threshold)
-        ),
+        "temporal": temporal_enabled,
+        "temporal_strength": temporal_strength,
+        "auto_reset_temporal": auto_reset_temporal,
+        "scene_reset_threshold": scene_reset_threshold,
         "reset_cooldown_frames": int(
             settings_dict.get("Reset Cooldown Frames", config.reset_cooldown_frames)
         ),
@@ -152,6 +232,8 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
         "debug_output": debug_output_enabled,
         "debug_flags": {"debug_output": debug_output_enabled},
     }
+    _add_runtime_quality_mode_if_changed(values, settings_dict, config)
+    _add_rebuild_fields_if_changed(values, settings_dict, config)
     if _is_fast_quality(settings_dict, config):
         values.update(
             {
@@ -240,14 +322,19 @@ class StereoHotReloader:
             self.last_mtime = mtime
             return False
 
+        snapshot_preset = values.get("stereo_preset")
+        applied_preset = active_preset if snapshot_preset == "auto" else (snapshot_preset or active_preset)
         if hasattr(runtime, "apply_settings_snapshot"):
-            runtime.apply_settings_snapshot(snapshot, active_preset=active_preset)
+            runtime.apply_settings_snapshot(snapshot, active_preset=applied_preset)
         else:
-            runtime.config = replace(runtime.config, **values)
+            config_values = {key: value for key, value in values.items() if hasattr(runtime.config, key)}
+            if applied_preset is not None:
+                config_values["stereo_preset"] = applied_preset
+            runtime.config = replace(runtime.config, **config_values)
             current = runtime.stereo_config
             runtime.configure_stereo(
                 stereo_config_for_preset(
-                    active_preset or runtime.config.stereo_preset or preset_for_runtime_mode(runtime.config.mode),
+                    applied_preset or runtime.config.stereo_preset or preset_for_runtime_mode(runtime.config.mode),
                     output_format=current.output_format,
                     overrides=runtime_stereo_overrides(runtime),
                 ),
@@ -264,6 +351,8 @@ class StereoHotReloader:
                 f" depth_strength={values['depth_strength']:.3f}"
                 f" convergence={values['convergence']:.3f}"
                 f" max_shift_ratio={values['max_shift_ratio']:.3f}"
+                f" stereo_preset={values['stereo_preset']}"
+                f" stereo_quality={values['stereo_quality']}"
                 f" temporal_strength={values['temporal_strength']:.3f}"
                 f" scene_reset={values['scene_reset_threshold']:.3f}"
                 f" reset_cooldown={values['reset_cooldown_frames']}"

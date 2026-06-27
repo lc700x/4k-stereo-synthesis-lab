@@ -23,7 +23,7 @@ Desktop2Stereo engineering-spec refactor tasks from prompts/codex-refactor-promp
 Latest pushed task commit:
 
 ```text
-refactor: enforce runtime temporal contracts
+refactor: complete hot reload snapshot fields
 ```
 
 Canonical specs for current work:
@@ -46,6 +46,72 @@ Canonical specs for current work:
 - None currently recorded for this handoff.
 
 ## Current Status
+
+### 2026-06-28 OpenXR Legacy Shader Uniform Structured Field Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` OpenXR RGB+depth direct-path compliance pass by promoting the legacy shader uniform bundle out of debug-only metadata while keeping old debug keys as compatibility fallbacks.
+
+Implemented in this follow-up:
+
+- Added `OpenXRRuntimeResult.legacy_shader_uniforms` as the structured carrier for direct-path viewer shader uniforms derived from `OpenXRRenderConfig`.
+- Kept `debug_info["openxr_legacy_shader_uniforms"]` and flat `openxr_*` debug keys for compatibility, but made runtime tests assert the structured result field as the primary contract.
+- Updated `CoreRuntimeEyeMixin` to prefer `runtime_result.legacy_shader_uniforms` before falling back to the debug bundle or flat legacy debug keys.
+- Updated `StereoRuntimeLogger` to prefer the structured uniform field for OpenXR output logs, so logging no longer directly depends on flat `debug_info["openxr_*"]` values.
+- Added regression coverage for structured viewer consumption, debug fallback retention, runtime result propagation, and logger structured-field precedence.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\stereo_runtime\session_helpers.py src\xr_viewer\core_runtime_eye.py tests\test_runtime_openxr.py tests\test_openxr_runtime.py tests\test_session_helpers.py
+src\python3\python.exe -m pytest tests\test_runtime_openxr.py tests\test_openxr_runtime.py tests\test_session_helpers.py -q
+```
+
+Result:
+
+```text
+33 passed
+```
+
+Notes / next improvements:
+
+- Flat OpenXR debug fields (`openxr_ipd`, `openxr_depth_strength`, `openxr_stereo_scale`, `openxr_max_shift_ratio`, etc.) remain published only as compatibility fields and can be removed after downstream/debug consumers stop requiring them.
+
+### 2026-06-28 Hot Reload Runtime Quality, Preset, Provider, And Depth Size Snapshot Follow-up
+
+Continued the `docs/25-2d-to-3d-runtime-specification.md` hot-reload compliance pass by routing runtime quality mode, preset selection, provider-affecting profile settings, and depth-provider size settings through the same `RuntimeSettingsSnapshot` path as the other user-adjustable stereo controls.
+
+Implemented in this follow-up:
+
+- Added hot-reload parsing for `Stereo Quality` / `Synthetic View` into normalized `stereo_quality`.
+- Added structured `RuntimeSettingsSnapshot.runtime_quality_mode` application by mapping explicit `Runtime Quality Mode` / `Stereo Runtime Mode` snapshots to `StereoRuntimeConfig.mode`; `Run Mode` remains application-target owned and is not treated as a hot-reload quality mode.
+- Added structured `RuntimeSettingsSnapshot.stereo_preset` and hot-reload parsing for `Stereo Preset` / `Stereo Mode Preset`.
+- Preserved the fast-quality temporal/postprocess disable behavior while also updating the runtime backend field itself.
+- Made fixed preset changes override the stale context `active_preset`, while `auto` keeps the current runtime-selected active preset.
+- Made explicit `Temporal` and `Auto Scene Reset` / `Auto Reset Temporal` hot-reload toggles override positive strength/threshold values, matching initialization semantics.
+- Added conditional hot-reload rebuild fields for `Depth Model` / `model_id` and depth backend controls (`Depth Backend`, `MIGraphX`, `TensorRT`, `ONNX`) so provider rebuilds are requested only when the selected model/backend differs from the current runtime config.
+- Added structured `RuntimeSettingsSnapshot.profile_sync` and hot-reload parsing for `Depth Profile Sync` / `Profile Sync`; this is classified as a runtime-handled provider rebuild field because it feeds `DepthProviderConfig.profile_sync`.
+- Wired `Depth Resolution` into runtime initialization by mapping it to `StereoRuntimeConfig.export_width` and deriving `export_height` from the existing 294:518 artifact ratio.
+- Passed `StereoRuntimeConfig.export_width` into `DepthProviderConfig.depth_resolution`, so PyTorch/ROCm/MPS/XPU provider paths no longer stay fixed at the default 518 when the GUI selects a different depth resolution.
+- Added hot-reload parsing for `Depth Resolution` plus explicit `Export Height` / `Export Width`, emitting `export_height` / `export_width` only when the resolved provider size changes.
+- Hardened the legacy fallback path for runtimes without `apply_settings_snapshot()` by filtering snapshot-only fields such as `debug_flags` before `dataclasses.replace()` updates `StereoRuntimeConfig`.
+- Added regression coverage for raw value parsing, snapshot construction, OpenXR propagation, runtime quality mode application, fixed preset application, auto preset preservation, explicit temporal toggles, conditional depth-provider rebuild fields, profile-sync provider rebuild, depth-resolution provider sizing, and fallback runtime updates.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\adapter.py src\stereo_runtime\hot_reload.py src\stereo_runtime\settings_snapshot.py src\stereo_runtime\runtime.py tests\test_adapter_config.py tests\test_hot_reload.py tests\test_settings_snapshot.py
+src\python3\python.exe -m pytest tests\test_hot_reload.py tests\test_settings_snapshot.py -q
+src\python3\python.exe -m pytest tests\test_adapter_config.py tests\test_hot_reload.py tests\test_settings_snapshot.py -q
+src\python3\python.exe -m pytest tests\test_adapter_config.py tests\test_hot_reload.py tests\test_runtime.py tests\test_runtime_context.py tests\test_settings_snapshot.py tests\test_runtime_openxr.py tests\test_viewer_runtime.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py tests\test_session_helpers.py tests\test_breakdown.py tests\test_parallax.py tests\test_synthesis.py tests\test_openxr_state.py -q
+```
+
+Result:
+
+```text
+26 passed
+47 passed
+181 passed
+```
 
 ### 2026-06-28 Hot Reload Debug And Mask Snapshot Follow-up
 
@@ -561,7 +627,7 @@ Result:
 Notes / next improvements:
 
 - `StereoConfig` and `OpenXRRenderConfig` still keep `legacy` defaults for low-level direct construction and compatibility; the host-facing `StereoRuntimeConfig` default now selects `standard`.
-- OpenXR direct path still exposes legacy debug/uniform names such as `openxr_ipd`, `openxr_depth_strength`, `openxr_stereo_scale`, and `openxr_max_shift_ratio` alongside normalized parallax debug fields.
+- OpenXR direct path now exposes `OpenXRRuntimeResult.legacy_shader_uniforms` as the primary direct-path shader-uniform contract; flat `openxr_ipd`, `openxr_depth_strength`, `openxr_stereo_scale`, and `openxr_max_shift_ratio` debug keys remain as compatibility fields alongside normalized parallax debug fields.
 - GUI hot-save still needs a follow-up to emit full `RuntimeSettingsSnapshot` objects for live runtime settings instead of relying only on persisted settings and legacy callbacks.
 - `src/settings.yaml` already had unrelated local edits in the working tree and was not intentionally modified as part of this compliance pass.
 
@@ -755,7 +821,7 @@ Result:
 
 Notes / next improvements:
 
-- `process_openxr_frame()` still reports legacy `openxr_ipd/openxr_depth_strength/openxr_stereo_scale/openxr_max_shift_ratio` debug fields for compatibility, alongside normalized resolved disparity debug fields.
+- `process_openxr_frame()` now returns `legacy_shader_uniforms` on `OpenXRRuntimeResult`; legacy `openxr_ipd/openxr_depth_strength/openxr_stereo_scale/openxr_max_shift_ratio` debug fields remain published only for compatibility alongside normalized resolved disparity debug fields.
 - `StereoHotReloader` still calls the legacy OpenXR config callback with loose params; this remains compatible but can be routed through snapshots in a follow-up.
 
 ### 2026-06-26 Runtime Preprocess Device Dispatch - Phase 1

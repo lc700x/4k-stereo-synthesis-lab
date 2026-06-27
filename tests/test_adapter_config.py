@@ -105,6 +105,39 @@ def test_runtime_config_from_d2s_settings_maps_parallax_budget_fields():
     assert stereo.max_disparity_px == 88.0
 
 
+def test_runtime_config_from_d2s_settings_maps_depth_resolution_to_provider_size():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Depth Resolution": 756,
+        },
+        device="cuda",
+    )
+    depth_config = depth_provider_config_from_runtime(config)
+
+    assert config.export_height == 429
+    assert config.export_width == 756
+    assert config.onnx_path.name == "model_fp16_434x756.onnx"
+    assert depth_config.depth_resolution == 756
+
+
+def test_runtime_config_from_d2s_settings_accepts_explicit_export_size():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Export Height": 384,
+            "Export Width": 672,
+        },
+        device="cuda",
+    )
+    depth_config = depth_provider_config_from_runtime(config)
+
+    assert config.export_height == 384
+    assert config.export_width == 672
+    assert config.onnx_path.name == "model_fp16_378x672.onnx"
+    assert depth_config.depth_resolution == 672
+
+
 def test_hq_quality_raises_layers_to_at_least_three():
     config = StereoRuntimeConfig(
         model_id="lc700x/Distill-Any-Depth-Base-hf",

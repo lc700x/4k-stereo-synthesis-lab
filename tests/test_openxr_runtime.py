@@ -171,7 +171,39 @@ def test_runtime_eye_tensor_hwc_u8_scales_near_normalized_float_range(monkeypatc
     assert int(out[0, 0, 0]) == 255
 
 
-def test_runtime_rgb_depth_config_prefers_legacy_shader_uniform_bundle(monkeypatch):
+def test_runtime_rgb_depth_config_prefers_structured_legacy_shader_uniforms(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
+
+    viewer = CoreRuntimeEyeMixin()
+    viewer._apply_runtime_rgb_depth_config(
+        {
+            "openxr_legacy_shader_uniforms": {
+                "convergence": 9.0,
+                "ipd": 9.0,
+                "stereo_scale": 9.0,
+                "max_shift_ratio": 9.0,
+            },
+            "openxr_convergence": 8.0,
+            "openxr_ipd": 8.0,
+            "openxr_stereo_scale": 8.0,
+            "openxr_max_shift_ratio": 8.0,
+        },
+        legacy_shader_uniforms={
+            "convergence": 0.25,
+            "ipd": 0.061,
+            "stereo_scale": 0.42,
+            "max_shift_ratio": 0.07,
+        },
+    )
+
+    assert viewer.convergence == 0.25
+    assert viewer.ipd_uv == 0.061
+    assert viewer._runtime_rgb_depth_stereo_scale == 0.42
+    assert viewer._runtime_rgb_depth_max_shift_ratio == 0.07
+
+
+def test_runtime_rgb_depth_config_keeps_debug_uniform_fallback(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
 

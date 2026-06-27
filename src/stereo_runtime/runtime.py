@@ -195,6 +195,7 @@ class OpenXRRuntimeResult:
     output_format: str | None = None
     output_dtype: str | None = None
     output_pack_backend: str | None = None
+    legacy_shader_uniforms: dict[str, Any] | None = None
     debug_info: dict[str, Any] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
     provider_info: dict[str, Any] = field(default_factory=dict)
@@ -385,7 +386,9 @@ def _merge_runtime_settings_snapshot(
     return RuntimeSettingsSnapshot(**values)
 
 
-_DEPTH_PROVIDER_REBUILD_FIELDS = frozenset({"depth_backend", "model_id", "export_height", "export_width"})
+_DEPTH_PROVIDER_REBUILD_FIELDS = frozenset(
+    {"depth_backend", "model_id", "export_height", "export_width", "profile_sync"}
+)
 _RUNTIME_HANDLED_PIPELINE_REBUILD_FIELDS = _DEPTH_PROVIDER_REBUILD_FIELDS
 _TEMPORAL_RESET_HOT_RELOAD_FIELDS = frozenset(
     {
@@ -852,8 +855,9 @@ class StereoRuntime:
         _add_depth_contract_debug_info(debug, depth, provider_info)
         output_eye_size, output_display_size = _add_runtime_output_size_debug_info(debug, left_eye, left_eye)
         debug["runtime_output_pack_backend"] = pack_backend
+        legacy_shader_uniforms = None
         if openxr_config is not None:
-            _add_openxr_config_debug_info(debug, openxr_config, left_eye)
+            legacy_shader_uniforms = _add_openxr_config_debug_info(debug, openxr_config, left_eye)
         debug["runtime_depth_upsample"] = self.config.depth_upsample
         _add_preprocess_debug_info(debug, rgb_frame)
         if memory:
@@ -884,6 +888,7 @@ class StereoRuntime:
             output_format=str(debug.get("runtime_output_format")),
             output_dtype=str(debug.get("runtime_output_dtype")),
             output_pack_backend=_optional_debug_str(debug.get("runtime_output_pack_backend")),
+            legacy_shader_uniforms=legacy_shader_uniforms,
             debug_info=debug,
             timing=timing,
             provider_info=provider_info,
@@ -1087,7 +1092,19 @@ def _optional_debug_str(value: Any) -> str | None:
     return None if value is None else str(value)
 
 
-def _add_openxr_config_debug_info(debug: dict[str, Any], config: OpenXRRenderConfig, eye_frame: torch.Tensor) -> None:
+def _openxr_legacy_shader_uniforms(config: OpenXRRenderConfig) -> dict[str, Any]:
+    return {
+        "ipd": float(config.ipd),
+        "depth_strength": float(config.depth_strength),
+        "stereo_scale": float(config.stereo_scale),
+        "max_shift_ratio": float(config.max_shift_ratio),
+        "convergence": float(config.convergence),
+        "max_disparity_px": None if config.max_disparity_px is None else float(config.max_disparity_px),
+        "parallax_preset": str(config.parallax_preset),
+    }
+
+
+def _add_openxr_config_debug_info(debug: dict[str, Any], config: OpenXRRenderConfig, eye_frame: torch.Tensor) -> dict[str, Any]:
     render_size = _runtime_frame_size(eye_frame)
     if render_size is not None:
         budget = resolve_parallax_budget(
@@ -1114,15 +1131,9 @@ def _add_openxr_config_debug_info(debug: dict[str, Any], config: OpenXRRenderCon
     if config.max_disparity_px is not None:
         debug["openxr_max_disparity_px"] = float(config.max_disparity_px)
     debug["openxr_parallax_preset"] = str(config.parallax_preset)
-    debug["openxr_legacy_shader_uniforms"] = {
-        "ipd": float(config.ipd),
-        "depth_strength": float(config.depth_strength),
-        "stereo_scale": float(config.stereo_scale),
-        "max_shift_ratio": float(config.max_shift_ratio),
-        "convergence": float(config.convergence),
-        "max_disparity_px": None if config.max_disparity_px is None else float(config.max_disparity_px),
-        "parallax_preset": str(config.parallax_preset),
-    }
+    uniforms = _openxr_legacy_shader_uniforms(config)
+    debug["openxr_legacy_shader_uniforms"] = uniforms
+    return uniforms
 
 
 def _add_preprocess_debug_info(debug: dict[str, Any], rgb_frame: torch.Tensor) -> None:

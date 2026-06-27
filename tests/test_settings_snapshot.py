@@ -35,6 +35,7 @@ def test_settings_snapshot_classifies_change_levels():
     assert RuntimeSettingsSnapshot(version=1, timestamp=1.0).classify() is SnapshotChangeClass.NO_CHANGE
     assert RuntimeSettingsSnapshot(version=2, timestamp=1.0, temporal_strength=0.5).classify() is SnapshotChangeClass.HOT_RELOAD
     assert RuntimeSettingsSnapshot(version=3, timestamp=1.0, depth_backend="pytorch_cuda").classify() is SnapshotChangeClass.PIPELINE_REBUILD
+    assert RuntimeSettingsSnapshot(version=4, timestamp=1.0, profile_sync=True).classify() is SnapshotChangeClass.PIPELINE_REBUILD
     assert RuntimeSettingsSnapshot(version=4, timestamp=1.0, device="cuda:1").classify() is SnapshotChangeClass.SESSION_RESTART
 
 
@@ -61,11 +62,11 @@ def test_settings_snapshot_classifies_spec_layer_fields():
     )
 
 
-def test_settings_snapshot_excludes_non_config_spec_layer_fields_from_runtime_updates():
+def test_settings_snapshot_maps_runtime_quality_mode_to_runtime_config_mode():
     snapshot = RuntimeSettingsSnapshot(
         version=10,
         timestamp=1.0,
-        runtime_quality_mode="movie",
+        runtime_quality_mode="game_low_latency",
         render_size_policy="scaled",
         stereo_render_scale=0.5,
         stereo_synthesis_mode="full_synthesis_eyes",
@@ -77,7 +78,7 @@ def test_settings_snapshot_excludes_non_config_spec_layer_fields_from_runtime_up
 
     updates = snapshot.to_config_updates()
 
-    assert updates == {"depth_strength": 1.25}
+    assert updates == {"depth_strength": 1.25, "mode": "game"}
 
 
 def test_settings_snapshot_maps_ipd_mm_to_runtime_ipd():
@@ -122,6 +123,15 @@ def test_settings_snapshot_maps_temporal_reset_fields():
     assert updates["reset_cooldown_frames"] == 9
 
 
+def test_settings_snapshot_maps_profile_sync_as_provider_rebuild_config():
+    snapshot = RuntimeSettingsSnapshot(version=15, timestamp=1.0, profile_sync=True)
+
+    updates = snapshot.to_config_updates()
+
+    assert snapshot.classify() is SnapshotChangeClass.PIPELINE_REBUILD
+    assert updates == {"profile_sync": True}
+
+
 def test_runtime_applies_hot_settings_snapshot_without_rebuild():
     runtime = StereoRuntime(
         StereoRuntimeConfig(model_id="Distill-Any-Depth-Base", cache_dir="models", stereo_preset="cinema"),
@@ -142,6 +152,23 @@ def test_runtime_applies_hot_settings_snapshot_without_rebuild():
     assert runtime.config.temporal_strength == 0.4
     assert runtime.config.ipd == pytest.approx(0.06)
     assert runtime.active_settings_version == 12
+
+
+def test_runtime_applies_runtime_quality_mode_snapshot():
+    runtime = StereoRuntime(
+        StereoRuntimeConfig(model_id="Distill-Any-Depth-Base", cache_dir="models", mode="movie"),
+        depth_provider=FakeDepthProvider(),
+        collect_memory_stats=False,
+    )
+
+    change_class = runtime.apply_settings_snapshot(
+        RuntimeSettingsSnapshot(version=16, timestamp=1.0, runtime_quality_mode="Still Image / HQ")
+    )
+
+    assert change_class is SnapshotChangeClass.HOT_RELOAD
+    assert runtime.config.mode == "image"
+    assert runtime.stereo_config.backend == "quality_4k"
+    assert runtime.active_settings_snapshot.runtime_quality_mode == "Still Image / HQ"
 
 
 def test_runtime_settings_snapshot_temporal_change_resets_temporal_history():
@@ -181,6 +208,39 @@ def test_runtime_rejects_pipeline_rebuild_snapshot_before_merging_active_setting
     assert exc_info.value.changed_fields == ("render_size_policy",)
     assert runtime.active_settings_version == 0
     assert runtime.active_settings_snapshot.render_size_policy is None
+
+
+def test_runtime_handles_profile_sync_with_depth_provider_rebuild(monkeypatch):
+    created = []
+
+    def fake_create_depth_provider(depth_config):
+        provider = FakeDepthProvider()
+        provider.depth_config = depth_config
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr("stereo_runtime.runtime.create_depth_provider", fake_create_depth_provider)
+    initial_provider = FakeDepthProvider()
+    runtime = StereoRuntime(
+        StereoRuntimeConfig(
+            model_id="Distill-Any-Depth-Base",
+            cache_dir="models",
+            profile_sync=False,
+        ),
+        depth_provider=initial_provider,
+        collect_memory_stats=False,
+    )
+
+    change_class = runtime.apply_settings_snapshot(
+        RuntimeSettingsSnapshot(version=15, timestamp=1.0, profile_sync=True)
+    )
+
+    assert change_class is SnapshotChangeClass.PIPELINE_REBUILD
+    assert runtime.config.profile_sync is True
+    assert initial_provider.closed is True
+    assert runtime.depth_provider is created[-1]
+    assert runtime.depth_config.profile_sync is True
+    assert runtime.active_settings_snapshot.profile_sync is True
 
 
 def test_runtime_result_debug_info_tracks_active_settings_snapshot_fields():

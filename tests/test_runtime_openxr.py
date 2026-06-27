@@ -232,10 +232,7 @@ def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
         OpenXRRenderConfig(ipd=0.064, stereo_scale=0.35, depth_strength=2.0, max_shift_ratio=0.0),
     )
 
-    assert result.debug_info["openxr_ipd"] == 0.064
-    assert result.debug_info["openxr_stereo_scale"] == 0.35
-    assert result.debug_info["openxr_max_shift_ratio"] == 0.0
-    assert result.debug_info["openxr_legacy_shader_uniforms"] == {
+    assert result.legacy_shader_uniforms == {
         "ipd": 0.064,
         "depth_strength": 2.0,
         "stereo_scale": 0.35,
@@ -244,6 +241,10 @@ def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
         "max_disparity_px": None,
         "parallax_preset": "legacy",
     }
+    assert result.debug_info["openxr_ipd"] == 0.064
+    assert result.debug_info["openxr_stereo_scale"] == 0.35
+    assert result.debug_info["openxr_max_shift_ratio"] == 0.0
+    assert result.debug_info["openxr_legacy_shader_uniforms"] == result.legacy_shader_uniforms
 
 
 def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
@@ -273,6 +274,8 @@ def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
     assert result.debug_info["parallax_budget_preset"] == "standard"
     assert result.debug_info["depth_response"] == "linear_clamp_convergence_v1"
     assert result.debug_info["parallax_resolver_version"] == 1
+    assert result.legacy_shader_uniforms["max_disparity_px"] == 18.0
+    assert result.legacy_shader_uniforms["parallax_preset"] == "standard"
     assert result.debug_info["openxr_max_disparity_px"] == 18.0
     assert result.debug_info["openxr_parallax_preset"] == "standard"
 
@@ -282,6 +285,7 @@ def test_openxr_rgb_depth_viewer_keeps_ipd_separate_from_stereo_scale():
 
     assert "output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')" in source
     assert "if output_format == 'openxr_rgb_depth':" in source
+    assert "legacy_shader_uniforms=getattr(runtime_result, 'legacy_shader_uniforms', None)" in source
     assert 'debug_info.get("openxr_legacy_shader_uniforms")' in source
     assert 'self.ipd_uv = max(0.0, float(uniforms["ipd"]))' in source
     assert 'debug_info.get("openxr_stereo_scale", 1.0)' in source

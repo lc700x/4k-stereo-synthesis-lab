@@ -10,6 +10,23 @@ from .paths import BASE_DIR
 
 _MODEL_SIZES = ["Small", "SmallPlus", "Base", "Large", "Giant"]
 _SIZE_ORDER = {s: i for i, s in enumerate(_MODEL_SIZES)}
+_ENV_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+_ENV_IMAGE_NAMES = ("background", "panorama", "equirectangular", "360", "sky", "skybox")
+
+
+def _find_env_image_for_gui(room_dir):
+    if not room_dir or not os.path.isdir(room_dir):
+        return None
+    for stem in _ENV_IMAGE_NAMES:
+        for ext in _ENV_IMAGE_EXTS:
+            path = os.path.join(room_dir, stem + ext)
+            if os.path.isfile(path):
+                return path
+    for name in sorted(os.listdir(room_dir), key=lambda value: value.lower()):
+        path = os.path.join(room_dir, name)
+        if os.path.isfile(path) and os.path.splitext(name)[1].lower() in _ENV_IMAGE_EXTS:
+            return path
+    return None
 
 
 def parse_model_name(name):
@@ -162,7 +179,11 @@ def discover_environment_keys():
         room_dir = os.path.join(env_base, name)
         if not os.path.isdir(room_dir) or name.startswith("."):
             continue
-        if os.path.isfile(os.path.join(room_dir, "profile.json")) or os.path.isfile(os.path.join(room_dir, "environment.glb")):
+        if (
+            os.path.isfile(os.path.join(room_dir, "profile.json"))
+            or os.path.isfile(os.path.join(room_dir, "environment.glb"))
+            or _find_env_image_for_gui(room_dir)
+        ):
             room_dirs.append(name)
     if os.path.exists(os.path.join(env_base, "environment.glb")) and "Default" not in room_dirs:
         room_dirs.append("Default")

@@ -251,6 +251,14 @@ def test_environment_dropdown_saves_canonical_key():
     assert '"Environment Model": self.env_model_dd.value' not in config_mgr_text
 
 
+def test_gui_environment_discovery_accepts_panorama_image_folders():
+    config_text = _config_source().read_text(encoding="utf-8")
+
+    assert "def _find_env_image_for_gui" in config_text
+    assert '"background", "panorama", "equirectangular", "360", "sky", "skybox"' in config_text
+    assert "or _find_env_image_for_gui(room_dir)" in config_text
+
+
 def test_stereo_scale_control_is_next_to_ipd():
     builders_text = _file_text("builders.py")
     assert 'self.ipd_dd = CompactDropdown(options=[str(i) for i in range(50, 71)]' in builders_text

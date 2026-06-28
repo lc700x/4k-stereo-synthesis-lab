@@ -1,4 +1,6 @@
-from types import SimpleNamespace
+import inspect
+import sys
+from types import ModuleType, SimpleNamespace
 
 from streaming.encoder_profile import EncoderProfile
 from viewer.viewer_runtime import (
@@ -6,6 +8,7 @@ from viewer.viewer_runtime import (
     ViewerRuntimeConfig,
     frame_size_from_output,
     frame_size_from_runtime_result,
+    _select_stereo_window_class,
     start_viewer_streaming,
 )
 
@@ -39,6 +42,12 @@ def _config(**overrides):
     )
     values.update(overrides)
     return ViewerRuntimeConfig(**values)
+
+
+def _module_with_stereo_window(name, stereo_window):
+    module = ModuleType(name)
+    module.StereoWindow = stereo_window
+    return module
 
 
 def _callbacks():
@@ -88,6 +97,48 @@ def test_frame_size_from_runtime_result_falls_back_to_sbs_shape():
     )
 
     assert frame_size_from_runtime_result(result, stream_mode="MJPEG") == (1280, 720)
+
+
+def test_select_stereo_window_uses_metal_only_for_darwin_non_mjpeg(monkeypatch):
+    class OpenGLWindow:
+        pass
+
+    class MetalWindow:
+        uses_metal = True
+
+    monkeypatch.setitem(sys.modules, "viewer.viewer", _module_with_stereo_window("viewer.viewer", OpenGLWindow))
+    monkeypatch.setitem(
+        sys.modules,
+        "viewer.metal_viewer",
+        _module_with_stereo_window("viewer.metal_viewer", MetalWindow),
+    )
+
+    assert _select_stereo_window_class(_config(os_name="Darwin", stream_mode="")) is MetalWindow
+    assert _select_stereo_window_class(_config(os_name="Darwin", stream_mode="MJPEG")) is OpenGLWindow
+    assert _select_stereo_window_class(_config(os_name="Windows", stream_mode="")) is OpenGLWindow
+
+
+def test_select_stereo_window_falls_back_when_metal_import_fails(monkeypatch, capsys):
+    class OpenGLWindow:
+        pass
+
+    monkeypatch.setitem(sys.modules, "viewer.viewer", _module_with_stereo_window("viewer.viewer", OpenGLWindow))
+    monkeypatch.setitem(sys.modules, "viewer.metal_viewer", None)
+
+    assert _select_stereo_window_class(_config(os_name="Darwin", stream_mode="")) is OpenGLWindow
+    assert "Metal viewer unavailable" in capsys.readouterr().out
+
+
+def test_metal_viewer_exposes_current_runtime_contract():
+    from viewer.metal_viewer import StereoWindow
+
+    signature = inspect.signature(StereoWindow)
+
+    assert "depth_strength" in signature.parameters
+    assert "depth_ratio" not in signature.parameters
+    assert "kwargs" not in signature.parameters
+    assert hasattr(StereoWindow, "update_runtime_frame")
+    assert not hasattr(StereoWindow, "update_frame")
 
 
 def test_start_viewer_streaming_returns_none_for_local_mode(capsys):

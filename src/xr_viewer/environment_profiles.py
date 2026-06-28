@@ -3,9 +3,83 @@
 from .implementation import *
 from .constants import _BG_COLORS
 
+_PANORAMA_IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')
+_PANORAMA_IMAGE_NAMES = (
+    'background',
+    'panorama',
+    'equirectangular',
+    '360',
+    'sky',
+    'skybox',
+)
+
 
 class EnvironmentProfileMixin:
     """Environment profile discovery, persistence, and runtime profile controls."""
+
+    @staticmethod
+    def _find_panorama_image_file(room_dir):
+        if not room_dir or not os.path.isdir(room_dir):
+            return None
+        for stem in _PANORAMA_IMAGE_NAMES:
+            for ext in _PANORAMA_IMAGE_EXTS:
+                path = os.path.join(room_dir, stem + ext)
+                if os.path.isfile(path):
+                    return path
+        try:
+            for name in sorted(os.listdir(room_dir), key=lambda value: value.lower()):
+                path = os.path.join(room_dir, name)
+                if os.path.isfile(path) and os.path.splitext(name)[1].lower() in _PANORAMA_IMAGE_EXTS:
+                    return path
+        except OSError:
+            pass
+        return None
+
+
+    def _panorama_profile_config(self, profile, room_dir):
+        if not isinstance(profile, dict):
+            return False, None, {}
+        raw_bg = profile.get('background')
+        raw_panorama = profile.get('panorama')
+        cfg = {}
+        if isinstance(raw_bg, str):
+            cfg['image'] = raw_bg
+        elif isinstance(raw_bg, dict):
+            cfg.update(raw_bg)
+        if isinstance(raw_panorama, str):
+            cfg.setdefault('image', raw_panorama)
+        elif isinstance(raw_panorama, dict):
+            cfg.update(raw_panorama)
+
+        env_type = str(profile.get('environment_type', profile.get('type', '')) or '').strip().lower()
+        bg_type = str(cfg.get('type', cfg.get('kind', '')) or '').strip().lower()
+        projection = str(cfg.get('projection', cfg.get('format', '')) or '').strip().lower()
+        is_panorama = (
+            env_type in ('panorama', '360', '360_photo', '360-photo', 'photo_sphere', 'photosphere')
+            or bg_type in ('panorama', '360', '360_photo', '360-photo', 'equirectangular', 'photo_sphere', 'photosphere')
+            or projection in ('equirectangular', '360', '360_photo', '360-photo')
+            or raw_panorama is True
+        )
+        if not is_panorama:
+            return False, None, {}
+
+        image = (
+            cfg.get('image')
+            or cfg.get('path')
+            or cfg.get('file')
+            or profile.get('background_image')
+            or None
+        )
+        if image:
+            image = str(image)
+            path = image if os.path.isabs(image) else os.path.join(room_dir, image)
+            cfg['image'] = image
+        else:
+            path = self._find_panorama_image_file(room_dir)
+            if path:
+                cfg['image'] = os.path.basename(path)
+        return True, path, cfg
+
 
     def _discover_environment_models(self):
         """Return room folders that can be switched at runtime."""
@@ -18,7 +92,11 @@ class EnvironmentProfileMixin:
                 room_dir = os.path.join(root, name)
                 if not os.path.isdir(room_dir):
                     continue
-                if os.path.isfile(os.path.join(room_dir, 'profile.json')) or os.path.isfile(os.path.join(room_dir, 'environment.glb')):
+                if (
+                    os.path.isfile(os.path.join(room_dir, 'profile.json'))
+                    or os.path.isfile(os.path.join(room_dir, 'environment.glb'))
+                    or self._find_panorama_image_file(room_dir)
+                ):
                     models.append(name)
         except Exception:
             pass
@@ -55,6 +133,8 @@ class EnvironmentProfileMixin:
         self._screen_light_dynamic = bool(base.get('screen_light_dynamic', False))
         self._screen_light_sample_interval = max(1, int(base.get('screen_light_sample_interval', 15)))
         self._screen_light_lerp = max(0.0, min(1.0, float(base.get('screen_light_lerp', 0.14))))
+        self._panorama_background_path = None
+        self._panorama_background_settings = {}
 
 
     def _configure_environment_profile(self):
@@ -82,13 +162,34 @@ class EnvironmentProfileMixin:
             except Exception as exc:
                 print(f"[OpenXRViewer] Failed to read environment profile {profile_path}: {exc}")
 
+        is_panorama, panorama_path, panorama_cfg = self._panorama_profile_config(profile, room_dir)
         glb_value = profile.get('glb', 'environment.glb')
         if glb_value in (None, '', False):
             glb_path = None
         else:
             glb_name = str(glb_value)
             glb_path = glb_name if os.path.isabs(glb_name) else os.path.join(room_dir, glb_name)
-        if glb_path is not None and not os.path.exists(glb_path) and selected.lower() != 'default':
+        if not is_panorama and (glb_path is None or not os.path.isfile(glb_path)):
+            auto_panorama_path = self._find_panorama_image_file(room_dir)
+            if auto_panorama_path:
+                is_panorama = True
+                panorama_path = auto_panorama_path
+                panorama_cfg = {
+                    'type': 'equirectangular',
+                    'image': os.path.basename(auto_panorama_path),
+                    'exposure': 1.0,
+                    'yaw_offset_deg': 0.0,
+                }
+        if is_panorama:
+            if panorama_path and os.path.isfile(panorama_path):
+                glb_path = None
+            else:
+                missing = panorama_path or os.path.join(room_dir, 'background.png')
+                print(f"[OpenXRViewer] Panorama environment '{selected}' missing image: {missing}")
+                is_panorama = False
+                panorama_path = None
+                panorama_cfg = {}
+        if not is_panorama and glb_path is not None and not os.path.exists(glb_path) and selected.lower() != 'default':
             fallback = os.path.join(root, 'environment.glb')
             print(f"[OpenXRViewer] Environment '{selected}' missing GLB, fallback to Default")
             selected = 'Default'
@@ -100,6 +201,8 @@ class EnvironmentProfileMixin:
         self._active_environment = None if selected.lower() == 'default' else selected
         self._env_profile = profile
         self._env_model_path = glb_path
+        self._panorama_background_path = panorama_path if is_panorama else None
+        self._panorama_background_settings = panorama_cfg if is_panorama else {}
 
         self._env_model_pos = self._profile_vec3(profile, ('model_position', 'position'), self._env_model_pos)
         self._env_model_scale = self._profile_vec3(profile, ('model_scale', 'scale'), self._env_model_scale)

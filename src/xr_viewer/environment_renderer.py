@@ -80,6 +80,92 @@ class EnvironmentRendererMixin:
         self._env_prog['u_screen_light_intensity'].value = intensity
 
 
+    def _get_panorama_texture(self):
+        path = getattr(self, '_panorama_background_path', None)
+        if not path:
+            return None
+        path = os.path.abspath(path)
+        if self._panorama_tex is not None and self._panorama_tex_path == path:
+            return self._panorama_tex
+        if self._panorama_tex is not None:
+            try:
+                self._panorama_tex.release()
+            except Exception:
+                pass
+            self._panorama_tex = None
+            self._panorama_tex_path = None
+        try:
+            img = Image.open(path).convert('RGB')
+            max_tex = int(getattr(self.ctx, 'info', {}).get('GL_MAX_TEXTURE_SIZE', 8192) or 8192)
+            if max(img.size) > max_tex:
+                scale = float(max_tex) / float(max(img.size))
+                new_size = (
+                    max(1, int(round(img.size[0] * scale))),
+                    max(1, int(round(img.size[1] * scale))),
+                )
+                resample = getattr(getattr(Image, 'Resampling', Image), 'LANCZOS', Image.BICUBIC)
+                img = img.resize(new_size, resample)
+            arr = np.asarray(img, dtype=np.uint8)
+            tex = self.ctx.texture(img.size, 3, arr.tobytes())
+            tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+            try:
+                tex.repeat_x = True
+                tex.repeat_y = False
+            except Exception:
+                pass
+            try:
+                tex.build_mipmaps()
+            except Exception:
+                tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+            self._panorama_tex = tex
+            self._panorama_tex_path = path
+            print(f"[OpenXRViewer] Panorama background loaded: {path} ({img.size[0]}x{img.size[1]})")
+            return tex
+        except Exception as exc:
+            print(f"[OpenXRViewer] Panorama background load failed: {exc}")
+            return None
+
+
+    def _render_panorama_background(self, mgl_fbo, view_mat, proj_mat):
+        if self._panorama_prog is None or self._panorama_vao is None:
+            return
+        tex = self._get_panorama_texture()
+        if tex is None:
+            return
+        settings = getattr(self, '_panorama_background_settings', {}) or {}
+        try:
+            yaw_offset = math.radians(float(settings.get('yaw_offset_deg', 0.0))) / (2.0 * math.pi)
+        except (TypeError, ValueError):
+            yaw_offset = 0.0
+        try:
+            exposure = float(settings.get('exposure', 1.0))
+        except (TypeError, ValueError):
+            exposure = 1.0
+        flip_y = 1 if bool(settings.get('flip_y', False)) else 0
+
+        view_rot = np.array(view_mat, dtype=np.float32, copy=True)
+        view_rot[:3, 3] = 0.0
+        try:
+            inv_proj = np.linalg.inv(proj_mat.astype(np.float32))
+            inv_view_rot = np.linalg.inv(view_rot)
+        except Exception:
+            return
+
+        mgl_fbo.use()
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.ctx.depth_mask = False
+        self.ctx.disable(moderngl.BLEND)
+        tex.use(location=8)
+        self._panorama_prog['u_inv_proj'].write(inv_proj.T.astype('f4').tobytes())
+        self._panorama_prog['u_inv_view_rot'].write(inv_view_rot.T.astype('f4').tobytes())
+        self._panorama_prog['u_yaw_offset'].value = float(yaw_offset)
+        self._panorama_prog['u_exposure'].value = max(0.0, float(exposure))
+        self._panorama_prog['u_flip_y'].value = flip_y
+        self._panorama_vao.render(moderngl.TRIANGLE_STRIP)
+        self.ctx.depth_mask = True
+        self.ctx.enable(moderngl.DEPTH_TEST)
+
+
     def _render_env_model(self, mgl_fbo, vp_mat, view_mat):
         """Render the glTF environment model in world space."""
         if not self._env_model_visible or not self._env_model_prims:

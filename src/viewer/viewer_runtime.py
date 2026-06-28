@@ -101,7 +101,7 @@ def _parse_size_text(value):
 def start_viewer_streaming(window, config: ViewerRuntimeConfig, callbacks: ViewerRuntimeCallbacks):
     if config.stream_mode == "RTMP":
         if config.os_name == "Windows":
-            from utils import set_window_to_bottom
+            from viewer.window_control import set_window_to_bottom
 
             def bottom_loop():
                 while True:
@@ -139,15 +139,32 @@ def start_viewer_streaming(window, config: ViewerRuntimeConfig, callbacks: Viewe
     return None
 
 
-def run_viewer_mode(runtime_q, config: ViewerRuntimeConfig, callbacks: ViewerRuntimeCallbacks, thread_latencies):
+def _opengl_stereo_window_class():
     from viewer.viewer import StereoWindow
+
+    return StereoWindow
+
+
+def _select_stereo_window_class(config: ViewerRuntimeConfig):
+    if config.os_name == "Darwin" and config.stream_mode != "MJPEG":
+        try:
+            from viewer.metal_viewer import StereoWindow as MetalStereoWindow
+        except Exception as exc:
+            print(f"[Main] Metal viewer unavailable, falling back to OpenGL viewer: {exc}")
+        else:
+            return MetalStereoWindow
+    return _opengl_stereo_window_class()
+
+
+def run_viewer_mode(runtime_q, config: ViewerRuntimeConfig, callbacks: ViewerRuntimeCallbacks, thread_latencies):
+    StereoWindow = _select_stereo_window_class(config)
 
     stats = FrameStats(low_percentile=0.1).start(time.perf_counter())
     latency_stats = LatencyStats()
     runtime_result, capture_start_time = runtime_q.get()
     width, height = frame_size_from_runtime_result(runtime_result, stream_mode=config.stream_mode)
 
-    window = StereoWindow(
+    window_kwargs = dict(
         capture_mode=config.capture_mode,
         monitor_index=config.monitor_index,
         ipd=config.ipd,
@@ -169,6 +186,13 @@ def run_viewer_mode(runtime_q, config: ViewerRuntimeConfig, callbacks: ViewerRun
         upscaler=config.upscaler,
         upscaler_sharpness=config.upscaler_sharpness,
     )
+    try:
+        window = StereoWindow(**window_kwargs)
+    except Exception as exc:
+        if not getattr(StereoWindow, "uses_metal", False):
+            raise
+        print(f"[Main] Metal viewer initialization failed, falling back to OpenGL viewer: {exc}")
+        window = _opengl_stereo_window_class()(**window_kwargs)
 
     streamer = start_viewer_streaming(window, config, callbacks)
 
@@ -241,7 +265,8 @@ def run_viewer_mode(runtime_q, config: ViewerRuntimeConfig, callbacks: ViewerRun
         if post_ms:
             callbacks.breakdown_add_time("post", post_ms / 1000.0)
         swap_start = time.perf_counter()
-        glfw.swap_buffers(window.window)
+        if not getattr(window, "uses_metal", False):
+            glfw.swap_buffers(window.window)
         callbacks.breakdown_add_time("swap", time.perf_counter() - swap_start)
         glfw.poll_events()
         callbacks.log_fps_breakdown()

@@ -381,6 +381,11 @@ class EnvironmentModelMixin:
         if not getattr(self, '_environment_enabled', True):
             self._env_model_visible = False
             return
+        if getattr(self, '_panorama_background_path', None):
+            self._env_model_visible = False
+            self._env_model_prims = []
+            self._active_environment = None
+            return
         path = self._env_model_path
         if path is None:
             self._env_model_visible = False

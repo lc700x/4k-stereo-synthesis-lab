@@ -156,6 +156,45 @@ void main() {
 }
 """
 
+_PANORAMA_VERT = """
+#version 330
+in vec2 in_position;
+out vec2 v_ndc;
+void main() {
+    v_ndc = in_position;
+    gl_Position = vec4(in_position, 0.999, 1.0);
+}
+"""
+
+_PANORAMA_FRAG = """
+#version 330
+uniform sampler2D u_tex;
+uniform mat4 u_inv_proj;
+uniform mat4 u_inv_view_rot;
+uniform float u_yaw_offset;
+uniform float u_exposure;
+uniform int u_flip_y;
+in vec2 v_ndc;
+out vec4 fragColor;
+
+const float PI = 3.14159265358979323846;
+
+void main() {
+    vec4 view_h = u_inv_proj * vec4(v_ndc, 1.0, 1.0);
+    vec3 view_dir = normalize(view_h.xyz / max(abs(view_h.w), 1e-6));
+    vec3 dir = normalize((u_inv_view_rot * vec4(view_dir, 0.0)).xyz);
+
+    float u = atan(dir.x, -dir.z) / (2.0 * PI) + 0.5 + u_yaw_offset;
+    float v = 0.5 - asin(clamp(dir.y, -1.0, 1.0)) / PI;
+    if (u_flip_y != 0) {
+        v = 1.0 - v;
+    }
+
+    vec3 color = texture(u_tex, vec2(fract(u), clamp(v, 0.0, 1.0))).rgb;
+    fragColor = vec4(color * u_exposure, 1.0);
+}
+"""
+
 _GLOW_DOWNSAMPLE_FRAG = """
 #version 330
 in vec2 uv;

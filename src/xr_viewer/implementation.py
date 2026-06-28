@@ -75,6 +75,8 @@ from .glsl import (
     _GLOW_SHELL_VERT,
     _GROUND_FRAG,
     _OVERLAY_FRAG,
+    _PANORAMA_FRAG,
+    _PANORAMA_VERT,
     _QUAD_COPY_FRAG,
     _SCREEN_DOWNSAMPLE_FRAG,
     _SCREEN_QUALITY_VERT,
@@ -1033,6 +1035,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._screen_quality_size = None
         self._screen_quality_logged_size = None
         self._screen_quality_logged_sources = set()
+        self._panorama_prog = None
+        self._panorama_vao = None
+        self._panorama_vbo = None
+        self._panorama_tex = None
+        self._panorama_tex_path = None
+        self._panorama_background_path = None
+        self._panorama_background_settings = {}
 
     # Initialisation helpers
     def _init_moderngl(self):
@@ -1090,6 +1099,26 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         )
         self._quad_copy_vao = self.ctx.vertex_array(
             self._quad_copy_prog, [(vbo, '2f 2f', 'in_position', 'in_uv')]
+        )
+
+        self._panorama_prog = self.ctx.program(
+            vertex_shader=_PANORAMA_VERT,
+            fragment_shader=_PANORAMA_FRAG,
+        )
+        self._panorama_prog['u_tex'].value = 8
+        self._panorama_prog['u_yaw_offset'].value = 0.0
+        self._panorama_prog['u_exposure'].value = 1.0
+        self._panorama_prog['u_flip_y'].value = 0
+        panorama_vertices = np.array([
+            -1.0, -1.0,
+             1.0, -1.0,
+            -1.0,  1.0,
+             1.0,  1.0,
+        ], dtype='f4')
+        self._panorama_vbo = self.ctx.buffer(panorama_vertices.tobytes())
+        self._panorama_vao = self.ctx.vertex_array(
+            self._panorama_prog,
+            [(self._panorama_vbo, '2f', 'in_position')],
         )
 
         # Screen border (solid-color quad rendered before the main screen)
@@ -2127,6 +2156,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # reflection light disabled while the second eye rendered it enabled
         # (left-eye flicker).
         self._ensure_screen_dimensions()
+        if getattr(self, '_panorama_background_path', None):
+            self._render_panorama_background(mgl_fbo, view_mat, proj_mat)
+            mgl_fbo.use()
+            glClear(GL_DEPTH_BUFFER_BIT)
         # -3. Environment model (glTF 3D scene, very back) -background layer only
         if self._env_model_visible and self._env_model_prims:
             self._render_env_model(mgl_fbo, vp_mat, view_mat)
@@ -4809,6 +4842,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         for tex in (
             self._overlay_tex,
+            self._panorama_tex,
             self._team_status_tex,
             self._team_help_tex,
             self._depth_osd_tex,
@@ -4825,6 +4859,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 except Exception:
                     pass
         self._overlay_tex = None
+        self._panorama_tex = None
+        self._panorama_tex_path = None
         self._team_status_tex = None
         self._team_help_tex = None
         self._depth_osd_tex = None
@@ -4848,6 +4884,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         for attr in (
             '_screen_ds_vao', '_screen_rcas_vao', '_screen_ds_prog', '_screen_rcas_prog',
+            '_panorama_vao', '_panorama_vbo', '_panorama_prog',
             '_curved_vao', '_curved_copy_vao', '_curved_vbo', '_curved_prog', '_curved_copy_prog',
             '_curved_border_vao', '_curved_border_vbo', '_curved_border_prog',
         ):

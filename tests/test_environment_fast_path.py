@@ -103,6 +103,54 @@ def test_default_profile_starts_with_surround_glow():
     assert profile["lighting_presets"][0]["glow_mode"] == "surround"
 
 
+def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
+    viewer = _make_default_viewer(monkeypatch)
+    room = tmp_path / "PanoramaRoom"
+    room.mkdir()
+    image = room / "background.jpg"
+    image.write_bytes(b"not-a-real-image")
+
+    is_panorama, path, cfg = viewer._panorama_profile_config(
+        {
+            "environment_type": "panorama",
+            "background": {"image": "background.jpg", "yaw_offset_deg": 45.0},
+        },
+        str(room),
+    )
+
+    assert is_panorama
+    assert path == str(image)
+    assert cfg["image"] == "background.jpg"
+    assert cfg["yaw_offset_deg"] == 45.0
+
+
+def test_environment_discovery_includes_panorama_image_folder(monkeypatch, tmp_path):
+    viewer = _make_default_viewer(monkeypatch)
+    root = tmp_path / "environments"
+    pano = root / "Pano"
+    pano.mkdir(parents=True)
+    (pano / "panorama.png").write_bytes(b"not-a-real-image")
+    viewer._environment_root = str(root)
+    viewer._environment_model = "Default"
+
+    assert "Pano" in viewer._discover_environment_models()
+
+
+def test_panorama_environment_skips_glb_initialization(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._environment_enabled = True
+    viewer._panorama_background_path = "background.jpg"
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+    viewer._active_environment = "Pano"
+
+    viewer._init_env_model()
+
+    assert not viewer._env_model_visible
+    assert viewer._env_model_prims == []
+    assert viewer._active_environment is None
+
+
 def test_default_glow_on_keeps_background_effect_path(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._environment_model = "Default"

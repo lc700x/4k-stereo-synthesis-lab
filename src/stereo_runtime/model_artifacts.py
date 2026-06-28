@@ -150,6 +150,7 @@ def ensure_onnx_exported(
     height: int = 294,
     width: int = 518,
     dtype: OnnxDtypeMode = "auto",
+    local_files_only: bool = False,
     export_if_missing: bool = False,
 ) -> Path:
     paths = artifact_paths_for_model(
@@ -175,6 +176,7 @@ def ensure_onnx_exported(
         height=height,
         width=width,
         dtype=dtype,
+        local_files_only=local_files_only,
         force_download=False,
     )
     return result.output_path
@@ -253,6 +255,7 @@ def prepare_model_artifacts(
             height=export_height,
             width=export_width,
             dtype=onnx_dtype,
+            local_files_only=local_files_only,
             export_if_missing=True,
         )
     elif selected_onnx is None:

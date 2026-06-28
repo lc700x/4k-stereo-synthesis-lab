@@ -108,7 +108,16 @@ def _is_infinidepth_model(model_id: str) -> bool:
     return "infinidepth" in str(model_id).lower()
 
 
-def load_model_for_dtype(auto_model_cls, model_id: str, *, dtype, device, cache_dir: Path, force_download: bool):
+def load_model_for_dtype(
+    auto_model_cls,
+    model_id: str,
+    *,
+    dtype,
+    device,
+    cache_dir: Path,
+    local_files_only: bool,
+    force_download: bool,
+):
     import torch
 
     if _is_infinidepth_model(model_id):
@@ -119,7 +128,7 @@ def load_model_for_dtype(auto_model_cls, model_id: str, *, dtype, device, cache_
         model_path = _resolve_hf_model_file(
             model_id,
             cache_dir,
-            local_files_only=False,
+            local_files_only=local_files_only,
             force_download=force_download,
         )
         model = InfiniDepthModel(model_path=model_path, encoder=_infinidepth_encoder_for_model(model_id)).to(device, dtype=dtype)
@@ -131,6 +140,7 @@ def load_model_for_dtype(auto_model_cls, model_id: str, *, dtype, device, cache_
         dtype=dtype,
         cache_dir=str(cache_dir),
         weights_only=True,
+        local_files_only=local_files_only,
         force_download=force_download,
     ).to(device)
     if dtype == torch.float16:
@@ -150,6 +160,7 @@ def export_depth_model_onnx(
     height: int = 294,
     width: int = 518,
     dtype: OnnxDtypeMode = "auto",
+    local_files_only: bool = False,
     force_download: bool = True,
     auto_model_cls=None,
 ) -> OnnxExportResult:
@@ -171,6 +182,7 @@ def export_depth_model_onnx(
         dtype=dtype_obj,
         device=device_obj,
         cache_dir=cache_dir,
+        local_files_only=local_files_only,
         force_download=force_download,
     )
 
@@ -189,6 +201,7 @@ def export_depth_model_onnx(
             dtype=dtype_obj,
             device=device_obj,
             cache_dir=cache_dir,
+            local_files_only=local_files_only,
             force_download=False,
         )
         ok, probe_reason = probe_model_dtype(model, device=device_obj, dtype=dtype_obj, height=height, width=width)

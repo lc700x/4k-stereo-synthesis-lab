@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,6 +60,34 @@ def test_prepare_model_artifacts_reports_missing_without_side_effects(tmp_path: 
 def test_prepare_model_artifacts_local_files_only_requires_model_dir(tmp_path: Path):
     with pytest.raises(FileNotFoundError):
         prepare_model_artifacts("Distill-Any-Depth-Base", cache_dir=tmp_path, local_files_only=True)
+
+
+def test_prepare_model_artifacts_passes_local_files_only_to_onnx_export(monkeypatch, tmp_path: Path):
+    calls = {}
+    paths = artifact_paths_for_model("Distill-Any-Depth-Base", cache_dir=tmp_path)
+    paths.model_dir.mkdir(parents=True)
+
+    def fake_export(**kwargs):
+        calls.update(kwargs)
+        output_path = Path(kwargs["output_path"])
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(b"onnx")
+        return SimpleNamespace(output_path=output_path)
+
+    import stereo_runtime.onnx_export as onnx_export
+
+    monkeypatch.setattr(onnx_export, "export_depth_model_onnx", fake_export)
+
+    result = prepare_model_artifacts(
+        "Distill-Any-Depth-Base",
+        cache_dir=tmp_path,
+        local_files_only=True,
+        export_onnx_if_missing=True,
+    )
+
+    assert result.onnx_ready is True
+    assert calls["local_files_only"] is True
+    assert calls["force_download"] is False
 
 
 def test_prepare_model_artifacts_builds_trt_from_existing_onnx(monkeypatch, tmp_path: Path):

@@ -468,6 +468,7 @@ class CoreRuntimeEyeMixin:
             self._apply_runtime_rgb_depth_config(
                 debug_info,
                 shader_uniforms=getattr(runtime_result, 'shader_uniforms', None),
+                output_eye_size=getattr(runtime_result, 'output_eye_size', None),
             )
             source_rgb = getattr(runtime_result, 'source_rgb', None)
             if source_rgb is None:
@@ -531,7 +532,7 @@ class CoreRuntimeEyeMixin:
         if self._d3d11_native_renderer is not None:
             self._d3d11_native_renderer.has_frame = False
 
-    def _apply_runtime_rgb_depth_config(self, debug_info, *, shader_uniforms=None):
+    def _apply_runtime_rgb_depth_config(self, debug_info, *, shader_uniforms=None, output_eye_size=None):
         uniforms = shader_uniforms
         if not isinstance(uniforms, dict):
             uniforms = debug_info.get("openxr_shader_uniforms")
@@ -544,6 +545,8 @@ class CoreRuntimeEyeMixin:
         max_disparity_px = uniforms.get("max_disparity_px", debug_info.get("resolved_max_disparity_px", 0.0))
         self._runtime_rgb_depth_max_disparity_px = max(0.0, float(max_disparity_px or 0.0))
         render_width = _runtime_shader_render_width(uniforms.get("render_size"))
+        if render_width <= 0:
+            render_width = _runtime_shader_render_width(output_eye_size)
         if render_width <= 0:
             render_width = _runtime_shader_render_width(debug_info.get("runtime_output_eye_size"))
         self._runtime_rgb_depth_render_width = render_width

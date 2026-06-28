@@ -13,15 +13,11 @@ def _clamp_i32(value, lo: tl.constexpr, hi: tl.constexpr):
 @triton.jit
 def _shift_from_depth(
     depth_value,
-    width: tl.constexpr,
-    depth_strength: tl.constexpr,
     convergence: tl.constexpr,
-    effective_ipd_m: tl.constexpr,
-    max_shift_ratio: tl.constexpr,
+    max_disparity_px: tl.constexpr,
 ):
     depth_value = tl.minimum(tl.maximum(depth_value, 0.0), 1.0)
-    max_px = width * effective_ipd_m * max_shift_ratio
-    return -(depth_value - convergence) * depth_strength * max_px
+    return -(depth_value - convergence) * max_disparity_px * 0.5
 
 
 @triton.jit
@@ -42,14 +38,12 @@ def _sample_eye(
     width: tl.constexpr,
     height: tl.constexpr,
     pixels: tl.constexpr,
-    depth_strength: tl.constexpr,
     convergence: tl.constexpr,
-    effective_ipd_m: tl.constexpr,
-    max_shift_ratio: tl.constexpr,
+    max_disparity_px: tl.constexpr,
 ):
     tx_i = _clamp_i32(target_x, 0, width - 1)
     depth_value = _load_depth_at(depth, y, tx_i, width, height)
-    shift_px = _shift_from_depth(depth_value, width, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
+    shift_px = _shift_from_depth(depth_value, convergence, max_disparity_px)
     src_x = target_x.to(tl.float32) + shift_px * eye_sign
     src_x = tl.minimum(tl.maximum(src_x, 0.0), (width - 1) * 1.0)
     x0_f = tl.floor(src_x)
@@ -69,10 +63,8 @@ def _mask_at(
     x,
     width: tl.constexpr,
     height: tl.constexpr,
-    depth_strength: tl.constexpr,
     convergence: tl.constexpr,
-    effective_ipd_m: tl.constexpr,
-    max_shift_ratio: tl.constexpr,
+    max_disparity_px: tl.constexpr,
     edge_threshold: tl.constexpr,
     shift_edge_threshold_px: tl.constexpr,
 ):
@@ -86,9 +78,9 @@ def _mask_at(
             center_depth = _load_depth_at(depth, yy, xx, width, height)
             right_depth = _load_depth_at(depth, yy, xx + 1, width, height)
             down_depth = _load_depth_at(depth, yy + 1, xx, width, height)
-            center_shift = tl.abs(_shift_from_depth(center_depth, width, depth_strength, convergence, effective_ipd_m, max_shift_ratio))
-            right_shift = tl.abs(_shift_from_depth(right_depth, width, depth_strength, convergence, effective_ipd_m, max_shift_ratio))
-            down_shift = tl.abs(_shift_from_depth(down_depth, width, depth_strength, convergence, effective_ipd_m, max_shift_ratio))
+            center_shift = tl.abs(_shift_from_depth(center_depth, convergence, max_disparity_px))
+            right_shift = tl.abs(_shift_from_depth(right_depth, convergence, max_disparity_px))
+            down_shift = tl.abs(_shift_from_depth(down_depth, convergence, max_disparity_px))
             depth_edge = (tl.abs(right_depth - center_depth) + tl.abs(down_depth - center_depth)) > edge_threshold
             shift_edge = (tl.abs(right_shift - center_shift) + tl.abs(down_shift - center_shift)) > shift_edge_threshold_px
             found = found | (valid & (depth_edge | shift_edge))
@@ -106,10 +98,8 @@ def _filled_eye(
     width: tl.constexpr,
     height: tl.constexpr,
     pixels: tl.constexpr,
-    depth_strength: tl.constexpr,
     convergence: tl.constexpr,
-    effective_ipd_m: tl.constexpr,
-    max_shift_ratio: tl.constexpr,
+    max_disparity_px: tl.constexpr,
     edge_threshold: tl.constexpr,
     shift_edge_threshold_px: tl.constexpr,
 ):
@@ -123,10 +113,8 @@ def _filled_eye(
         width,
         height,
         pixels,
-        depth_strength,
         convergence,
-        effective_ipd_m,
-        max_shift_ratio,
+        max_disparity_px,
     )
     mask = _mask_at(
         depth,
@@ -134,10 +122,8 @@ def _filled_eye(
         target_x,
         width,
         height,
-        depth_strength,
         convergence,
-        effective_ipd_m,
-        max_shift_ratio,
+        max_disparity_px,
         edge_threshold,
         shift_edge_threshold_px,
     )
@@ -146,10 +132,10 @@ def _filled_eye(
     reliable_direction = tl.abs(right_depth - left_depth) > edge_threshold
     sample_right = right_depth < left_depth
 
-    left1 = _sample_eye(rgb, depth, channel, y, target_x - 1, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    right1 = _sample_eye(rgb, depth, channel, y, target_x + 1, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    left2 = _sample_eye(rgb, depth, channel, y, target_x - 2, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
-    right2 = _sample_eye(rgb, depth, channel, y, target_x + 2, eye_sign, width, height, pixels, depth_strength, convergence, effective_ipd_m, max_shift_ratio)
+    left1 = _sample_eye(rgb, depth, channel, y, target_x - 1, eye_sign, width, height, pixels, convergence, max_disparity_px)
+    right1 = _sample_eye(rgb, depth, channel, y, target_x + 1, eye_sign, width, height, pixels, convergence, max_disparity_px)
+    left2 = _sample_eye(rgb, depth, channel, y, target_x - 2, eye_sign, width, height, pixels, convergence, max_disparity_px)
+    right2 = _sample_eye(rgb, depth, channel, y, target_x + 2, eye_sign, width, height, pixels, convergence, max_disparity_px)
     balanced = (left1 + right1 + left2 + right2) * 0.25
     background = tl.where(sample_right, right1 * 0.65 + right2 * 0.35, left1 * 0.65 + left2 * 0.35)
     filled = tl.where(reliable_direction, background, balanced)
@@ -166,10 +152,8 @@ def _fast_plus_half_sbs_uint8_kernel(
     height: tl.constexpr,
     half_width: tl.constexpr,
     pixels: tl.constexpr,
-    depth_strength: tl.constexpr,
     convergence: tl.constexpr,
-    effective_ipd_m: tl.constexpr,
-    max_shift_ratio: tl.constexpr,
+    max_disparity_px: tl.constexpr,
     edge_threshold: tl.constexpr,
     shift_edge_threshold_px: tl.constexpr,
     block: tl.constexpr,
@@ -197,10 +181,8 @@ def _fast_plus_half_sbs_uint8_kernel(
         width,
         height,
         pixels,
-        depth_strength,
         convergence,
-        effective_ipd_m,
-        max_shift_ratio,
+        max_disparity_px,
         edge_threshold,
         shift_edge_threshold_px,
     )
@@ -214,10 +196,8 @@ def _fast_plus_half_sbs_uint8_kernel(
         width,
         height,
         pixels,
-        depth_strength,
         convergence,
-        effective_ipd_m,
-        max_shift_ratio,
+        max_disparity_px,
         edge_threshold,
         shift_edge_threshold_px,
     )
@@ -246,10 +226,8 @@ def make_fast_plus_fused_half_sbs_uint8(
     rgb: torch.Tensor,
     depth: torch.Tensor,
     *,
-    depth_strength: float,
     convergence: float,
-    effective_ipd_m: float,
-    max_shift_ratio: float,
+    max_disparity_px: float,
     edge_threshold: float = 0.03,
 ) -> torch.Tensor:
     rgb = rgb.contiguous()
@@ -259,7 +237,7 @@ def make_fast_plus_fused_half_sbs_uint8(
     half_width = width // 2
     pixels = height * width
     total = out.numel()
-    max_possible_shift = width * max(0.0, float(effective_ipd_m)) * float(max_shift_ratio) * float(depth_strength)
+    max_possible_shift = max(0.0, float(max_disparity_px)) * 0.5
     shift_edge_threshold_px = max(0.20, max_possible_shift * 0.05)
     block = 256
     grid = (triton.cdiv(total, block),)
@@ -272,10 +250,8 @@ def make_fast_plus_fused_half_sbs_uint8(
         height,
         half_width,
         pixels,
-        float(depth_strength),
         float(convergence),
-        float(effective_ipd_m),
-        float(max_shift_ratio),
+        float(max_disparity_px),
         float(edge_threshold),
         float(shift_edge_threshold_px),
         block,

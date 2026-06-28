@@ -1011,19 +1011,24 @@ class StereoRuntime:
         depth = match_depth(depth, rgb_frame.shape[-2], rgb_frame.shape[-1])
         if not can_use_fast_plus_fused_half_sbs_uint8(rgb_frame, depth):
             return None, f"unsupported_tensor:rgb={tuple(rgb_frame.shape)}/{rgb_frame.dtype}/{rgb_frame.device};depth={tuple(depth.shape)}/{depth.dtype}/{depth.device}"
-        ipd_mm = getattr(stereo_config, "ipd_mm", None)
-        if ipd_mm is None:
-            effective_ipd_m = max(0.0, float(getattr(stereo_config, "ipd", 0.064)))
-        else:
-            effective_ipd_m = max(0.0, float(ipd_mm)) / 1000.0 * max(0.0, float(getattr(stereo_config, "stereo_scale", 0.4)))
+        budget = resolve_parallax_budget(
+            render_width=int(rgb_frame.shape[-1]),
+            render_height=int(rgb_frame.shape[-2]),
+            preset=getattr(stereo_config, "parallax_preset", "standard"),
+            depth_strength=float(getattr(stereo_config, "depth_strength", 2.0)),
+            stereo_scale=float(getattr(stereo_config, "stereo_scale", 0.4)),
+            convergence=float(getattr(stereo_config, "convergence", 0.0)),
+            ipd_mm=getattr(stereo_config, "ipd_mm", None),
+            max_shift_ratio=float(getattr(stereo_config, "max_shift_ratio", 0.05)),
+            ipd=float(getattr(stereo_config, "ipd", 0.064)),
+            max_disparity_px=getattr(stereo_config, "max_disparity_px", None),
+        )
         try:
             return make_fast_plus_fused_half_sbs_uint8(
                 rgb_frame,
                 depth,
-                depth_strength=float(getattr(stereo_config, "depth_strength", 2.0)),
                 convergence=float(getattr(stereo_config, "convergence", 0.0)),
-                effective_ipd_m=effective_ipd_m,
-                max_shift_ratio=float(getattr(stereo_config, "max_shift_ratio", 0.05)),
+                max_disparity_px=float(budget.max_disparity_px),
                 edge_threshold=0.03,
             ), "used"
         except Exception as exc:

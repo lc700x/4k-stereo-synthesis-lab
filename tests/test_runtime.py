@@ -127,6 +127,20 @@ def test_stereo_runtime_exports_new_public_names():
     assert DepthProviderConfig.__name__ == "DepthProviderConfig"
     assert AliasRollingStats is RollingRuntimeStats
 
+
+def test_fast_plus_fused_uses_resolved_parallax_budget_contract():
+    fused_source = (ROOT / "src" / "stereo_runtime" / "fast_plus_fused_triton.py").read_text(encoding="utf-8")
+    runtime_source = (ROOT / "src" / "stereo_runtime" / "runtime.py").read_text(encoding="utf-8")
+
+    assert "max_disparity_px: tl.constexpr" in fused_source
+    assert "max_disparity_px: float" in fused_source
+    assert "max_disparity_px * 0.5" in fused_source
+    assert "effective_ipd_m" not in fused_source
+    assert "max_shift_ratio" not in fused_source
+    assert "width *" not in fused_source
+    assert "max_disparity_px=float(budget.max_disparity_px)" in runtime_source
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA required for fast_plus_fused Triton")
 def test_fast_plus_fused_runtime_emits_uint8_half_sbs(monkeypatch):
     provider = FakeDepthProvider()

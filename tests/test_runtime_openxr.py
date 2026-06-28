@@ -302,7 +302,10 @@ def test_openxr_rgb_depth_viewer_uses_structured_shader_uniforms():
     assert "output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')" in source
     assert "if output_format == 'openxr_rgb_depth':" in source
     assert "shader_uniforms=getattr(runtime_result, 'shader_uniforms', None)" in source
+    assert "output_eye_size=getattr(runtime_result, 'output_eye_size', None)" in source
     assert 'debug_info.get("openxr_shader_uniforms")' in source
+    assert 'render_width = _runtime_shader_render_width(output_eye_size)' in source
+    assert 'render_width = _runtime_shader_render_width(debug_info.get("runtime_output_eye_size"))' in source
     assert 'self._runtime_rgb_depth_max_disparity_px = max(0.0, float(max_disparity_px or 0.0))' in source
     assert "self._runtime_rgb_depth_render_width = render_width" in source
     assert "legacy_shader_uniforms" not in source

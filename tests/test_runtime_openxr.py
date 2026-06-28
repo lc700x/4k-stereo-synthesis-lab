@@ -58,6 +58,8 @@ def test_process_openxr_frame_defaults_to_rgb_depth_runtime_result():
     assert result.timing["depth_total_ms"] >= 0.0
     assert result.timing["openxr_render_ms"] == 0.0
     assert result.timing["pack_ms"] == 0.0
+    assert result.debug_info["application_runtime_target"] == "openxr"
+    assert result.debug_info["stereo_synthesis_mode"] == "rgb_depth_direct"
     assert result.debug_info["runtime_output_format"] == "openxr_rgb_depth"
     assert result.debug_info["runtime_output_dtype"] == "float32"
     assert result.debug_info["runtime_output_eye_size"] == "16x12"
@@ -178,6 +180,8 @@ def test_openxr_result_from_stereo_result_keeps_full_size_eye_views_for_quality_
     assert result.timing == {"total_ms": 5.0}
     assert result.provider_info == {"provider": "fake"}
     assert result.debug_info["backend"] == "quality_4k"
+    assert result.debug_info["application_runtime_target"] == "openxr"
+    assert result.debug_info["stereo_synthesis_mode"] == "full_synthesis_eyes"
     assert result.debug_info["runtime_output_format"] == "openxr_full_synthesis_eyes"
     assert result.debug_info["runtime_output_dtype"] == "float32"
     assert result.debug_info["runtime_output_eye_size"] == "4x2"
@@ -229,7 +233,7 @@ def test_openxr_result_from_stereo_result_splits_fused_half_sbs_eye_views_and_pr
     assert result.output_pack_backend == "split_half_sbs"
 
 
-def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
+def test_openxr_rgb_depth_debug_info_carries_structured_shader_uniforms():
     config = StereoRuntimeConfig(
         model_id="Distill-Any-Depth-Base",
         cache_dir="models",
@@ -244,19 +248,18 @@ def test_openxr_rgb_depth_debug_info_carries_stereo_scale_and_max_shift():
         OpenXRRenderConfig(ipd=0.064, stereo_scale=0.35, depth_strength=2.0, max_shift_ratio=0.0),
     )
 
-    assert result.legacy_shader_uniforms == {
-        "ipd": 0.064,
-        "depth_strength": 2.0,
-        "stereo_scale": 0.35,
-        "max_shift_ratio": 0.0,
-        "convergence": 0.0,
-        "max_disparity_px": None,
+    assert result.shader_uniforms == {
+        "max_disparity_px": 0.6,
         "parallax_preset": "standard",
+        "depth_response": "linear_clamp_convergence_v1",
+        "convergence": 0.0,
+        "render_size": (16, 12),
+        "screen_roll": 0.0,
     }
-    assert result.debug_info["openxr_ipd"] == 0.064
-    assert result.debug_info["openxr_stereo_scale"] == 0.35
-    assert result.debug_info["openxr_max_shift_ratio"] == 0.0
-    assert result.debug_info["openxr_legacy_shader_uniforms"] == result.legacy_shader_uniforms
+    assert result.debug_info["openxr_shader_uniforms"] == result.shader_uniforms
+    assert "openxr_legacy_shader_uniforms" not in result.debug_info
+    assert "openxr_stereo_scale" not in result.debug_info
+    assert "openxr_max_shift_ratio" not in result.debug_info
 
 
 def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
@@ -286,24 +289,26 @@ def test_openxr_rgb_depth_debug_info_records_resolved_max_disparity_px():
     assert result.debug_info["parallax_budget_preset"] == "standard"
     assert result.debug_info["depth_response"] == "linear_clamp_convergence_v1"
     assert result.debug_info["parallax_resolver_version"] == 1
-    assert result.legacy_shader_uniforms["max_disparity_px"] == 18.0
-    assert result.legacy_shader_uniforms["parallax_preset"] == "standard"
+    assert result.shader_uniforms["max_disparity_px"] == 18.0
+    assert result.shader_uniforms["parallax_preset"] == "standard"
+    assert result.shader_uniforms["render_size"] == (16, 12)
     assert result.debug_info["openxr_max_disparity_px"] == 18.0
     assert result.debug_info["openxr_parallax_preset"] == "standard"
 
 
-def test_openxr_rgb_depth_viewer_keeps_ipd_separate_from_stereo_scale():
+def test_openxr_rgb_depth_viewer_uses_structured_shader_uniforms():
     source = (ROOT / "src" / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
 
     assert "output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')" in source
     assert "if output_format == 'openxr_rgb_depth':" in source
-    assert "legacy_shader_uniforms=getattr(runtime_result, 'legacy_shader_uniforms', None)" in source
-    assert 'debug_info.get("openxr_legacy_shader_uniforms")' in source
-    assert 'self.ipd_uv = max(0.0, float(uniforms["ipd"]))' in source
-    assert 'debug_info.get("openxr_stereo_scale", 1.0)' in source
-    assert 'max_shift_ratio = uniforms.get("max_shift_ratio", debug_info.get("openxr_max_shift_ratio", 0.05))' in source
-    assert "self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(max_shift_ratio))" in source
-    assert 'float(debug_info["openxr_ipd"])) * max(0.0, stereo_scale)' not in source
+    assert "shader_uniforms=getattr(runtime_result, 'shader_uniforms', None)" in source
+    assert 'debug_info.get("openxr_shader_uniforms")' in source
+    assert 'self._runtime_rgb_depth_max_disparity_px = max(0.0, float(max_disparity_px or 0.0))' in source
+    assert "self._runtime_rgb_depth_render_width = render_width" in source
+    assert "legacy_shader_uniforms" not in source
+    assert "openxr_legacy_shader_uniforms" not in source
+    assert "openxr_stereo_scale" not in source
+    assert "openxr_max_shift_ratio" not in source
 
 
 def test_process_openxr_frame_rgb_depth_applies_temporal_depth_stabilization(monkeypatch):

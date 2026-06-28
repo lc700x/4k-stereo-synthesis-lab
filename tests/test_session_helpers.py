@@ -113,21 +113,19 @@ def test_stereo_runtime_logger_openxr_output_log(capsys, monkeypatch):
     runtime = FakeRuntime()
     logger = StereoRuntimeLogger(runtime, active_preset_getter=lambda: "cinema")
     result = SimpleNamespace(
-        legacy_shader_uniforms={
-            "depth_strength": 2.5,
-            "stereo_scale": 0.4,
-            "max_shift_ratio": 0.06,
+        shader_uniforms={
+            "max_disparity_px": 96.0,
             "convergence": 0.12,
+            "depth_response": "linear_clamp_convergence_v1",
         },
         debug_info={
             "backend": "openxr_roll_adaptive_grid_sample",
             "runtime_output_format": "openxr_eye_views",
             "runtime_output_dtype": "uint8",
             "runtime_output_eye_size": "3840x2160",
-            "openxr_depth_strength": 9.0,
-            "openxr_stereo_scale": 9.0,
-            "openxr_max_shift_ratio": 9.0,
+            "resolved_max_disparity_px": 9.0,
             "openxr_convergence": 9.0,
+            "depth_response": "debug_fallback",
         },
     )
 
@@ -139,11 +137,11 @@ def test_stereo_runtime_logger_openxr_output_log(capsys, monkeypatch):
     assert "output=openxr_eye_views" in output
     assert "dtype=uint8" in output
     assert "eye=3840x2160" in output
-    assert "depth_strength=2.500" in output
-    assert "stereo_scale=0.400" in output
-    assert "max_shift=0.060" in output
+    assert "max_disparity=96.000" in output
     assert "convergence=0.120" in output
-    assert "depth_strength=9.000" not in output
+    assert "depth_response=linear_clamp_convergence_v1" in output
+    assert "max_disparity=9.000" not in output
+    assert "depth_response=debug_fallback" not in output
     assert "fast_plus_fused" not in output
     assert "pack=" not in output
 

@@ -13,22 +13,21 @@ from stereo_runtime.openxr_visual_regression import (
 from stereo_runtime.io import save_rgb
 
 
-def test_openxr_viewer_shader_regression_matches_beta_when_scale_is_one():
+def test_openxr_viewer_shader_regression_is_deterministic_for_same_uniforms():
     rgb, depth = make_visual_regression_inputs(width=96, height=54)
-    current = OpenXRViewerShaderParams(stereo_scale=1.0, use_stereo_scale=True)
-    beta = OpenXRViewerShaderParams(stereo_scale=1.0, use_stereo_scale=False)
+    params = OpenXRViewerShaderParams(max_disparity_px=24.0)
 
-    cur_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=current)
-    beta_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=beta)
+    first_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=params)
+    second_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=params)
 
-    assert torch.allclose(cur_eye, beta_eye, atol=1e-7, rtol=1e-7)
+    assert torch.allclose(first_eye, second_eye, atol=1e-7, rtol=1e-7)
 
 
 def test_openxr_viewer_shader_regression_can_compare_resolution_modes():
     rgb, depth = make_visual_regression_inputs(width=96, height=54)
-    source = OpenXRViewerShaderParams(stereo_scale=1.0, shader_resolution_mode="source")
+    source = OpenXRViewerShaderParams(max_disparity_px=24.0, shader_resolution_mode="source")
     swapchain = OpenXRViewerShaderParams(
-        stereo_scale=1.0,
+        max_disparity_px=24.0,
         shader_resolution_mode="swapchain",
         swapchain_width=192,
         swapchain_height=192,
@@ -40,14 +39,14 @@ def test_openxr_viewer_shader_regression_can_compare_resolution_modes():
     assert not torch.equal(source_eye, swapchain_eye)
 
 
-def test_openxr_viewer_shader_regression_exposes_stereo_scale_delta():
+def test_openxr_viewer_shader_regression_exposes_max_disparity_delta():
     rgb, depth = make_visual_regression_inputs(width=96, height=54)
-    current = OpenXRViewerShaderParams(stereo_scale=0.35, use_stereo_scale=True)
-    beta = OpenXRViewerShaderParams(stereo_scale=0.35, use_stereo_scale=False)
+    low = OpenXRViewerShaderParams(max_disparity_px=12.0)
+    high = OpenXRViewerShaderParams(max_disparity_px=48.0)
 
-    cur_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=current)
-    beta_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=beta)
-    metrics = compare_tensors(cur_eye, beta_eye)
+    low_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=low)
+    high_eye = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=high)
+    metrics = compare_tensors(low_eye, high_eye)
 
     assert metrics["mae"] > 0.001
     assert metrics["pct_gt_1_255"] > 0.01
@@ -56,18 +55,12 @@ def test_openxr_viewer_shader_regression_exposes_stereo_scale_delta():
 def test_openxr_visual_regression_writes_outputs(tmp_path: Path):
     metrics = run_openxr_visual_regression(output_dir=tmp_path)
 
-    assert (tmp_path / "scaled_source_left.png").exists()
-    assert (tmp_path / "scaled_swapchain_left.png").exists()
-    assert (tmp_path / "beta_ipd_direct_left.png").exists()
-    assert (tmp_path / "beta_direct_swapchain_left.png").exists()
-    assert (tmp_path / "diff_scaled_source_left_heatmap.png").exists()
-    assert (tmp_path / "diff_scaled_swapchain_left_heatmap.png").exists()
-    assert "scaled_source_vs_beta" in metrics
-    assert "scaled_swapchain_vs_beta" in metrics
-    assert "beta_direct_source_vs_beta" in metrics
-    assert "beta_direct_swapchain_vs_beta" in metrics
+    assert (tmp_path / "source_left.png").exists()
+    assert (tmp_path / "swapchain_left.png").exists()
+    assert (tmp_path / "diff_source_vs_swapchain_left_heatmap.png").exists()
+    assert "source_vs_swapchain" in metrics
     assert "ranking_by_mean_mae" in metrics
-    assert metrics["ranking_by_mean_mae"][0]["variant"] == "beta_direct_source"
+    assert metrics["ranking_by_mean_mae"][0]["variant"] == "source"
     assert metrics["ranking_by_mean_mae"][0]["mean_mae"] == 0.0
 
 
@@ -80,7 +73,7 @@ def test_openxr_visual_regression_can_generate_depth_proxy_from_real_rgb(tmp_pat
 
     assert (tmp_path / "out" / "source_rgb.png").exists()
     assert (tmp_path / "out" / "prepared_depth.png").exists()
-    assert metrics["ranking_by_mean_mae"][0]["variant"] == "beta_direct_source"
+    assert metrics["ranking_by_mean_mae"][0]["variant"] == "source"
 
 
 def test_depth_proxy_from_rgb_matches_frame_shape():

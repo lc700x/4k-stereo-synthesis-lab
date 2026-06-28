@@ -220,22 +220,20 @@ def test_openxr_screen_shader_uniforms_are_initialized_for_flat_and_curved_paths
     render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
 
     assert "screen_source_size = (" in render_eye
-    assert "os.environ.get('D2S_OPENXR_RGB_DEPTH_IPD_MODE', 'beta_direct')" in impl_text
-    assert "rgb_depth_ipd_mode = str(getattr(self, '_openxr_rgb_depth_ipd_mode', 'beta_direct') or 'beta_direct')" in render_eye
-    assert "if rgb_depth_ipd_mode == 'beta_direct':" in render_eye
-    assert "screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)" in render_eye
-    assert "runtime_rgb_depth_stereo_scale) / 0.5" not in render_eye
-    assert "runtime_rgb_depth_max_shift_scale = max(0.0, runtime_rgb_depth_max_shift_ratio) / 0.05" in render_eye
-    assert "screen_ipd_uv *= runtime_rgb_depth_max_shift_scale" in render_eye
-    assert "if not self._runtime_direct_source and abs(screen_depth_strength) <= 1e-6:" in render_eye
-    assert "screen_ipd_uv = 0.0" in render_eye
-    assert "screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0" in render_eye
+    assert "runtime_rgb_depth_max_disparity_px = (" in render_eye
+    assert "runtime_rgb_depth_render_width = (" in render_eye
+    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in render_eye
+    assert "screen_depth_strength = 0.0 if self._runtime_direct_source else 1.0" in render_eye
+    assert "screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_disparity_uv / 2.0" in render_eye
+    assert "runtime_rgb_depth_stereo_scale" not in render_eye
+    assert "runtime_rgb_depth_max_shift_ratio" not in render_eye
+    assert "screen_ipd_uv" not in render_eye
     assert "shader_resolution_mode = str(getattr(self, '_openxr_rgb_depth_shader_resolution', 'source') or 'source')" in render_eye
     assert "elif shader_resolution_mode == 'swapchain':" in render_eye
     assert "shader_resolution = None" in render_eye
-    assert "f\" ipd_mode={rgb_depth_ipd_mode}\"" in render_eye
-    assert "f\" max_shift_ratio={runtime_rgb_depth_max_shift_ratio:.3f}\"" in render_eye
-    assert "f\" effective_ipd_uv={screen_ipd_uv:.6f}\"" in render_eye
+    assert "f\" max_disparity_px={runtime_rgb_depth_max_disparity_px:.3f}\"" in render_eye
+    assert "f\" render_width={runtime_rgb_depth_render_width}\"" in render_eye
+    assert "f\" disparity_uv={screen_disparity_uv:.6f}\"" in render_eye
     assert "feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)" in render_eye
     for program_name in ("self.prog", "self._curved_prog"):
         assert f"{program_name}['u_eye_offset'].value = screen_eye_offset" in render_eye

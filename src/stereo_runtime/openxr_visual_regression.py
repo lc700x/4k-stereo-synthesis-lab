@@ -13,27 +13,17 @@ from .output import ensure_b1hw, ensure_bchw
 
 @dataclass(frozen=True)
 class OpenXRViewerShaderParams:
-    ipd: float = 0.064
-    stereo_scale: float = 0.4
-    depth_strength: float = 2.0
-    shader_depth_strength_scale: float = 0.1
+    max_disparity_px: float = 96.0
     convergence: float = 0.0
     screen_roll: float = 0.0
-    use_stereo_scale: bool = True
     edge_falloff: bool = True
     shaped_depth: bool = True
     shader_resolution_mode: str = "source"
     swapchain_width: int = 3648
     swapchain_height: int = 3648
 
-    @property
-    def effective_depth_strength(self) -> float:
-        return float(self.shader_depth_strength_scale) * float(self.depth_strength)
-
-    @property
-    def effective_ipd(self) -> float:
-        scale = float(self.stereo_scale) if self.use_stereo_scale else 1.0
-        return max(0.0, float(self.ipd)) * max(0.0, scale)
+    def disparity_uv(self, render_width: int) -> float:
+        return max(0.0, float(self.max_disparity_px)) / float(max(1, int(render_width)))
 
 
 def make_visual_regression_inputs(width: int = 384, height: int = 216) -> tuple[torch.Tensor, torch.Tensor]:
@@ -149,8 +139,8 @@ def render_viewer_shader_eye_cpu(
         falloff = (left * left * (3.0 - 2.0 * left)) * (right * right * (3.0 - 2.0 * right))
     else:
         falloff = torch.ones_like(xx)
-    eye_offset = float(eye_sign) * params.effective_ipd / 2.0
-    px_uv = eye_offset * shift.squeeze(1) * params.effective_depth_strength * falloff.unsqueeze(0)
+    eye_offset = float(eye_sign) * params.disparity_uv(w) / 2.0
+    px_uv = eye_offset * shift.squeeze(1) * falloff.unsqueeze(0)
     c = torch.cos(torch.tensor(float(params.screen_roll), device=device, dtype=dtype))
     s = torch.sin(torch.tensor(float(params.screen_roll), device=device, dtype=dtype))
     grid_x = xx.unsqueeze(0).expand(b, h, w) - px_uv * c * 2.0
@@ -191,90 +181,45 @@ def run_openxr_visual_regression(
     else:
         rgb = load_rgb(rgb_path)
         depth = load_depth(depth_path) if depth_path is not None else make_depth_proxy_from_rgb(rgb)
-    current_params = params
-    current_swapchain_params = OpenXRViewerShaderParams(
+    source_params = params
+    swapchain_params = OpenXRViewerShaderParams(
         **{**asdict(params), "shader_resolution_mode": "swapchain"}
-    )
-    beta_params = OpenXRViewerShaderParams(
-        **{**asdict(params), "use_stereo_scale": False, "shader_resolution_mode": "source"}
-    )
-    beta_swapchain_params = OpenXRViewerShaderParams(
-        **{**asdict(beta_params), "shader_resolution_mode": "swapchain"}
     )
     outputs: dict[str, torch.Tensor] = {}
     for label, p in (
-        ("scaled_source", current_params),
-        ("scaled_swapchain", current_swapchain_params),
-        ("beta_ipd_direct", beta_params),
-        ("beta_direct_swapchain", beta_swapchain_params),
+        ("source", source_params),
+        ("swapchain", swapchain_params),
     ):
         outputs[f"{label}_left"] = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=-1.0, params=p)
         outputs[f"{label}_right"] = render_viewer_shader_eye_cpu(rgb, depth, eye_sign=1.0, params=p)
-    source_metrics = {
-        "left": compare_tensors(outputs["scaled_source_left"], outputs["beta_ipd_direct_left"]),
-        "right": compare_tensors(outputs["scaled_source_right"], outputs["beta_ipd_direct_right"]),
+    source_vs_swapchain_metrics = {
+        "left": compare_tensors(outputs["source_left"], outputs["swapchain_left"]),
+        "right": compare_tensors(outputs["source_right"], outputs["swapchain_right"]),
     }
-    swapchain_metrics = {
-        "left": compare_tensors(outputs["scaled_swapchain_left"], outputs["beta_ipd_direct_left"]),
-        "right": compare_tensors(outputs["scaled_swapchain_right"], outputs["beta_ipd_direct_right"]),
-    }
-    beta_direct_source_metrics = {
-        "left": compare_tensors(outputs["beta_ipd_direct_left"], outputs["beta_ipd_direct_left"]),
-        "right": compare_tensors(outputs["beta_ipd_direct_right"], outputs["beta_ipd_direct_right"]),
-    }
-    beta_direct_swapchain_metrics = {
-        "left": compare_tensors(outputs["beta_direct_swapchain_left"], outputs["beta_ipd_direct_left"]),
-        "right": compare_tensors(outputs["beta_direct_swapchain_right"], outputs["beta_ipd_direct_right"]),
-    }
-    ranked = [
-        {
-            "variant": "scaled_source",
-            "ipd_mode": "scaled",
-            "shader_resolution_mode": "source",
-            "mean_mae": (source_metrics["left"]["mae"] + source_metrics["right"]["mae"]) * 0.5,
-        },
-        {
-            "variant": "scaled_swapchain",
-            "ipd_mode": "scaled",
-            "shader_resolution_mode": "swapchain",
-            "mean_mae": (swapchain_metrics["left"]["mae"] + swapchain_metrics["right"]["mae"]) * 0.5,
-        },
-        {
-            "variant": "beta_direct_source",
-            "ipd_mode": "beta_direct",
-            "shader_resolution_mode": "source",
-            "mean_mae": (
-                beta_direct_source_metrics["left"]["mae"]
-                + beta_direct_source_metrics["right"]["mae"]
-            ) * 0.5,
-        },
-        {
-            "variant": "beta_direct_swapchain",
-            "ipd_mode": "beta_direct",
-            "shader_resolution_mode": "swapchain",
-            "mean_mae": (
-                beta_direct_swapchain_metrics["left"]["mae"]
-                + beta_direct_swapchain_metrics["right"]["mae"]
-            ) * 0.5,
-        },
-    ]
     metrics = {
         "params": asdict(params),
-        "scaled_source_vs_beta": source_metrics,
-        "scaled_swapchain_vs_beta": swapchain_metrics,
-        "beta_direct_source_vs_beta": beta_direct_source_metrics,
-        "beta_direct_swapchain_vs_beta": beta_direct_swapchain_metrics,
-        "ranking_by_mean_mae": sorted(ranked, key=lambda item: item["mean_mae"]),
+        "source_vs_swapchain": source_vs_swapchain_metrics,
+        "ranking_by_mean_mae": [
+            {
+                "variant": "source",
+                "shader_resolution_mode": "source",
+                "mean_mae": 0.0,
+            },
+            {
+                "variant": "swapchain",
+                "shader_resolution_mode": "swapchain",
+                "mean_mae": (
+                    source_vs_swapchain_metrics["left"]["mae"]
+                    + source_vs_swapchain_metrics["right"]["mae"]
+                ) * 0.5,
+            },
+        ],
     }
     save_rgb(rgb, out / "source_rgb.png")
     save_rgb(depth.expand(-1, 3, -1, -1), out / "source_depth.png")
     save_depth(depth, out / "prepared_depth.png")
     for name, tensor in outputs.items():
         save_rgb(tensor, out / f"{name}.png")
-    save_rgb(diff_heatmap(outputs["scaled_source_left"], outputs["beta_ipd_direct_left"]), out / "diff_scaled_source_left_heatmap.png")
-    save_rgb(diff_heatmap(outputs["scaled_source_right"], outputs["beta_ipd_direct_right"]), out / "diff_scaled_source_right_heatmap.png")
-    save_rgb(diff_heatmap(outputs["scaled_swapchain_left"], outputs["beta_ipd_direct_left"]), out / "diff_scaled_swapchain_left_heatmap.png")
-    save_rgb(diff_heatmap(outputs["scaled_swapchain_right"], outputs["beta_ipd_direct_right"]), out / "diff_scaled_swapchain_right_heatmap.png")
-    save_rgb(diff_heatmap(outputs["beta_direct_swapchain_left"], outputs["beta_ipd_direct_left"]), out / "diff_beta_direct_swapchain_left_heatmap.png")
-    save_rgb(diff_heatmap(outputs["beta_direct_swapchain_right"], outputs["beta_ipd_direct_right"]), out / "diff_beta_direct_swapchain_right_heatmap.png")
+    save_rgb(diff_heatmap(outputs["source_left"], outputs["swapchain_left"]), out / "diff_source_vs_swapchain_left_heatmap.png")
+    save_rgb(diff_heatmap(outputs["source_right"], outputs["swapchain_right"]), out / "diff_source_vs_swapchain_right_heatmap.png")
     return metrics

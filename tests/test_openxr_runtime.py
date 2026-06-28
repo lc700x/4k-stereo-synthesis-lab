@@ -217,39 +217,36 @@ def test_d3d11_rgb_depth_shader_uses_screen_roll_for_parallax_direction(monkeypa
     assert "def render_eye(self, swapchain_texture, width, height, eye_index, ipd, depth_strength, convergence, mvp, roll=0.0):" in source
     assert "constants[16:20] = np.array([eye_sign * ipd * 0.5, depth_strength, convergence, roll]" in source
     assert "self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0" in source
+    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in implementation
     assert "roll=self.screen_roll" in implementation
 
 
-def test_runtime_rgb_depth_config_prefers_structured_legacy_shader_uniforms(monkeypatch):
+def test_runtime_rgb_depth_config_prefers_structured_shader_uniforms(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
 
     viewer = CoreRuntimeEyeMixin()
     viewer._apply_runtime_rgb_depth_config(
         {
-            "openxr_legacy_shader_uniforms": {
+            "openxr_shader_uniforms": {
                 "convergence": 9.0,
-                "ipd": 9.0,
-                "stereo_scale": 9.0,
-                "max_shift_ratio": 9.0,
+                "max_disparity_px": 9.0,
+                "render_size": (9, 9),
             },
             "openxr_convergence": 8.0,
-            "openxr_ipd": 8.0,
-            "openxr_stereo_scale": 8.0,
-            "openxr_max_shift_ratio": 8.0,
+            "resolved_max_disparity_px": 8.0,
+            "runtime_output_eye_size": "8x8",
         },
-        legacy_shader_uniforms={
+        shader_uniforms={
             "convergence": 0.25,
-            "ipd": 0.061,
-            "stereo_scale": 0.42,
-            "max_shift_ratio": 0.07,
+            "max_disparity_px": 18.0,
+            "render_size": (1920, 1080),
         },
     )
 
     assert viewer.convergence == 0.25
-    assert viewer.ipd_uv == 0.061
-    assert viewer._runtime_rgb_depth_stereo_scale == 0.42
-    assert viewer._runtime_rgb_depth_max_shift_ratio == 0.07
+    assert viewer._runtime_rgb_depth_max_disparity_px == 18.0
+    assert viewer._runtime_rgb_depth_render_width == 1920
 
 
 def test_runtime_rgb_depth_config_keeps_debug_uniform_fallback(monkeypatch):
@@ -259,20 +256,17 @@ def test_runtime_rgb_depth_config_keeps_debug_uniform_fallback(monkeypatch):
     viewer = CoreRuntimeEyeMixin()
     viewer._apply_runtime_rgb_depth_config(
         {
-            "openxr_legacy_shader_uniforms": {
+            "openxr_shader_uniforms": {
                 "convergence": 0.25,
-                "ipd": 0.061,
-                "stereo_scale": 0.42,
-                "max_shift_ratio": 0.07,
+                "max_disparity_px": 18.0,
+                "render_size": (1920, 1080),
             },
             "openxr_convergence": 9.0,
-            "openxr_ipd": 9.0,
-            "openxr_stereo_scale": 9.0,
-            "openxr_max_shift_ratio": 9.0,
+            "resolved_max_disparity_px": 9.0,
+            "runtime_output_eye_size": "9x9",
         }
     )
 
     assert viewer.convergence == 0.25
-    assert viewer.ipd_uv == 0.061
-    assert viewer._runtime_rgb_depth_stereo_scale == 0.42
-    assert viewer._runtime_rgb_depth_max_shift_ratio == 0.07
+    assert viewer._runtime_rgb_depth_max_disparity_px == 18.0
+    assert viewer._runtime_rgb_depth_render_width == 1920

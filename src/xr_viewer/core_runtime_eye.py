@@ -28,6 +28,20 @@ except ImportError:
     CUDART_GL = None
 
 
+def _runtime_shader_render_width(value) -> int:
+    if isinstance(value, (tuple, list)) and len(value) >= 1:
+        try:
+            return max(0, int(value[0]))
+        except (TypeError, ValueError):
+            return 0
+    if isinstance(value, str) and "x" in value:
+        try:
+            return max(0, int(value.split("x", 1)[0]))
+        except (TypeError, ValueError):
+            return 0
+    return 0
+
+
 class CoreRuntimeEyeMixin:
     def _runtime_eye_source_mean(self, frame):
         try:
@@ -453,7 +467,7 @@ class CoreRuntimeEyeMixin:
         if output_format == 'openxr_rgb_depth':
             self._apply_runtime_rgb_depth_config(
                 debug_info,
-                legacy_shader_uniforms=getattr(runtime_result, 'legacy_shader_uniforms', None),
+                shader_uniforms=getattr(runtime_result, 'shader_uniforms', None),
             )
             source_rgb = getattr(runtime_result, 'source_rgb', None)
             if source_rgb is None:
@@ -517,27 +531,22 @@ class CoreRuntimeEyeMixin:
         if self._d3d11_native_renderer is not None:
             self._d3d11_native_renderer.has_frame = False
 
-    def _apply_runtime_rgb_depth_config(self, debug_info, *, legacy_shader_uniforms=None):
-        # Depth strength is controlled by the viewer in OpenXR mode. Do not copy
-        # it back from runtime debug_info, or controller changes can be overwritten
-        # by the previous frame's config before the runtime sees the new value.
-        uniforms = legacy_shader_uniforms
+    def _apply_runtime_rgb_depth_config(self, debug_info, *, shader_uniforms=None):
+        uniforms = shader_uniforms
         if not isinstance(uniforms, dict):
-            uniforms = debug_info.get("openxr_legacy_shader_uniforms")
+            uniforms = debug_info.get("openxr_shader_uniforms")
         if not isinstance(uniforms, dict):
             uniforms = {}
         if "convergence" in uniforms:
             self.convergence = float(uniforms["convergence"])
         elif "openxr_convergence" in debug_info:
             self.convergence = float(debug_info["openxr_convergence"])
-        if "ipd" in uniforms:
-            self.ipd_uv = max(0.0, float(uniforms["ipd"]))
-        elif "openxr_ipd" in debug_info:
-            self.ipd_uv = max(0.0, float(debug_info["openxr_ipd"]))
-        stereo_scale = uniforms.get("stereo_scale", debug_info.get("openxr_stereo_scale", 1.0))
-        max_shift_ratio = uniforms.get("max_shift_ratio", debug_info.get("openxr_max_shift_ratio", 0.05))
-        self._runtime_rgb_depth_stereo_scale = max(0.0, float(stereo_scale))
-        self._runtime_rgb_depth_max_shift_ratio = max(0.0, float(max_shift_ratio))
+        max_disparity_px = uniforms.get("max_disparity_px", debug_info.get("resolved_max_disparity_px", 0.0))
+        self._runtime_rgb_depth_max_disparity_px = max(0.0, float(max_disparity_px or 0.0))
+        render_width = _runtime_shader_render_width(uniforms.get("render_size"))
+        if render_width <= 0:
+            render_width = _runtime_shader_render_width(debug_info.get("runtime_output_eye_size"))
+        self._runtime_rgb_depth_render_width = render_width
 
     def _normalize_rgb_depth_runtime_source(self, rgb, depth):
         import torch

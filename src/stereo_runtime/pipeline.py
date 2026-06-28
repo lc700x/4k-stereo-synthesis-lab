@@ -195,16 +195,41 @@ def _attach_capture_debug(runtime_result, captured_frame: CapturedFrame | None, 
         debug_info.update(_capture_debug_fields(captured_frame, frame_rgb))
 
 
-def _attach_pipeline_debug(runtime_result, *, capture_size, render_size, run_mode, render_size_config, output_transport=None) -> None:
+def _attach_pipeline_debug(
+    runtime_result,
+    *,
+    capture_size,
+    render_size,
+    run_mode,
+    render_size_config,
+    application_runtime_target=None,
+    output_transport=None,
+) -> None:
     debug_info = getattr(runtime_result, "debug_info", None)
     if not isinstance(debug_info, dict):
         return
     debug_info["capture_size"] = _size_debug_text(capture_size)
     debug_info["render_size"] = _size_debug_text(render_size)
-    debug_info["transport"] = _transport_debug_label(run_mode, output_transport=output_transport)
+    debug_info["application_runtime_target"] = _application_target_debug_label(
+        run_mode,
+        application_runtime_target=application_runtime_target,
+    )
+    transport = _transport_debug_label(run_mode, output_transport=output_transport)
+    debug_info["transport"] = transport
+    debug_info["output_transport"] = transport
     if render_size_config is not None:
         debug_info["render_size_policy"] = render_size_config.policy.value
         debug_info["stereo_render_scale"] = render_size_config.scale_factor
+
+
+def _application_target_debug_label(run_mode, *, application_runtime_target=None) -> str:
+    if application_runtime_target:
+        return str(application_runtime_target)
+    if run_mode == "OpenXR":
+        return "openxr"
+    if run_mode in {"MJPEG", "RTMP", "Streamer", "Legacy Streamer", "MJPEG Streamer", "RTMP Streamer"}:
+        return "network_stream"
+    return "local_viewer"
 
 
 def _transport_debug_label(run_mode, *, output_transport=None) -> str:
@@ -339,6 +364,7 @@ class RuntimePipelineLoop:
                     render_size=render_size,
                     run_mode=ctx.run_mode,
                     render_size_config=ctx.render_size_config,
+                    application_runtime_target=ctx.application_runtime_target,
                     output_transport=ctx.output_transport,
                 )
                 debug_info = getattr(runtime_result, "debug_info", None)

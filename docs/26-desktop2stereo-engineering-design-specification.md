@@ -972,8 +972,9 @@ scripts/tools/openxr_visual_regression.py
 | RuntimeSettingsSnapshot | 已有 `RuntimeSettingsSnapshot`、`settings_update_q`、帧边界应用、热更新分级、结构化 result 字段 | GUI live hot-save 仍需进一步收敛为直接发送 snapshot；settings.yaml + StereoHotReloader 只保留为兼容路径 |
 | Capture metadata | 已有 `CapturedFrame` / `FrameCopyMode`，event/polling runner 会携带 source、device、dtype、copy_mode、capture_size 等 metadata，并进入 runtime debug | 真实硬件 CUDA/ROCm zero-copy 仍需设备验证后才能把路径标成 true zero-copy |
 | Capture preprocess device contract | 已显式处理 numpy / CPU tensor / CUDA tensor / ROCm tensor 形态，并记录 origin/output device 与 transfer metadata | 跨设备 fallback 和硬件路径仍需按目标机器补充验证矩阵 |
-| OpenXR direct uniforms | 已通过 adapter/snapshot 路径生成规范参数到 legacy shader uniforms 的转换，并输出 `legacy_shader_uniforms` / resolved disparity debug | D3D11 native direct shader 仍需追平 OpenGL direct shader 的完整 DIBR 质量语义；这是独立 follow-up |
+| OpenXR direct uniforms | 已输出规范 `shader_uniforms`，字段以 `max_disparity_px`、`depth_response`、`convergence`、`render_size`、`screen_roll` 为主；OpenGL 与 D3D11 RGB+D direct 调用层均按 `max_disparity_px / render_width` 派生 shader 位移，不再消费 IPD / Stereo Scale / Max Shift Ratio 旧强度链 | D3D11 native direct shader 仍需追平 OpenGL direct shader 的完整 DIBR 质量语义；这是独立 follow-up |
 | Render Size / 4K scale tier | 已收敛为固定 scale 档位 Render Scale：非 4K 保持 capture_size；4K 级输入按 4K/3K/2K/1K 稳定 scale 档位解析，并保持横屏、竖屏、16:10、DCI 4K、常见 4K 超宽比例；判断排除面积不足的窄高/1440p 超宽；旧 numeric / short alias Render Scale 输入已清理为默认回退 | 继续通过测试防止重新引入 `0.75`、`75%`、`2K` 等用户侧别名；无新的运行时语义待办 |
+| Debug / result contract | `StereoRuntimeResult` / `OpenXRRuntimeResult` 已暴露 output/timing/provider 结构化字段；每帧 debug_info 已补齐 application_runtime_target、stereo_synthesis_mode、transport、output_transport、capture/render/depth size 和 active settings metadata | debug-only 兼容键仍按兼容清理表逐步移除；host/viewer 新消费路径应继续优先读结构化字段 |
 | Network stream | MJPEG/legacy stream 已消费 packed frame，并引入 `EncoderProfile` 描述 transport 侧 resize、pixel format、quality/FPS 等 | RTMP/更低延迟编码仍是后续工程；不能重新定义立体参数语义 |
 
 ## 后续实施优先级

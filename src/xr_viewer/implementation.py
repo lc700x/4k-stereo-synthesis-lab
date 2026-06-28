@@ -231,11 +231,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         ).strip().lower()
         if self._openxr_rgb_depth_shader_resolution not in ('source', 'swapchain', 'unset'):
             self._openxr_rgb_depth_shader_resolution = 'source'
-        self._openxr_rgb_depth_ipd_mode = str(
-            kwargs.get('openxr_rgb_depth_ipd_mode', os.environ.get('D2S_OPENXR_RGB_DEPTH_IPD_MODE', 'beta_direct')) or 'beta_direct'
-        ).strip().lower().replace('-', '_')
-        if self._openxr_rgb_depth_ipd_mode not in ('scaled', 'beta_direct'):
-            self._openxr_rgb_depth_ipd_mode = 'scaled'
         self._openxr_rgb_depth_shader_resolution_logged = False
         self._runtime_eye_gpu_logged = False
         # The CUDA/GL *image* zero-copy path (register_image +
@@ -2184,25 +2179,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # Main screen
         mgl_fbo.use()
         eye_sign = -1.0 if eye_index == 0 else 1.0
-        runtime_rgb_depth_stereo_scale = (
-            1.0 if self._runtime_direct_source else float(getattr(self, '_runtime_rgb_depth_stereo_scale', 1.0))
+        runtime_rgb_depth_max_disparity_px = (
+            0.0 if self._runtime_direct_source else float(getattr(self, '_runtime_rgb_depth_max_disparity_px', 0.0))
         )
-        runtime_rgb_depth_max_shift_ratio = (
-            0.05 if self._runtime_direct_source else float(getattr(self, '_runtime_rgb_depth_max_shift_ratio', 0.05))
+        runtime_rgb_depth_render_width = (
+            0 if self._runtime_direct_source else int(getattr(self, '_runtime_rgb_depth_render_width', 0) or 0)
         )
-        runtime_rgb_depth_max_shift_scale = max(0.0, runtime_rgb_depth_max_shift_ratio) / 0.05
-        rgb_depth_ipd_mode = str(getattr(self, '_openxr_rgb_depth_ipd_mode', 'beta_direct') or 'beta_direct')
-        screen_ipd_uv = self.ipd_uv
-        if not self._runtime_direct_source:
-            if rgb_depth_ipd_mode == 'beta_direct':
-                screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
-            else:
-                screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
-            screen_ipd_uv *= runtime_rgb_depth_max_shift_scale
-        screen_depth_strength = 0.0 if self._runtime_direct_source else self._effective_depth_strength()
-        if not self._runtime_direct_source and abs(screen_depth_strength) <= 1e-6:
-            screen_ipd_uv = 0.0
-        screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_ipd_uv / 2.0
+        if runtime_rgb_depth_render_width <= 0:
+            source_size = self._texture_size or (0, 0)
+            runtime_rgb_depth_render_width = int(source_size[0] or 0)
+        screen_disparity_uv = 0.0
+        if not self._runtime_direct_source and runtime_rgb_depth_render_width > 0:
+            screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)
+        screen_depth_strength = 0.0 if self._runtime_direct_source else 1.0
+        screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_disparity_uv / 2.0
         model = self._build_model_mat4()
         mvp = vp_mat @ model
         if self._runtime_direct_source:
@@ -2253,12 +2243,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 f" resolution_mode={shader_resolution_mode}"
                 f" resolution={shader_resolution if shader_resolution is not None else 'unset'}"
                 f" feather={int(bool(getattr(self, '_openxr_rgb_depth_feather', False)))}",
-                f" ipd_mode={rgb_depth_ipd_mode}"
-                f" ipd_uv={self.ipd_uv:.6f}"
-                f" stereo_scale={runtime_rgb_depth_stereo_scale:.3f}"
-                f" max_shift_ratio={runtime_rgb_depth_max_shift_ratio:.3f}"
-                f" max_shift_scale={runtime_rgb_depth_max_shift_scale:.3f}"
-                f" effective_ipd_uv={screen_ipd_uv:.6f}"
+                f" max_disparity_px={runtime_rgb_depth_max_disparity_px:.3f}"
+                f" render_width={runtime_rgb_depth_render_width}"
+                f" disparity_uv={screen_disparity_uv:.6f}"
                 f" eye_offset_abs={abs(screen_eye_offset):.6f}"
                 f" depth_strength={screen_depth_strength:.6f}"
                 f" convergence={float(self.convergence):.6f}",
@@ -4440,29 +4427,25 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                                         mvp,
                                     )
                                 else:
-                                    runtime_rgb_depth_stereo_scale = float(
-                                        getattr(self, '_runtime_rgb_depth_stereo_scale', 1.0)
+                                    runtime_rgb_depth_max_disparity_px = float(
+                                        getattr(self, '_runtime_rgb_depth_max_disparity_px', 0.0)
                                     )
-                                    runtime_rgb_depth_max_shift_ratio = float(
-                                        getattr(self, '_runtime_rgb_depth_max_shift_ratio', 0.05)
+                                    runtime_rgb_depth_render_width = int(
+                                        getattr(self, '_runtime_rgb_depth_render_width', 0) or 0
                                     )
-                                    runtime_rgb_depth_max_shift_scale = max(0.0, runtime_rgb_depth_max_shift_ratio) / 0.05
-                                    rgb_depth_ipd_mode = str(getattr(self, '_openxr_rgb_depth_ipd_mode', 'beta_direct') or 'beta_direct')
-                                    screen_ipd_uv = self.ipd_uv
-                                    if rgb_depth_ipd_mode == 'beta_direct':
-                                        screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
-                                    else:
-                                        screen_ipd_uv *= max(0.0, runtime_rgb_depth_stereo_scale)
-                                    screen_ipd_uv *= runtime_rgb_depth_max_shift_scale
-                                    screen_depth_strength = self._effective_depth_strength()
-                                    if abs(screen_depth_strength) <= 1e-6:
-                                        screen_ipd_uv = 0.0
+                                    if runtime_rgb_depth_render_width <= 0:
+                                        source_size = self._texture_size or (0, 0)
+                                        runtime_rgb_depth_render_width = int(source_size[0] or 0)
+                                    screen_disparity_uv = 0.0
+                                    if runtime_rgb_depth_render_width > 0:
+                                        screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)
+                                    screen_depth_strength = 1.0
                                     self._d3d11_native_renderer.render_eye(
                                         sc_image.texture,
                                         sc_w,
                                         sc_h,
                                         eye_index,
-                                        screen_ipd_uv,
+                                        screen_disparity_uv,
                                         screen_depth_strength,
                                         float(self.convergence),
                                         mvp,

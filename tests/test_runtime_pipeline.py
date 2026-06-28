@@ -90,10 +90,13 @@ def test_pipeline_debug_transport_prefers_explicit_output_transport():
         render_size=(1920, 1080),
         run_mode="Viewer",
         render_size_config=None,
+        application_runtime_target="network_stream",
         output_transport="encoded_stream",
     )
 
+    assert result.debug_info["application_runtime_target"] == "network_stream"
     assert result.debug_info["transport"] == "encoded_stream"
+    assert result.debug_info["output_transport"] == "encoded_stream"
     assert result.debug_info["capture_size"] == "3840x2160"
     assert result.debug_info["render_size"] == "1920x1080"
 
@@ -117,8 +120,12 @@ def test_pipeline_debug_transport_falls_back_for_openxr_and_local_window():
         render_size_config=None,
     )
 
+    assert openxr_result.debug_info["application_runtime_target"] == "openxr"
     assert openxr_result.debug_info["transport"] == "openxr_swapchain"
+    assert openxr_result.debug_info["output_transport"] == "openxr_swapchain"
+    assert local_result.debug_info["application_runtime_target"] == "local_viewer"
     assert local_result.debug_info["transport"] == "local_window"
+    assert local_result.debug_info["output_transport"] == "local_window"
 
 
 def test_runtime_pipeline_processes_one_frame():

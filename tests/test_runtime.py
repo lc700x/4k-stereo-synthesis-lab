@@ -71,6 +71,7 @@ def test_runtime_process_rgb_frame_uses_persistent_provider_and_returns_report()
     assert first.debug_info["runtime_depth_backend"] == "pytorch_cuda"
     assert first.debug_info["runtime_output_format"] == "half_sbs"
     assert first.debug_info["runtime_quality_mode"] == "fast"
+    assert first.debug_info["stereo_synthesis_mode"] == "packed_synthesis"
     assert first.debug_info["output_format"] == "half_sbs"
     assert first.debug_info["max_disparity_px"] == 18.0
     assert first.debug_info["parallax_preset"] == "comfort"

@@ -176,6 +176,11 @@ class NativeTensorRtEngine:
         self._graph_output_name = output_name
         self._graph = graph
 
+    def clear_graph(self) -> None:
+        self._graph = None
+        self._graph_input = None
+        self._graph_output_name = None
+
     def run_graph(self, tensor: torch.Tensor) -> torch.Tensor:
         if self._graph is None or self._graph_input is None or self._graph_output_name is None:
             self.capture_graph(tuple(tensor.shape))
@@ -335,6 +340,7 @@ class DistillAnyDepthBaseNativeTensorRt:
         )
         self._engine: NativeTensorRtEngine | None = None
         self._artifact_input_size: tuple[int, int] | None = None
+        self._cuda_graph_disabled_reason: str | None = None
         self._preprocessor = ModelOnnxPreprocessor(
             model_id=self.model_id,
             device=self.device,
@@ -438,8 +444,28 @@ class DistillAnyDepthBaseNativeTensorRt:
         sync()
         _record_cuda_event(cuda_events, "depth_model_start", tensor)
         start = time.perf_counter()
-        if self.use_cuda_graph:
-            predicted = engine.run_graph(tensor)
+        try_cuda_graph = self.use_cuda_graph and self._cuda_graph_disabled_reason is None
+        if try_cuda_graph:
+            try:
+                predicted = engine.run_graph(tensor)
+            except RuntimeError as exc:
+                self._cuda_graph_disabled_reason = f"{type(exc).__name__}: {exc}"
+                clear_graph = getattr(engine, "clear_graph", None)
+                if callable(clear_graph):
+                    clear_graph()
+                try:
+                    torch.cuda.synchronize(self.device)
+                except Exception:
+                    pass
+                print(
+                    "\033[31m[TensorRT] CUDA graph capture failed; disabled for this process. "
+                    f"Using native TensorRT enqueue until restart: {self._cuda_graph_disabled_reason}\033[0m",
+                    flush=True,
+                )
+                try:
+                    predicted = engine(tensor, synchronize=self.profile_sync)
+                except TypeError:
+                    predicted = engine(tensor)
         else:
             try:
                 predicted = engine(tensor, synchronize=self.profile_sync)

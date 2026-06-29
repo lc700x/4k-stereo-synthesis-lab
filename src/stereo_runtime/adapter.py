@@ -284,6 +284,7 @@ def _normalize_depth_backend(value: Any) -> DepthBackend:
         "auto": "auto",
         "tensorrt": "tensorrt_native",
         "tensorrt_native": "tensorrt_native",
+        "tensorrt_native_graph": "tensorrt_native",
         "trt": "tensorrt_native",
         "onnx": "onnx_cuda",
         "onnx_cuda": "onnx_cuda",

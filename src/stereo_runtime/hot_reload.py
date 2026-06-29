@@ -116,6 +116,10 @@ def _add_rebuild_fields_if_changed(values: dict, settings_dict: dict, config) ->
         profile_sync = to_bool_hot_reload(settings_dict.get("Depth Profile Sync", settings_dict.get("Profile Sync")))
         if profile_sync != getattr(config, "profile_sync", None):
             values["profile_sync"] = profile_sync
+    if "Depth CUDA Graph" in settings_dict or "CUDA Graph" in settings_dict:
+        use_cuda_graph = to_bool_hot_reload(settings_dict.get("Depth CUDA Graph", settings_dict.get("CUDA Graph")))
+        if use_cuda_graph != getattr(config, "use_cuda_graph", None):
+            values["use_cuda_graph"] = use_cuda_graph
     size_keys = {"Depth Resolution", "depth_resolution", "Export Height", "export_height", "Export Width", "export_width"}
     if size_keys.intersection(settings_dict):
         export_height, export_width = _depth_export_size_from_settings(

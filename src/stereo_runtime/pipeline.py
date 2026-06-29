@@ -10,7 +10,7 @@ from capture.types import CapturedFrame
 
 from .render_size import RenderSizeConfig, resolve_render_size, runtime_output_size_text
 from .runtime import openxr_result_from_stereo_result
-from .settings_snapshot import RuntimeSettingsPipelineRebuildRequired, RuntimeSettingsRestartRequired
+from .settings_snapshot import RuntimeSettingsPipelineRebuildRequired, RuntimeSettingsRestartRequired, RuntimeSettingsSnapshot
 
 _OPENXR_FULL_SYNTHESIS_PRESETS = {"cinema", "game_low_latency", "still_image_hq", "debug_export"}
 
@@ -86,6 +86,15 @@ def _openxr_full_synthesis_enabled(ctx: RuntimePipelineContext) -> bool:
     return str(ctx.stereo_active_preset or "").strip().lower() in _OPENXR_FULL_SYNTHESIS_PRESETS
 
 
+def _openxr_realtime_synthesis_config(config):
+    if config is None:
+        return None
+    updates = {}
+    if bool(getattr(config, "temporal", False)):
+        updates.update(temporal=False, temporal_strength=0.0, auto_reset_temporal=False)
+    return replace(config, **updates) if updates and is_dataclass(config) else config
+
+
 def _active_preset_for_snapshot(settings_snapshot, active_preset):
     snapshot_preset = getattr(settings_snapshot, "stereo_preset", None)
     if snapshot_preset == "auto":
@@ -107,6 +116,25 @@ def _apply_latest_settings_snapshot(ctx: RuntimePipelineContext):
         last_settings_change_class=change_class.value,
     )
     return change_class
+
+
+def _enable_openxr_depth_cuda_graph_if_needed(ctx: RuntimePipelineContext, openxr_full_synthesis: bool) -> None:
+    if not openxr_full_synthesis:
+        return
+    config = getattr(ctx.stereo_runtime, "config", None)
+    if config is None or bool(getattr(config, "use_cuda_graph", False)):
+        return
+    provider = getattr(ctx.stereo_runtime, "depth_provider", None)
+    if getattr(provider, "_cuda_graph_disabled_reason", None):
+        return
+    backend = str(getattr(config, "depth_backend", "auto") or "auto").strip().lower()
+    if backend not in {"auto", "tensorrt_native"}:
+        return
+    ctx.stereo_runtime.apply_settings_snapshot(
+        RuntimeSettingsSnapshot(version=int(time.time() * 1000), timestamp=time.time(), use_cuda_graph=True),
+        active_preset=ctx.stereo_active_preset,
+    )
+    ctx.source_stat_inc("openxr_depth_cuda_graph_enabled")
 
 
 def _unpack_raw_queue_item(item):
@@ -365,6 +393,15 @@ def _add_cuda_event_timings(ctx: RuntimePipelineContext, runtime_result) -> None
         ("rt_gpu_depth_upsample", "depth_upsample_start", "depth_upsample_end"),
         ("rt_gpu_depth_postprocess", "depth_post_start", "depth_post_end"),
         ("rt_gpu_synth", "depth", "synthesis"),
+        ("rt_gpu_synth_scene", "synth_start", "synth_scene"),
+        ("rt_gpu_synth_depth_shift", "synth_scene", "synth_depth_shift"),
+        ("rt_gpu_synth_warp", "synth_depth_shift", "synth_warp"),
+        ("rt_gpu_synth_occ", "synth_warp", "synth_occlusion"),
+        ("rt_gpu_synth_fill", "synth_occlusion", "synth_hole_fill"),
+        ("rt_gpu_synth_refine", "synth_hole_fill", "synth_refine"),
+        ("rt_gpu_synth_temporal", "synth_refine", "synth_temporal"),
+        ("rt_gpu_synth_output_depth", "synth_temporal", "synth_output_depth"),
+        ("rt_gpu_synth_sbs", "synth_output_depth", "synth_sbs"),
         ("rt_gpu_pack", "synthesis", "pack"),
         ("rt_gpu_openxr_pack", "openxr_pack_start", "openxr_pack"),
         ("rt_gpu_total", "start", "end"),
@@ -566,19 +603,30 @@ class RuntimePipelineLoop:
                 ctx.log_stereo_runtime_mode_once()
                 ctx.apply_stereo_hot_reload_if_needed()
                 _apply_latest_settings_snapshot(ctx)
+                openxr_full_synthesis = ctx.run_mode == "OpenXR" and _openxr_full_synthesis_enabled(ctx)
+                _enable_openxr_depth_cuda_graph_if_needed(ctx, openxr_full_synthesis)
                 ctx.warmup_stereo_once_for_frame(runtime_rgb)
                 runtime_call_start_time = time.perf_counter()
-                openxr_full_synthesis = ctx.run_mode == "OpenXR" and _openxr_full_synthesis_enabled(ctx)
                 if ctx.run_mode == "OpenXR" and not openxr_full_synthesis:
                     runtime_result = ctx.stereo_runtime.process_openxr_frame(
                         runtime_rgb,
                         ctx.current_openxr_render_config(),
                     )
                 else:
-                    runtime_result = ctx.stereo_runtime.process_rgb_frame(
-                        runtime_rgb,
-                        skip_sbs_output=openxr_full_synthesis,
-                    )
+                    original_stereo_config = None
+                    if openxr_full_synthesis:
+                        original_stereo_config = getattr(ctx.stereo_runtime, "stereo_config", None)
+                        realtime_config = _openxr_realtime_synthesis_config(original_stereo_config)
+                        if realtime_config is not original_stereo_config:
+                            ctx.stereo_runtime.stereo_config = realtime_config
+                    try:
+                        runtime_result = ctx.stereo_runtime.process_rgb_frame(
+                            runtime_rgb,
+                            skip_sbs_output=openxr_full_synthesis,
+                        )
+                    finally:
+                        if original_stereo_config is not None:
+                            ctx.stereo_runtime.stereo_config = original_stereo_config
                     if ctx.run_mode == "OpenXR":
                         runtime_result = openxr_result_from_stereo_result(runtime_result)
                 ctx.breakdown_add_time("rt_call", time.perf_counter() - runtime_call_start_time)

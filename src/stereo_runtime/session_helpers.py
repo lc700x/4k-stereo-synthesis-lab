@@ -48,6 +48,7 @@ class StereoWarmupTracker:
             self.runtime.warmup_stereo_kernels_for_frame(rgb_frame)
         except Exception as exc:
             print(f"[Main] Stereo warmup skipped: {type(exc).__name__}: {exc}", flush=True)
+            raise
 
 
 class StereoRuntimeLogger:

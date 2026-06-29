@@ -318,10 +318,9 @@ class CoreKeyboardMixin:
             _kw2 = self._keyboard_width * 0.5
             _kh2 = self._keyboard_height * 0.5
             if abs(float(_smooth_pos[0])) <= _kw2 and abs(float(_smooth_pos[1])) <= _kh2:
-                _dist_scale = float(np.clip(self._keyboard_distance / 2.0, 1.0, 3.0))
                 self.ctx.disable(moderngl.DEPTH_TEST)
                 self.ctx.enable(moderngl.BLEND)
-                for _r, _col in [(_dist_scale * 0.0096, (0.2, 0.6, 1.0, 0.75)), (_dist_scale * 0.0056, (1.0, 1.0, 1.0, 0.75))]:
+                for _r, _col in self._cursor_ring_specs(self._keyboard_distance):
                     _m = np.eye(4, dtype='f4')
                     _m[:3, 0] = _kb_r * _r
                     _m[:3, 1] = _kb_u * _r

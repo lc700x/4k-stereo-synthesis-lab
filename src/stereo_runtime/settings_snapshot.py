@@ -59,6 +59,7 @@ _PIPELINE_REBUILD_FIELDS = frozenset(
         "export_height",
         "export_width",
         "profile_sync",
+        "use_cuda_graph",
     }
 )
 
@@ -95,6 +96,7 @@ _CONFIG_UPDATE_FIELDS = frozenset(
         "export_height",
         "export_width",
         "profile_sync",
+        "use_cuda_graph",
         "device",
     }
 )
@@ -146,6 +148,7 @@ class RuntimeSettingsSnapshot:
     export_height: int | None = None
     export_width: int | None = None
     profile_sync: bool | None = None
+    use_cuda_graph: bool | None = None
     device: str | None = None
 
     def classify(self) -> SnapshotChangeClass:

@@ -64,11 +64,29 @@ class StereoResult:
     right_eye: torch.Tensor
     sbs: torch.Tensor
     debug_info: dict[str, torch.Tensor | float | int | str] = field(default_factory=dict)
+    cuda_timing_events: dict[str, object] = field(default_factory=dict)
 
 
-def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
+def _record_cuda_event(events: dict[str, object], name: str, tensor: torch.Tensor | None) -> None:
+    if not isinstance(tensor, torch.Tensor) or not tensor.is_cuda:
+        return
+    try:
+        event = torch.cuda.Event(blocking=False, enable_timing=True)
+        event.record(torch.cuda.current_stream(tensor.device))
+        events[name] = event
+    except Exception:
+        return
+
+
+def _layered_synthesis(
+    rgb: torch.Tensor,
+    depth: torch.Tensor,
+    config: StereoConfig,
+    cuda_events: dict[str, object] | None = None,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
     stage_times: dict[str, float] = {}
     stage_start = time.perf_counter()
+    cuda_events = cuda_events if cuda_events is not None else {}
     params = ShiftParams(
         depth_strength=config.depth_strength,
         convergence=config.convergence,
@@ -83,6 +101,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
     )
     base_shift = compute_shift_px(depth, rgb.shape[-1], params)
     parallax_debug = shift_debug_info(depth, rgb.shape[-1], params)
+    _record_cuda_event(cuda_events, "synth_depth_shift", rgb)
     stage_times["depth_postprocess_shift_ms"] = (time.perf_counter() - stage_start) * 1000.0
     stage_start = time.perf_counter()
 
@@ -110,6 +129,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
 
         left = composite_layers(left_layers, weights)
         right = composite_layers(right_layers, weights)
+    _record_cuda_event(cuda_events, "synth_warp", rgb)
     stage_times["warp_composite_ms"] = (time.perf_counter() - stage_start) * 1000.0
     stage_start = time.perf_counter()
     if config.occlusion:
@@ -132,6 +152,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
         occlusion_mask_backend = "none"
         mask = torch.zeros_like(depth)
 
+    _record_cuda_event(cuda_events, "synth_occlusion", rgb)
     stage_times["occlusion_ms"] = (time.perf_counter() - stage_start) * 1000.0
     stage_start = time.perf_counter()
     hole_fill_backend = "none"
@@ -179,10 +200,12 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
             )
         left, right = eyes.chunk(2, dim=0)
 
+    _record_cuda_event(cuda_events, "synth_hole_fill", rgb)
     stage_times["hole_fill_ms"] = (time.perf_counter() - stage_start) * 1000.0
     stage_start = time.perf_counter()
     left = refine_local(left, mask, enabled=config.refine)
     right = refine_local(right, mask, enabled=config.refine)
+    _record_cuda_event(cuda_events, "synth_refine", rgb)
     stage_times["refine_ms"] = (time.perf_counter() - stage_start) * 1000.0
     return left, right, mask, {
         "layers": layer_count,
@@ -235,6 +258,8 @@ def synthesize_stereo(
 ) -> StereoResult:
     synthesis_start = time.perf_counter()
     stage_times: dict[str, float] = {}
+    cuda_events: dict[str, object] = {}
+    _record_cuda_event(cuda_events, "synth_start", rgb)
     config = config or StereoConfig()
     temporal_reset = False
     scene_gate = None
@@ -247,6 +272,7 @@ def synthesize_stereo(
             threshold=config.scene_reset_threshold,
         )
         temporal_reset = bool(temporal_state.last_scene_reset)
+    _record_cuda_event(cuda_events, "synth_scene", rgb)
     stage_times["scene_detect_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
     if config.backend in {"fast", "fast_plus"}:
@@ -262,10 +288,12 @@ def synthesize_stereo(
             foreground_scale=config.foreground_scale,
             antialias_strength=config.depth_antialias_strength,
         )
+        _record_cuda_event(cuda_events, "synth_depth_shift", rgb)
         stage_times["fast_depth_postprocess_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
         stage_start = time.perf_counter()
         left, right, shift_px = synthesize_baseline(rgb, depth, params)
+        _record_cuda_event(cuda_events, "synth_warp", rgb)
         stage_times["fast_baseline_ms"] = (time.perf_counter() - stage_start) * 1000.0
         if config.backend == "fast_plus":
             stage_start = time.perf_counter()
@@ -280,6 +308,7 @@ def synthesize_stereo(
             )
             eyes = torch.cat([left, right], dim=0)
             fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
+            _record_cuda_event(cuda_events, "synth_occlusion", rgb)
             stage_times["fast_plus_mask_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
             stage_start = time.perf_counter()
@@ -295,6 +324,7 @@ def synthesize_stereo(
                 depth_edge_threshold=0.03,
             )
             left, right = eyes.chunk(2, dim=0)
+            _record_cuda_event(cuda_events, "synth_hole_fill", rgb)
             stage_times["fast_plus_fill_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
             stage_start = time.perf_counter()
@@ -327,13 +357,14 @@ def synthesize_stereo(
         if config.backend == "hq_4k" and config.layers < 3:
             config = StereoConfig(**{**config.__dict__, "layers": 3})
         stage_start = time.perf_counter()
-        left, right, mask, debug = _layered_synthesis(rgb, depth, config)
+        left, right, mask, debug = _layered_synthesis(rgb, depth, config, cuda_events)
         stage_times["layered_total_ms"] = (time.perf_counter() - stage_start) * 1000.0
         debug["backend"] = config.backend
 
     stage_start = time.perf_counter()
     if config.temporal:
         left, right = apply_temporal(left, right, mask, temporal_state, strength=config.temporal_strength, scene_gate=scene_gate)
+    _record_cuda_event(cuda_events, "synth_temporal", rgb)
     stage_times["temporal_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
     stage_start = time.perf_counter()
@@ -345,6 +376,7 @@ def synthesize_stereo(
             foreground_scale=config.foreground_scale,
             antialias_strength=config.depth_antialias_strength,
         )
+    _record_cuda_event(cuda_events, "synth_output_depth", rgb)
     stage_times["output_depth_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
     stage_start = time.perf_counter()
@@ -394,6 +426,7 @@ def synthesize_stereo(
         depth=output_depth if config.output_format == "depth_map" else None,
         anaglyph_method=config.anaglyph_method,
     )
+    _record_cuda_event(cuda_events, "synth_sbs", rgb)
     stage_times["make_sbs_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
     synthesis_total_ms = (time.perf_counter() - synthesis_start) * 1000.0
@@ -404,4 +437,4 @@ def synthesize_stereo(
     debug["synthesis_unaccounted_ms"] = max(0.0, float(synthesis_total_ms - stage_accounted_ms))
     if not config.debug_output:
         debug = {k: v for k, v in debug.items() if isinstance(v, (float, int, str))}
-    return StereoResult(left_eye=left, right_eye=right, sbs=sbs, debug_info=debug)
+    return StereoResult(left_eye=left, right_eye=right, sbs=sbs, debug_info=debug, cuda_timing_events=cuda_events)

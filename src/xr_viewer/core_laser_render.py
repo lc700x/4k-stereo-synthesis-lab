@@ -6,6 +6,13 @@ from OpenGL.GL import GL_CCW, GL_CW, glFrontFace
 
 
 class CoreLaserRenderMixin:
+    def _cursor_ring_specs(self, distance_m):
+        scale = float(np.clip(float(distance_m) / 2.0, 1.0, 50.0))
+        return (
+            (0.0096 * scale, (0.2, 0.6, 1.0, 0.75)),
+            (0.0056 * scale, (1.0, 1.0, 1.0, 0.75)),
+        )
+
     @staticmethod
     def _mat3_to_quat(m33):
         """ 3x3 rotation matrix to (x,y,z,w) quaternion. """
@@ -270,11 +277,7 @@ class CoreLaserRenderMixin:
                     _kb_y = np.array([_sy * _sp, _cp, _cy * _sp], dtype='f8')
                     _kb_pos = np.array([self._keyboard_pan_x, self._keyboard_pan_y, -self._keyboard_distance], dtype='f8')
                     hit_pos = (_kb_pos + _kb_x * float(_smooth_pos[0]) + _kb_y * float(_smooth_pos[1])).astype('f4')
-            hit_ref_dist = 2.0
-            dist_scale = float(np.clip(beam_len / hit_ref_dist, 1.0, 3.0))
-            stroke_r = 0.0096 * dist_scale
-            fill_r = 0.0056 * dist_scale
-            for radius, color in [(stroke_r, (0.2, 0.6, 1.0, 0.75)), (fill_r, (1.0, 1.0, 1.0, 0.75))]:
+            for radius, color in self._cursor_ring_specs(beam_len):
                 model = np.eye(4, dtype='f4')
                 if hit_target == 'screen':
                     _sh, _screen_pos, r_ax, u_ax, screen_n = self._screen_basis()

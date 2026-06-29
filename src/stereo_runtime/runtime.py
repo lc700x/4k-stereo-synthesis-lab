@@ -493,7 +493,7 @@ def _merge_runtime_settings_snapshot(
 
 
 _DEPTH_PROVIDER_REBUILD_FIELDS = frozenset(
-    {"depth_backend", "model_id", "export_height", "export_width", "profile_sync"}
+    {"depth_backend", "model_id", "export_height", "export_width", "profile_sync", "use_cuda_graph"}
 )
 _RUNTIME_HANDLED_PIPELINE_REBUILD_FIELDS = _DEPTH_PROVIDER_REBUILD_FIELDS
 _TEMPORAL_RESET_HOT_RELOAD_FIELDS = frozenset(
@@ -702,6 +702,28 @@ class StereoRuntime:
             return
         if str(os.environ.get("D2S_DISABLE_STEREO_WARMUP", "0") or "0").strip().lower() in {"1", "true", "yes", "on"}:
             return
+        self.load()
+        preprocessor = getattr(self.depth_provider, "_preprocessor", None)
+        engine = getattr(self.depth_provider, "_engine", None)
+        if bool(getattr(self.config, "use_cuda_graph", False)) and preprocessor is not None and engine is not None:
+            input_size = preprocessor.input_size(int(rgb_frame.shape[-2]), int(rgb_frame.shape[-1]))
+            try:
+                engine.capture_graph((1, 3, int(input_size[0]), int(input_size[1])))
+            except RuntimeError as exc:
+                setattr(self.depth_provider, "_cuda_graph_disabled_reason", f"{type(exc).__name__}: {exc}")
+                clear_graph = getattr(engine, "clear_graph", None)
+                if callable(clear_graph):
+                    clear_graph()
+                try:
+                    torch.cuda.synchronize(device)
+                except Exception:
+                    pass
+                print(
+                    "\033[31m[TensorRT] CUDA graph warmup capture failed; disabled for this process. "
+                    f"Using native TensorRT enqueue until restart: {type(exc).__name__}: {exc}\033[0m",
+                    flush=True,
+                )
+                raise
         if rgb_frame.ndim == 3:
             _, height, width = rgb_frame.shape
         else:
@@ -802,6 +824,7 @@ class StereoRuntime:
                 stereo_config_for_frame,
                 temporal_state=self.temporal_state,
             )
+            cuda_events.update(getattr(stereo, "cuda_timing_events", None) or {})
             stereo.debug_info.setdefault("fast_plus_fused_backend", "not_used")
             stereo.debug_info.setdefault("fast_plus_fused_skip", fused_skip)
             if stereo_config_for_frame is not stereo_config:

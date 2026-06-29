@@ -107,6 +107,8 @@ class WindowsCaptureEventRunner:
     def _log_capture_fps(self, now: float) -> None:
         if self.capture_tool != "WindowsCaptureCUDA":
             return
+        if not _env_bool("D2S_WGC_CAPTURE_FPS_LOG"):
+            return
         if self._fps_last_log <= 0.0:
             self._fps_last_log = now
             self._fps_frames = 0
@@ -133,6 +135,8 @@ class WindowsCaptureEventRunner:
 
     def _record_capture_timing(self, *, copy_seconds: float, enqueue_seconds: float, handler_seconds: float) -> None:
         if self.capture_tool != "WindowsCaptureCUDA":
+            return
+        if not _env_bool("D2S_WGC_CAPTURE_FPS_LOG"):
             return
         self._fps_copy_seconds += copy_seconds
         self._fps_enqueue_seconds += enqueue_seconds

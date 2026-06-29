@@ -62,7 +62,21 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.add_time("openxr_end_frame", 0.006)
     breakdown.add_time("rt_gpu_total", 0.030)
     breakdown.add_time("rt_gpu_depth", 0.010)
+    breakdown.add_time("rt_gpu_depth_preprocess", 0.001)
+    breakdown.add_time("rt_gpu_depth_model", 0.002)
+    breakdown.add_time("rt_gpu_depth_normalize", 0.003)
+    breakdown.add_time("rt_gpu_depth_upsample", 0.004)
+    breakdown.add_time("rt_gpu_depth_postprocess", 0.005)
     breakdown.add_time("rt_gpu_synth", 0.015)
+    breakdown.add_time("rt_gpu_synth_scene", 0.001)
+    breakdown.add_time("rt_gpu_synth_depth_shift", 0.002)
+    breakdown.add_time("rt_gpu_synth_warp", 0.003)
+    breakdown.add_time("rt_gpu_synth_occ", 0.004)
+    breakdown.add_time("rt_gpu_synth_fill", 0.005)
+    breakdown.add_time("rt_gpu_synth_refine", 0.006)
+    breakdown.add_time("rt_gpu_synth_temporal", 0.007)
+    breakdown.add_time("rt_gpu_synth_output_depth", 0.008)
+    breakdown.add_time("rt_gpu_synth_sbs", 0.009)
     breakdown.add_time("rt_gpu_pack", 0.003)
     breakdown.add_time("rt_gpu_openxr_pack", 0.002)
 
@@ -84,6 +98,20 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "xr_end=6.00ms" in output
     assert "rt_gpu_total=30.00ms" in output
     assert "rt_gpu_depth=10.00ms" in output
+    assert "rt_gpu_depth_pre=1.00ms" in output
+    assert "rt_gpu_depth_model=2.00ms" in output
+    assert "rt_gpu_depth_norm=3.00ms" in output
+    assert "rt_gpu_depth_up=4.00ms" in output
+    assert "rt_gpu_depth_post=5.00ms" in output
     assert "rt_gpu_synth=15.00ms" in output
+    assert "rt_gpu_syn_scene=1.00ms" in output
+    assert "rt_gpu_syn_shift=2.00ms" in output
+    assert "rt_gpu_syn_warp=3.00ms" in output
+    assert "rt_gpu_syn_occ=4.00ms" in output
+    assert "rt_gpu_syn_fill=5.00ms" in output
+    assert "rt_gpu_syn_refine=6.00ms" in output
+    assert "rt_gpu_syn_temporal=7.00ms" in output
+    assert "rt_gpu_syn_out_depth=8.00ms" in output
+    assert "rt_gpu_syn_sbs=9.00ms" in output
     assert "rt_gpu_pack=3.00ms" in output
     assert "rt_gpu_openxr_pack=2.00ms" in output

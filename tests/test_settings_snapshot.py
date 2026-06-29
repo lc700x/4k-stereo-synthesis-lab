@@ -174,6 +174,15 @@ def test_settings_snapshot_maps_profile_sync_as_provider_rebuild_config():
     assert updates == {"profile_sync": True}
 
 
+def test_settings_snapshot_maps_cuda_graph_as_provider_rebuild_config():
+    snapshot = RuntimeSettingsSnapshot(version=16, timestamp=1.0, use_cuda_graph=True)
+
+    updates = snapshot.to_config_updates()
+
+    assert snapshot.classify() is SnapshotChangeClass.PIPELINE_REBUILD
+    assert updates == {"use_cuda_graph": True}
+
+
 def test_runtime_applies_hot_settings_snapshot_without_rebuild():
     runtime = StereoRuntime(
         StereoRuntimeConfig(model_id="Distill-Any-Depth-Base", cache_dir="models", stereo_preset="cinema"),
@@ -284,6 +293,39 @@ def test_runtime_handles_profile_sync_with_depth_provider_rebuild(monkeypatch):
     assert runtime.depth_provider is created[-1]
     assert runtime.depth_config.profile_sync is True
     assert runtime.active_settings_snapshot.profile_sync is True
+
+
+def test_runtime_handles_cuda_graph_with_depth_provider_rebuild(monkeypatch):
+    created = []
+
+    def fake_create_depth_provider(depth_config):
+        provider = FakeDepthProvider()
+        provider.depth_config = depth_config
+        created.append(provider)
+        return provider
+
+    monkeypatch.setattr("stereo_runtime.runtime.create_depth_provider", fake_create_depth_provider)
+    initial_provider = FakeDepthProvider()
+    runtime = StereoRuntime(
+        StereoRuntimeConfig(
+            model_id="Distill-Any-Depth-Base",
+            cache_dir="models",
+            use_cuda_graph=False,
+        ),
+        depth_provider=initial_provider,
+        collect_memory_stats=False,
+    )
+
+    change_class = runtime.apply_settings_snapshot(
+        RuntimeSettingsSnapshot(version=16, timestamp=1.0, use_cuda_graph=True)
+    )
+
+    assert change_class is SnapshotChangeClass.PIPELINE_REBUILD
+    assert runtime.config.use_cuda_graph is True
+    assert initial_provider.closed is True
+    assert runtime.depth_provider is created[-1]
+    assert runtime.depth_config.use_cuda_graph is True
+    assert runtime.active_settings_snapshot.use_cuda_graph is True
 
 
 def test_runtime_result_debug_info_tracks_active_settings_snapshot_fields():

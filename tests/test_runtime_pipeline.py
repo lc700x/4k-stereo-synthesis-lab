@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import queue
 import sys
+from dataclasses import dataclass
 from types import SimpleNamespace
 
 import pytest
@@ -50,6 +51,14 @@ class CountingTemporalState:
         self.reset_count += 1
 
 
+@dataclass(frozen=True)
+class FakeStereoConfig:
+    temporal: bool = True
+    temporal_strength: float = 0.85
+    auto_reset_temporal: bool = True
+    mask_feather_radius: int = 1
+
+
 class FakeRuntime:
     def __init__(self):
         self.openxr_config = None
@@ -60,6 +69,9 @@ class FakeRuntime:
         self.snapshots = []
         self.skip_sbs_output = None
         self.temporal_state = CountingTemporalState()
+        self.stereo_config = FakeStereoConfig()
+        self.seen_stereo_config = None
+        self.config = SimpleNamespace(depth_backend="tensorrt_native", use_cuda_graph=False)
 
     def load(self):
         self.load_calls += 1
@@ -70,11 +82,14 @@ class FakeRuntime:
 
     def apply_settings_snapshot(self, snapshot, *, active_preset=None):
         self.snapshots.append((snapshot, active_preset))
+        if snapshot.use_cuda_graph is not None:
+            self.config.use_cuda_graph = snapshot.use_cuda_graph
         return snapshot.classify()
 
     def process_rgb_frame(self, runtime_rgb, **_kwargs):
         self.rgb_calls += 1
         self.skip_sbs_output = _kwargs.get("skip_sbs_output")
+        self.seen_stereo_config = self.stereo_config
         return SimpleNamespace(
             depth="depth",
             left_eye="left-eye",
@@ -1353,5 +1368,62 @@ def test_runtime_pipeline_openxr_quality_presets_use_full_synthesis_even_when_di
         assert runtime.rgb_calls == 1
         assert runtime.openxr_calls == 0
         assert runtime.skip_sbs_output is True
+        assert runtime.seen_stereo_config.temporal is False
+        assert runtime.seen_stereo_config.temporal_strength == 0.0
+        assert runtime.seen_stereo_config.auto_reset_temporal is False
+        assert runtime.seen_stereo_config.mask_feather_radius == 1
+        assert runtime.stereo_config == FakeStereoConfig()
         assert runtime_result.debug_info["runtime_output_format"] == "openxr_full_synthesis_eyes"
         assert capture_start_time == 10.0
+
+
+def test_runtime_pipeline_openxr_full_synthesis_enables_depth_cuda_graph_once():
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    runtime = FakeRuntime()
+    stats = {}
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset="cinema",
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=runtime,
+        capture_frame_to_rgb=lambda frame, size, **kwargs: SimpleNamespace(
+            _d2s_preprocess_backend="fake-preprocess"
+        ),
+        prepare_rgb_for_stereo_runtime=lambda frame, **kwargs: "runtime-rgb",
+        current_openxr_render_config=lambda: object(),
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=lambda *args, **kwargs: None,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda result: None,
+        set_preprocess_backend=lambda backend: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+
+    RuntimePipelineLoop(context).run()
+
+    assert runtime.config.use_cuda_graph is True
+    assert [snapshot.use_cuda_graph for snapshot, _preset in runtime.snapshots] == [True]
+    assert stats["openxr_depth_cuda_graph_enabled"] == 1

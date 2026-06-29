@@ -23,7 +23,7 @@ Desktop2Stereo engineering-spec refactor tasks from prompts/codex-refactor-promp
 Latest pushed task commit:
 
 ```text
-refactor: complete hot reload snapshot fields
+94f22d6 perf: optimize gpu runtime upload paths
 ```
 
 Canonical specs for current work:
@@ -47,6 +47,7 @@ Canonical specs for current work:
 - Runtime scheduling/backpressure must stay latest-frame first. The recent high-refresh capture diagnosis showed direct `wc_cuda` capture can reach high cadence, but a full CUDA runtime frame without a GPU completion boundary can build an async GPU queue and backpressure WGC / CUDA interop down to roughly 50-60 FPS. This is a runtime scheduling issue, not an OpenXR-only presentation issue.
 - The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
 - TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
+- CUDA/GL image texture upload must remain image-texture-first. PBO is an acceptable GPU fallback, but it must be logged as fallback and must not hide the original image texture failure. Any CPU upload fallback in OpenXR, local viewer, stream/debug realtime display, or depth provider hot path must print a red console warning and record the reason.
 
 ## Future Work
 
@@ -59,12 +60,50 @@ Current task queue:
 3. Validate CUDA/ROCm capture zero-copy on real hardware before any path reports `zero_copy=True`.
 4. Keep runtime scheduling/backpressure covered: CUDA runtime should default to `D2S_RUNTIME_SYNC_AFTER_FRAME=auto`, latest-frame overwrite/drop is expected, and non-CUDA backends must not be accidentally forced into the CUDA sync policy.
 5. Trace the remaining SBS/display FPS gap outside `StereoRuntime.process_*()`: add or inspect timing around raw dequeue, runtime call, runtime_q put/drop, viewer dequeue, texture upload, OpenXR/local submit, present/vsync, and FPS reporting.
-6. Optimize TensorRT ORT depth provider for real GPU zero-copy: replace CPU numpy input binding with CUDA/DLPack or direct CUDA OrtValue binding, keep iobinding output on CUDA, and return a CUDA torch tensor without `OrtValue.numpy()` / `torch.from_numpy()` CPU staging.
-7. Remove remaining compatibility redundancy after all consumers use the docs/28 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
-8. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
-9. Keep `docs/26-desktop2stereo-engineering-design-specification.md` aligned to the `docs/28-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
+6. Deepen CUDA/GL image texture diagnostics: image texture must be tried first, PBO must be marked as GPU fallback, CPU fallback must be red-warning visible, and the original image texture failure reason must not be swallowed.
+7. Optimize TensorRT ORT depth provider for real GPU zero-copy: replace CPU numpy input binding with CUDA/DLPack or direct CUDA OrtValue binding, keep iobinding output on CUDA, and return a CUDA torch tensor without `OrtValue.numpy()` / `torch.from_numpy()` CPU staging.
+8. Remove remaining compatibility redundancy after all consumers use the docs/28 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
+9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
+10. Keep `docs/26-desktop2stereo-engineering-design-specification.md` aligned to the `docs/28-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
 
 ## Current Status
+
+### 2026-06-30 OpenXR GPU Upload and Provider Timing Pass
+
+Implemented and pushed:
+
+```text
+94f22d6 perf: optimize gpu runtime upload paths
+```
+
+Summary:
+
+- Added shared `src/viewer/gl_texture_uploader.py` with a common CUDA tensor -> OpenGL texture uploader used by OpenXR runtime-eye upload and local viewer runtime RGBA upload.
+- Standardized upload policy: CUDA/GL image texture first, PBO as GPU fallback, CPU fallback only with red console warning and recorded reason.
+- OpenXR full synthesis path now expects runtime-produced uint8/RGBA CUDA eye tensors where possible so the viewer only performs texture upload and present, avoiding repeated float clamp/multiply/to-uint8 work at the viewer boundary.
+- TensorRT native now records real CUDA event timing for depth preprocess/model/normalize/upsample/postprocess so CPU enqueue timing is not mistaken for GPU model time.
+- MIGraphX ROCm provider imported the ROCm7 build rule from the legacy v2.5 engine: try FP8 autocast first, fall back to FP16, and skip quantization for force-FP32 models.
+- Docs updated so `docs/28` is the normative rule set, `docs/26` records engineering implementation/status, and this handoff tracks remaining work.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\depth_provider.py src\stereo_runtime\pipeline.py src\stereo_runtime\providers\amd\migraphx.py src\stereo_runtime\providers\nvidia\tensorrt_native.py src\stereo_runtime\runtime.py src\viewer\viewer.py src\viewer\gl_texture_uploader.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\implementation.py tests\test_openxr_runtime.py tests\test_pytorch_rocm_provider.py
+src\python3\python.exe -m pytest tests\test_openxr_runtime.py tests\test_viewer_runtime.py tests\test_runtime_pipeline.py tests\test_runtime_openxr.py tests\test_pytorch_rocm_provider.py -q
+```
+
+Result:
+
+```text
+py_compile passed
+72 passed
+```
+
+Handoff notes:
+
+- `runtime_direct_opengl_pbo active (CUDA)` means image texture path was not active and PBO was used as GPU fallback; it does not by itself mean CPU fallback. The next bug hunt should preserve the root error for image texture registration/copy failure instead of silently disabling it.
+- OpenXR `xr_wait` / `xr_poll` / `xr_submit` / present timing must be analyzed as display runtime scheduling, not as StereoRuntime depth/synthesis/SBS compute time.
+- TensorRT ORT remains the next concrete depth-provider zero-copy task because it still performs CPU numpy input/output staging.
 
 ### 2026-06-30 Realtime CPU Transfer Audit
 

@@ -167,7 +167,20 @@ def test_windows_capture_runner_marks_rocm_clone_device(monkeypatch):
     assert received[-1].metadata["zero_copy"] is False
 
 
-def test_windows_capture_cuda_logs_source_fps(capsys):
+def test_windows_capture_cuda_source_fps_log_defaults_off(capsys):
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_fps(10.0)
+    runner._record_capture_timing(copy_seconds=0.002, enqueue_seconds=0.001, handler_seconds=0.004)
+    runner._log_capture_fps(11.0)
+
+    assert capsys.readouterr().out == ""
+
+
+def test_windows_capture_cuda_logs_source_fps_when_enabled(monkeypatch, capsys):
+    monkeypatch.setenv("D2S_WGC_CAPTURE_FPS_LOG", "1")
     runner = windows_capture_event.WindowsCaptureEventRunner(
         CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
     )

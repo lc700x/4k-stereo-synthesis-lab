@@ -310,7 +310,6 @@ Preset 可以控制 stereo / OpenXR core 参数：
 - `temporal_strength`
 - `auto_reset_temporal`
 - `scene_reset_threshold`
-- `reset_cooldown_frames`
 - `foreground_scale`
 - `depth_antialias_strength`
 - `edge_dilation`

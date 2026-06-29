@@ -61,6 +61,10 @@ def candidate_tensorrt_lib_dirs() -> list[Path]:
     return unique
 
 
+def _dtype_label(dtype: torch.dtype) -> str:
+    return "fp16" if dtype == torch.float16 else "fp32" if dtype == torch.float32 else str(dtype).replace("torch.", "")
+
+
 def ensure_tensorrt_dll_path() -> list[str]:
     added: list[str] = []
     for path in candidate_tensorrt_lib_dirs():
@@ -86,6 +90,7 @@ class DistillAnyDepthBaseTensorRtOrt:
         device: str | torch.device = "cuda",
         cache_dir: str | Path | None = None,
         onnx_path: str | Path | None = None,
+        onnx_dtype: str = "auto",
         trt_cache_dir: str | Path | None = None,
         model_id: str = DISTILL_ANY_DEPTH_BASE_MODEL_ID,
         model_name: str = DISTILL_ANY_DEPTH_BASE_NAME,
@@ -99,6 +104,7 @@ class DistillAnyDepthBaseTensorRtOrt:
             raise RuntimeError("TensorRT depth provider requires CUDA")
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
         self._explicit_onnx_path = Path(onnx_path) if onnx_path is not None else None
+        self.onnx_dtype = str(onnx_dtype)
         self.onnx_path = self._explicit_onnx_path or default_onnx_path(self.cache_dir)
         self.trt_cache_dir = Path(trt_cache_dir) if trt_cache_dir is not None else default_tensorrt_cache_dir(self.cache_dir)
         self.dtype = _dtype_from_onnx_name(self.onnx_path, torch.float16)
@@ -161,6 +167,7 @@ class DistillAnyDepthBaseTensorRtOrt:
             cache_dir=self.cache_dir,
             local_files_only=self.local_files_only,
             force_download=self.force_download,
+            onnx_dtype=self.onnx_dtype,
         )
         artifacts = _prepare_accelerated_artifacts(cfg, input_size=input_size)
         if artifacts.selected_onnx_path is None:
@@ -170,6 +177,8 @@ class DistillAnyDepthBaseTensorRtOrt:
     def load(self):
         if self._session is not None:
             return self._session
+        if self._explicit_onnx_path is None and self._artifact_input_size is None:
+            return None
         if not self.onnx_path.exists():
             raise FileNotFoundError(f"ONNX file not found: {self.onnx_path}")
 
@@ -199,6 +208,16 @@ class DistillAnyDepthBaseTensorRtOrt:
         active = session.get_providers()
         if "TensorrtExecutionProvider" not in active:
             raise RuntimeError(f"TensorRT provider did not activate; active providers: {active}")
+        print(
+            "[TensorRT] ONNXRuntime TensorRT EP loaded:"
+            f" onnx={self.onnx_path}"
+            f" dtype={_dtype_label(self.dtype)}"
+            f" trt_cache={self.trt_cache_dir}"
+            f" active_providers={active}"
+            f" available_providers={available}"
+            f" dll_dirs={trt_lib_dirs or 'none'}",
+            flush=True,
+        )
         self.info = replace(self.info, execution_provider=active[0] if active else None, trt_lib_dirs=trt_lib_dirs)
         self._session = session
         return session

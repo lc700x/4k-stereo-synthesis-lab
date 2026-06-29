@@ -57,7 +57,6 @@ outputs/visual_regression/saved_cinema_settings_samples
 - `Temporal Strength`
 - `Auto Scene Reset`
 - `Scene Reset Threshold`
-- `Reset Cooldown Frames`
 - `Stereo Quality` / `Synthetic View`
 - `TensorRT`
 
@@ -305,10 +304,10 @@ temporal_reset_rate
 优先调：
 
 ```text
-Scene Reset Threshold / Temporal Strength / Reset Cooldown Frames
+Scene Reset Threshold / Temporal Strength
 ```
 
-如果真实视频中频繁重置，提高 `Scene Reset Threshold` 或 `Reset Cooldown Frames`。如果拖影明显，降低 `Temporal Strength`。
+如果真实视频中频繁重置，提高 `Scene Reset Threshold`。如果拖影明显，降低 `Temporal Strength`。
 
 ## 信任测试结果前的检查项
 

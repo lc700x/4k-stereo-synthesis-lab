@@ -39,7 +39,6 @@ def make_config(**overrides):
         "temporal_strength": 0.5,
         "auto_reset_temporal": True,
         "scene_reset_threshold": 0.2,
-        "reset_cooldown_frames": 4,
         "stereo_preset": "cinema",
         "mode": "cinema",
         "export_height": 294,
@@ -62,7 +61,6 @@ def test_hot_reload_value_snapshot_parses_expected_fields():
         "Parallax Preset": "strong",
         "Temporal Strength": "0",
         "Scene Reset Threshold": "0.3",
-        "Reset Cooldown Frames": "7",
         "Foreground Scale": "9.0",
         "Depth Antialias Strength": "0.8",
         "Edge Dilation": "3",
@@ -94,7 +92,7 @@ def test_hot_reload_value_snapshot_parses_expected_fields():
     assert values["parallax_preset"] == "strong"
     assert values["temporal"] is False
     assert values["scene_reset_threshold"] == 0.3
-    assert values["reset_cooldown_frames"] == 7
+    assert ("reset_" + "cooldown" + "_frames") not in values
     assert values["foreground_scale"] == 5.0
     assert values["depth_antialias_strength"] == 0.8
     assert values["edge_dilation"] == 3
@@ -121,7 +119,7 @@ def test_runtime_stereo_overrides_maps_runtime_config():
     assert overrides["temporal_strength"] == 0.5
     assert overrides["auto_reset_temporal"] is True
     assert overrides["scene_reset_threshold"] == 0.2
-    assert overrides["reset_cooldown_frames"] == 4
+    assert ("reset_" + "cooldown" + "_frames") not in overrides
     assert overrides["mask_feather_radius"] == 3
     assert overrides["hole_fill_mode"] == "balanced"
     assert overrides["hole_fill_radius"] == 3
@@ -218,7 +216,6 @@ def test_hot_reload_fast_quality_disables_temporal_and_postprocess():
         "Synthetic View": "fast",
         "Temporal Strength": "0.7",
         "Scene Reset Threshold": "0.22",
-        "Reset Cooldown Frames": "3",
         "Foreground Scale": "0.5",
         "Depth Antialias Strength": "2.0",
     }
@@ -230,7 +227,7 @@ def test_hot_reload_fast_quality_disables_temporal_and_postprocess():
     assert values["temporal_strength"] == 0.0
     assert values["auto_reset_temporal"] is False
     assert values["scene_reset_threshold"] == 0.0
-    assert values["reset_cooldown_frames"] == 0
+    assert ("reset_" + "cooldown" + "_frames") not in values
     assert values["foreground_scale"] == 0.0
     assert values["depth_antialias_strength"] == 0.0
 
@@ -246,7 +243,6 @@ def test_hot_reload_builds_runtime_settings_snapshot():
         "Parallax Budget Preset": "comfort",
         "Temporal Strength": "0.3",
         "Scene Reset Threshold": "0.4",
-        "Reset Cooldown Frames": "8",
         "Screen Edge Mask Suppression": "3",
         "Debug Stereo Output": "true",
     }
@@ -272,7 +268,7 @@ def test_hot_reload_builds_runtime_settings_snapshot():
     assert snapshot.temporal_strength == 0.3
     assert snapshot.auto_reset_temporal is True
     assert snapshot.scene_reset_threshold == 0.4
-    assert snapshot.reset_cooldown_frames == 8
+    assert not hasattr(snapshot, "reset_" + "cooldown" + "_frames")
     assert snapshot.screen_edge_mask_suppression == 3
     assert snapshot.debug_output is True
     assert snapshot.debug_flags == {"debug_output": True}

@@ -697,7 +697,7 @@ right_shift_px = -disparity_px / 2
 
 #### 4.10.5 前沿技术说明
 
-**当前项目采用**：runtime temporal state + scene reset / render_size reset / source target reset 机制，使用 `temporal_enabled`、`temporal_strength`、`scene_reset_threshold`、`reset_cooldown_frames` 等参数控制。
+**当前项目采用**：runtime temporal state + scene reset / render_size reset / source target reset 机制，使用 `temporal_enabled`、`temporal_strength`、`scene_reset_threshold` 等参数控制。
 
 **未来候选**：运动矢量、optical flow、temporal depth model 可以作为质量增强，但必须显式记录依赖和 reset 条件。
 

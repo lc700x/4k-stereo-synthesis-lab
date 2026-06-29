@@ -155,7 +155,6 @@ def test_settings_snapshot_maps_temporal_reset_fields():
         timestamp=1.0,
         auto_reset_temporal=True,
         scene_reset_threshold=0.33,
-        reset_cooldown_frames=9,
     )
 
     updates = snapshot.to_config_updates()
@@ -163,7 +162,7 @@ def test_settings_snapshot_maps_temporal_reset_fields():
     assert snapshot.classify() is SnapshotChangeClass.HOT_RELOAD
     assert updates["auto_reset_temporal"] is True
     assert updates["scene_reset_threshold"] == 0.33
-    assert updates["reset_cooldown_frames"] == 9
+    assert ("reset_" + "cooldown" + "_frames") not in updates
 
 
 def test_settings_snapshot_maps_profile_sync_as_provider_rebuild_config():

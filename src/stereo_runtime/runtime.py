@@ -529,6 +529,7 @@ class StereoRuntime:
         self.last_settings_change_class = SnapshotChangeClass.NO_CHANGE.value
         self.last_settings_changed_fields: tuple[str, ...] = ()
         self._pending_temporal_reset_reasons: tuple[str, ...] = ()
+        self._last_runtime_perf_log_ts = 0.0
         self.stats = RollingRuntimeStats(maxlen=stats_window)
         self.collect_memory_stats = bool(collect_memory_stats)
 
@@ -754,12 +755,24 @@ class StereoRuntime:
         output_eye_size, output_display_size = _add_runtime_output_size_debug_info(debug, stereo.left_eye, sbs)
         pack_ms = (time.perf_counter() - pack_start) * 1000.0
         timing["pack_ms"] = float(pack_ms)
-        if total_ms >= float(os.environ.get("D2S_SLOW_RUNTIME_LOG_MS", "200") or "200"):
+        slow_log_ms = float(os.environ.get("D2S_SLOW_RUNTIME_LOG_MS", "200") or "200")
+        refresh_log_s = float(os.environ.get("D2S_RUNTIME_FRAME_LOG_REFRESH_S", "5") or "0")
+        now_log = time.perf_counter()
+        is_slow_frame = total_ms >= slow_log_ms
+        is_refresh_frame = refresh_log_s > 0.0 and (now_log - self._last_runtime_perf_log_ts) >= refresh_log_s
+        if is_slow_frame or is_refresh_frame:
+            self._last_runtime_perf_log_ts = now_log
+            depth_accounted_ms = float(profile.preprocess_ms) + float(profile.model_ms) + float(profile.postprocess_ms)
+            depth_gap_ms = max(0.0, float(depth_total_ms) - depth_accounted_ms)
+            log_kind = "slow frame" if is_slow_frame else "frame refresh"
             print(
-                "[StereoRuntime] slow frame:"
+                f"[StereoRuntime] {log_kind}:"
                 f" total_ms={total_ms:.1f}"
                 f" depth_total_ms={depth_total_ms:.1f}"
+                f" depth_pre_ms={float(profile.preprocess_ms):.1f}"
                 f" depth_model_ms={float(profile.model_ms):.1f}"
+                f" depth_post_ms={float(profile.postprocess_ms):.1f}"
+                f" depth_gap_ms={depth_gap_ms:.1f}"
                 f" synthesis_ms={synthesis_ms:.1f}"
                 f" pack_ms={pack_ms:.1f}"
                 f" backend={debug.get('backend', stereo_config.backend)}"
@@ -770,11 +783,18 @@ class StereoRuntime:
                 f" sbs_backend={debug.get('sbs_backend', 'n/a')}"
                 f" fast_plus_fused={debug.get('fast_plus_fused_backend', 'n/a')}"
                 f" fast_plus_skip={debug.get('fast_plus_fused_skip', 'n/a')}"
+                f" stage_scene={float(debug.get('scene_detect_ms', 0.0)):.1f}"
+                f" stage_layered={float(debug.get('layered_total_ms', 0.0)):.1f}"
                 f" stage_depth_shift={float(debug.get('depth_postprocess_shift_ms', 0.0)):.1f}"
                 f" stage_warp={float(debug.get('warp_composite_ms', 0.0)):.1f}"
                 f" stage_occ={float(debug.get('occlusion_ms', 0.0)):.1f}"
                 f" stage_fill={float(debug.get('hole_fill_ms', 0.0)):.1f}"
-                f" stage_refine={float(debug.get('refine_ms', 0.0)):.1f}",
+                f" stage_refine={float(debug.get('refine_ms', 0.0)):.1f}"
+                f" stage_temporal={float(debug.get('temporal_ms', 0.0)):.1f}"
+                f" stage_output_depth={float(debug.get('output_depth_ms', 0.0)):.1f}"
+                f" stage_sbs_backend={float(debug.get('sbs_backend_ms', 0.0)):.1f}"
+                f" stage_sbs={float(debug.get('make_sbs_ms', 0.0)):.1f}"
+                f" stage_synth_gap={float(debug.get('synthesis_unaccounted_ms', 0.0)):.1f}",
                 flush=True,
             )
 

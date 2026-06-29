@@ -55,10 +55,11 @@ class GUIConfigMixin:
             self.model_size_dd.value = ""
         self.depth_res_dd.value = str(cfg.get("Depth Resolution", DEFAULTS["Depth Resolution"]))
         self.update_depth_resolution_options(self.current_model_name)
-        self.depth_strength_dd.value = str(cfg.get("Depth Strength", DEFAULTS["Depth Strength"]))
+        depth_strength = self._clamp_depth_strength(
+            cfg.get("Depth Strength", DEFAULTS["Depth Strength"]))
+        self.depth_strength_dd.value = f"{depth_strength:.2f}"
         self.depth_quick_dd.value = self._depth_quick_to_display(
-            cfg.get("Depth Quick", self._depth_quick_from_strength(
-                cfg.get("Depth Strength", DEFAULTS["Depth Strength"]))))
+            cfg.get("Depth Quick", self._depth_quick_from_strength(depth_strength)))
         self.display_mode_dd.value = cfg.get("Display Mode", DEFAULTS["Display Mode"])
         self.xr_preview_cb.value = cfg.get("XR Preview Window", DEFAULTS["XR Preview Window"])
         self.local_vsync_cb.value = cfg.get("VSync", DEFAULTS["VSync"])
@@ -100,7 +101,7 @@ class GUIConfigMixin:
         self.advanced_stereo_cb.value = False
         self._sync_advanced_stereo_visibility()
         self._sync_device_advanced_visibility(cfg.get("Run Mode", DEFAULTS.get("Run Mode", "Local Viewer")))
-        self.fp16_cb.value = DEFAULTS["FP16"]
+        self.fp16_cb.value = bool(cfg.get("FP16", DEFAULTS["FP16"]))
         self.showfps_cb.value = cfg.get("Show FPS", DEFAULTS["Show FPS"])
         self.fill_16_9_cb.value = cfg.get("Fill 16:9", DEFAULTS["Fill 16:9"])
         self.fix_aspect_cb.value = cfg.get("Fix Viewer Aspect", DEFAULTS["Fix Viewer Aspect"])
@@ -197,6 +198,7 @@ class GUIConfigMixin:
         fp16_value = False if "MPS" in (self.device_dd.value or "") else bool(self.fp16_cb.value)
 
         stereo_preset = self._display_to_preset(self.stereo_preset_dd.value)
+        preset_values = self._stereo_preset_gui_values(stereo_preset) or {}
         stereo_quality = self._stereo_quality_for_preset(stereo_preset)
         parallax_budget = self._display_to_parallax_budget(self.parallax_budget_dd.value)
         render_fixed_width, render_fixed_height = self._parse_fixed_size(self.render_fixed_dd.value)
@@ -215,7 +217,7 @@ class GUIConfigMixin:
             "Display Mode": self.display_mode_dd.value,
             "Model List": ALL_MODELS,
             "Depth Model": self.current_model_name,
-            "Depth Strength": self._parse_float(self.depth_strength_dd.value, DEFAULTS["Depth Strength"]),
+            "Depth Strength": self._clamp_depth_strength(self.depth_strength_dd.value),
             "Depth Quick": self._display_to_depth_quick(self.depth_quick_dd.value),
             "Anti-aliasing": self._parse_int(self.antialiasing_dd.value, DEFAULTS["Anti-aliasing"]),
             "Depth Antialias Strength": self._parse_float(self.antialiasing_dd.value, DEFAULTS["Depth Antialias Strength"]),
@@ -223,10 +225,11 @@ class GUIConfigMixin:
             "Temporal Strength": temporal_strength,
             "Auto Scene Reset": scene_reset_threshold > 0.0,
             "Scene Reset Threshold": scene_reset_threshold,
-            "Reset Cooldown Frames": self._parse_int(self.reset_cooldown_dd.value, DEFAULTS["Reset Cooldown Frames"]),
             "Edge Dilation": self._parse_int(self.edge_dilation_dd.value, DEFAULTS["Edge Dilation"]),
             "Mask Feather Radius": self._parse_int(self.mask_feather_dd.value, DEFAULTS["Mask Feather Radius"]),
             "Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value),
+            "Hole Fill Radius": int(preset_values.get("hole_fill_radius", DEFAULTS["Hole Fill Radius"])),
+            "Hole Fill Strength": float(preset_values.get("hole_fill_strength", DEFAULTS["Hole Fill Strength"])),
             "Edge Threshold": self._parse_float(self.edge_threshold_dd.value, DEFAULTS["Edge Threshold"]),
             "Cross Eyed": self.cross_eyed_cb.value,
             "Anaglyph Method": self.anaglyph_dd.value,
@@ -310,6 +313,7 @@ class GUIConfigMixin:
         foreground_scale = self._clamp_foreground_scale(self._parse_float(self.foreground_scale_dd.value, DEFAULTS["Foreground Scale"]))
         self.foreground_scale_dd.value = f"{foreground_scale:.1f}"
         stereo_preset = self._display_to_preset(self.stereo_preset_dd.value)
+        preset_values = self._stereo_preset_gui_values(stereo_preset) or {}
         stereo_quality = self._stereo_quality_for_preset(stereo_preset)
         parallax_budget = self._display_to_parallax_budget(self.parallax_budget_dd.value)
 
@@ -319,19 +323,20 @@ class GUIConfigMixin:
             "Synthetic View": stereo_quality,
             "Parallax Budget Preset": parallax_budget,
             "Convergence": self._parse_float(self.convergence_dd.value, DEFAULTS["Convergence"]),
-            "Depth Strength": self._parse_float(self.depth_strength_dd.value, DEFAULTS["Depth Strength"]),
+            "Depth Strength": self._clamp_depth_strength(self.depth_strength_dd.value),
             "Depth Quick": self._display_to_depth_quick(self.depth_quick_dd.value),
             "Temporal": temporal_strength > 0.0,
             "Temporal Strength": temporal_strength,
             "Auto Scene Reset": scene_reset_threshold > 0.0,
             "Scene Reset Threshold": scene_reset_threshold,
-            "Reset Cooldown Frames": self._parse_int(self.reset_cooldown_dd.value, DEFAULTS["Reset Cooldown Frames"]),
             "Foreground Scale": foreground_scale,
             "Anti-aliasing": self._parse_int(self.antialiasing_dd.value, DEFAULTS["Anti-aliasing"]),
             "Depth Antialias Strength": antialias_strength,
             "Edge Dilation": self._parse_int(self.edge_dilation_dd.value, DEFAULTS["Edge Dilation"]),
             "Mask Feather Radius": self._parse_int(self.mask_feather_dd.value, DEFAULTS["Mask Feather Radius"]),
             "Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value),
+            "Hole Fill Radius": int(preset_values.get("hole_fill_radius", DEFAULTS["Hole Fill Radius"])),
+            "Hole Fill Strength": float(preset_values.get("hole_fill_strength", DEFAULTS["Hole Fill Strength"])),
             "Edge Threshold": self._parse_float(self.edge_threshold_dd.value, DEFAULTS["Edge Threshold"]),
             "Anaglyph Method": self.anaglyph_dd.value,
             "Cross Eyed": bool(self.cross_eyed_cb.value),
@@ -349,43 +354,48 @@ class GUIConfigMixin:
     def _stereo_preset_gui_values(preset):
         presets = {
             "traditional_fastest": {
-                "quality": "fast", "parallax_budget": "standard", "depth_strength": 2.5, "depth_quick": "Standard",
+                "quality": "fast", "parallax_budget": "standard", "depth_strength": 0.25, "depth_quick": "Standard",
                 "convergence": 0.0,
-                "temporal_strength": 0.0, "scene_reset_threshold": 0.22, "reset_cooldown_frames": 3,
+                "temporal_strength": 0.0, "scene_reset_threshold": 0.22,
                 "foreground_scale": 0.0, "antialiasing": 0, "depth_antialias_strength": 0.0,
-                "edge_dilation": 0, "mask_feather_radius": 0, "hole_fill_mode": "balanced", "edge_threshold": 0.04,
+                "edge_dilation": 0, "mask_feather_radius": 0, "hole_fill_mode": "balanced",
+                "hole_fill_radius": 0, "hole_fill_strength": 0.0, "edge_threshold": 0.04,
                 "cross_eyed": False,
             },
             "cinema": {
-                "quality": "quality_4k", "parallax_budget": "standard", "depth_strength": 2.5, "depth_quick": "Standard",
+                "quality": "quality_4k", "parallax_budget": "standard", "depth_strength": 0.25, "depth_quick": "Standard",
                 "convergence": 0.0,
-                "temporal_strength": 0.7, "scene_reset_threshold": 0.22, "reset_cooldown_frames": 3,
+                "temporal_strength": 0.25, "scene_reset_threshold": 0.22,
                 "foreground_scale": 0.0, "antialiasing": 1, "depth_antialias_strength": 1.0,
-                "edge_dilation": 2, "mask_feather_radius": 3, "hole_fill_mode": "balanced", "edge_threshold": 0.04,
+                "edge_dilation": 1, "mask_feather_radius": 1, "hole_fill_mode": "balanced",
+                "hole_fill_radius": 1, "hole_fill_strength": 0.60, "edge_threshold": 0.04,
                 "cross_eyed": False,
             },
             "game_low_latency": {
-                "quality": "fast_plus", "parallax_budget": "comfort", "depth_strength": 2.0, "depth_quick": "Soft",
+                "quality": "fast_plus", "parallax_budget": "comfort", "depth_strength": 0.20, "depth_quick": "Soft",
                 "convergence": 0.0,
-                "temporal_strength": 0.25, "scene_reset_threshold": 0.18, "reset_cooldown_frames": 2,
+                "temporal_strength": 0.0, "scene_reset_threshold": 0.18,
                 "foreground_scale": 0.0, "antialiasing": 0, "depth_antialias_strength": 0.0,
-                "edge_dilation": 1, "mask_feather_radius": 3, "hole_fill_mode": "soft_low_ghost", "edge_threshold": 0.04,
+                "edge_dilation": 1, "mask_feather_radius": 0, "hole_fill_mode": "soft_low_ghost",
+                "hole_fill_radius": 1, "hole_fill_strength": 0.60, "edge_threshold": 0.04,
                 "cross_eyed": False,
             },
             "still_image_hq": {
-                "quality": "hq_4k", "parallax_budget": "strong", "depth_strength": 3.0, "depth_quick": "Enhanced",
+                "quality": "hq_4k", "parallax_budget": "strong", "depth_strength": 0.30, "depth_quick": "Enhanced",
                 "convergence": 0.0,
-                "temporal_strength": 0.0, "scene_reset_threshold": 0.00, "reset_cooldown_frames": 3,
+                "temporal_strength": 0.0, "scene_reset_threshold": 0.00,
                 "foreground_scale": 0.0, "antialiasing": 2, "depth_antialias_strength": 2.0,
-                "edge_dilation": 3, "mask_feather_radius": 3, "hole_fill_mode": "sharp_test", "edge_threshold": 0.04,
+                "edge_dilation": 3, "mask_feather_radius": 3, "hole_fill_mode": "quality",
+                "hole_fill_radius": 3, "hole_fill_strength": 1.0, "edge_threshold": 0.04,
                 "cross_eyed": False,
             },
             "debug_export": {
-                "quality": "quality_4k", "parallax_budget": "standard", "depth_strength": 3.0, "depth_quick": "Enhanced",
+                "quality": "quality_4k", "parallax_budget": "standard", "depth_strength": 0.30, "depth_quick": "Enhanced",
                 "convergence": 0.0,
-                "temporal_strength": 0.7, "scene_reset_threshold": 0.22, "reset_cooldown_frames": 3,
+                "temporal_strength": 0.0, "scene_reset_threshold": 0.22,
                 "foreground_scale": 0.0, "antialiasing": 0, "depth_antialias_strength": 0.0,
-                "edge_dilation": 2, "mask_feather_radius": 3, "hole_fill_mode": "balanced", "edge_threshold": 0.04,
+                "edge_dilation": 1, "mask_feather_radius": 0, "hole_fill_mode": "sharp_test",
+                "hole_fill_radius": 1, "hole_fill_strength": 0.45, "edge_threshold": 0.04,
                 "cross_eyed": False,
             },
         }
@@ -400,7 +410,15 @@ class GUIConfigMixin:
 
     @staticmethod
     def _depth_strength_for_quick(value):
-        return {"Soft": 2.0, "Standard": 2.5, "Enhanced": 3.0}.get(value, 2.5)
+        return {"Soft": 0.20, "Standard": 0.25, "Enhanced": 0.30}.get(value, 0.25)
+
+    @staticmethod
+    def _clamp_depth_strength(value):
+        try:
+            strength = float(value)
+        except (TypeError, ValueError):
+            strength = float(DEFAULTS["Depth Strength"])
+        return max(0.0, min(0.5, strength))
 
     # ── stereo quality converters (delegate to localization module) ──
 
@@ -473,9 +491,9 @@ class GUIConfigMixin:
             strength = float(value)
         except (TypeError, ValueError):
             return "Standard"
-        if strength < 2.25:
+        if strength < 0.225:
             return "Soft"
-        if strength > 2.75:
+        if strength > 0.275:
             return "Enhanced"
         return "Standard"
 

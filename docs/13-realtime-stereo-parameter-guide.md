@@ -124,7 +124,6 @@ per_eye_shift_px = actual_disparity_px / 2
 | Temporal Strength | `Temporal Strength` | 0.0-1.0 | 0.7 | 跨帧平滑强度 | 视频可 0.7 左右；游戏低到 0.25 或更低；拖影就降 |
 | Auto Scene Reset | `Auto Scene Reset` | bool，由阈值推导 | true | 场景切换时重置 temporal history | 快切视频必须开启；静态图无意义 |
 | Scene Threshold | `Scene Reset Threshold` | 0.00, 0.12, 0.18, 0.22, 0.28, 0.35 | 0.22 | 场景变化检测阈值 | 拖影/残影时降低；频繁闪断时升高 |
-| Reset Cooldown | `Reset Cooldown Frames` | 1, 2, 3, 4, 6 | 3 | 两次自动重置间最小帧数 | 快速游戏可 2；电影默认 3 |
 
 ### 输出与展示参数
 

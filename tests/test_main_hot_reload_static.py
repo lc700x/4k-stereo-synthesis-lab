@@ -28,7 +28,7 @@ def test_main_has_limited_stereo_hot_reload_path():
     assert '"cross_eyed"' in text
     assert '"temporal_strength"' in text
     assert '"scene_reset_threshold"' in text
-    assert '"reset_cooldown_frames"' in text
+    assert ("reset_" + "cooldown" + "_frames") not in text
     assert '"foreground_scale"' in text
     assert "def clamp_foreground_scale_hot_reload" in text
     assert "clamp_foreground_scale_hot_reload(" in text

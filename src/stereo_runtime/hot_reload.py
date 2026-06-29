@@ -36,7 +36,6 @@ def runtime_stereo_overrides(runtime) -> dict:
         "temporal_strength": config.temporal_strength,
         "auto_reset_temporal": config.auto_reset_temporal,
         "scene_reset_threshold": config.scene_reset_threshold,
-        "reset_cooldown_frames": config.reset_cooldown_frames,
         "foreground_scale": config.foreground_scale,
         "depth_antialias_strength": config.depth_antialias_strength,
         "edge_threshold": config.edge_threshold,
@@ -186,9 +185,6 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
         "temporal_strength": temporal_strength,
         "auto_reset_temporal": auto_reset_temporal,
         "scene_reset_threshold": scene_reset_threshold,
-        "reset_cooldown_frames": int(
-            settings_dict.get("Reset Cooldown Frames", config.reset_cooldown_frames)
-        ),
         "foreground_scale": clamp_foreground_scale_hot_reload(
             settings_dict.get("Foreground Scale", config.foreground_scale)
         ),
@@ -221,7 +217,6 @@ def hot_reload_value_snapshot(settings_dict: dict, config) -> dict:
                 "temporal_strength": 0.0,
                 "auto_reset_temporal": False,
                 "scene_reset_threshold": 0.0,
-                "reset_cooldown_frames": 0,
                 "foreground_scale": 0.0,
                 "depth_antialias_strength": 0.0,
             }
@@ -312,7 +307,6 @@ class StereoHotReloader:
                 f" stereo_quality={values['stereo_quality']}"
                 f" temporal_strength={values['temporal_strength']:.3f}"
                 f" scene_reset={values['scene_reset_threshold']:.3f}"
-                f" reset_cooldown={values['reset_cooldown_frames']}"
                 f" foreground_scale={values['foreground_scale']:.3f}"
                 f" antialias={values['depth_antialias_strength']:.3f}"
                 f" edge_dilation={values['edge_dilation']}"

@@ -60,6 +60,99 @@ Current task queue:
 
 ## Current Status
 
+### 2026-06-29 OpenXR Realtime Hot Path and Capture Diagnostics
+
+This pass removed the per-frame CPU synchronization from scene-cut temporal reset and then traced the remaining OpenXR SBS refresh bottleneck with live runtime logs.
+
+Implemented in this follow-up:
+
+- Reworked auto scene reset into GPU-side temporal alpha gating so the realtime path no longer needs a Python `if changed` branch, `.item()`, or CUDA event query to decide whether to reset temporal history.
+- Removed `reset_cooldown_frames` from the realtime path instead of keeping a CPU-owned cooldown that cannot know GPU-only scene-cut state without synchronization.
+- Kept temporal blending active when GPU-side scene reset is unavailable; do not fall back to CPU scene reset in the realtime path.
+- Fixed GUI fallout from the cooldown removal, including the stale `reset_cooldown_label` reference.
+- Moved the GUI Scene Reset Threshold control beside Temporal Strength and moved Advanced Stereo beside Hole Fill Mode.
+- Enabled existing `FPSBreakdown` output from `D2S_OPENXR_DEBUG=1` and from the existing source-health tick, so OpenXR diagnosis prints capture, raw queue, runtime, and timing breakdowns without adding a second counter stack.
+- Added a source-level `WindowsCaptureCUDA` console line inside the capture callback:
+
+```text
+[WindowsCaptureCUDA] capture_fps=<fps> frames=<count> monitor=<index> mode=<mode>
+```
+
+- Fixed the 4K capture preprocess fast-path miss where `torch.device("cuda") != torch.device("cuda:0")` caused CUDA frames to skip `triton_bgr_resize_norm` and fall back to the much slower PyTorch BGR/RGB/float conversion path.
+- Generalized the device comparison helper for `cpu`, `cuda`, `mps`, `xpu`, and `hip` so bare device names and `:0` device names are treated consistently.
+
+Live-run findings:
+
+- Before the device comparison fix, `FPSBreakdown` showed `pre=torch_bgr_norm` and `rt_cap2rgb` around `36-39ms`, while `rt_call` was usually around `10-13ms`; the main bottleneck was capture preprocess, not depth/stereo synthesis.
+- After the fix, `pre=triton_bgr_resize_norm` was restored and `rt_cap2rgb` dropped to roughly `0.3-0.4ms`.
+- The later run showed `WindowsCaptureCUDA` / source capture rate around `21-24fps` in that test window, so source event rate is now a separate variable to validate against a known 60Hz changing source.
+- `stage_scene=0.0` in refresh logs confirms the previous scene-cut CPU sync point is no longer the observed hot-path cost.
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\capture\preprocess.py src\app_runtime\runtime_callbacks.py src\app_runtime\runtime_context.py src\capture\backends\windows_capture_event.py tests\test_capture_preprocess.py tests\test_windows_capture_event.py
+src\python3\python.exe -m pytest tests\test_capture_preprocess.py tests\test_capture_preprocess_triton.py
+src\python3\python.exe -m pytest tests\test_windows_capture_event.py
+git diff --check
+```
+
+Result:
+
+```text
+py_compile passed
+17 passed for capture preprocess / Triton preprocess
+7 passed for Windows capture event tests
+git diff --check passed with CRLF warnings only
+```
+
+Handoff notes:
+
+- The next performance question should be tested with the new `[WindowsCaptureCUDA] capture_fps=...` console line while capturing a known 60Hz source; do not infer source FPS from `StereoRuntime frame refresh`, which is a periodic timing refresh log, not a per-frame FPS line.
+- If source capture is confirmed below 60fps with a known 60Hz changing input, inspect the third-party `wc_cuda` / Windows Graphics Capture event cadence before changing stereo synthesis settings.
+
+### 2026-06-29 Depth Strength Runtime Range Cleanup
+
+- Unified `Depth Strength` to use the same `0.00` to `0.50` value across GUI, `settings.yaml`, hot-save, hot-reload, and runtime consumers.
+- Changed the GUI dropdown to `0.05` steps and kept the backend shift formulas unchanged.
+- Updated GUI stereo presets and `Depth Quick` mappings to `Soft=0.20`, `Standard=0.25`, and `Enhanced=0.30`; current `src/settings.yaml` now uses `Depth Strength: 0.25`.
+- Verified with `py_compile`, `tests/test_gui_config.py`, `tests/test_hot_reload.py`, and `git diff --check`.
+
+### 2026-06-29 Cinema Hole-Fill Preset Lightening
+
+- Kept `Traditional / Fastest` as the high-FPS no-extra-hole-fill stereo mode.
+- Changed the `Cinema / Balance` preset and reset defaults to a lighter hole-fill strategy: `hole_fill_radius=1`, `hole_fill_strength=0.60`, `mask_feather_radius=1`, `edge_dilation=1`, and `temporal_strength=0.25`.
+- Added `Hole Fill Radius` and `Hole Fill Strength` emission to GUI collect/hot-save so preset values reach runtime instead of silently falling back to the old `3 / 1.0` defaults.
+- Mapped `Image / High Quality` to the `quality` content-aware hole-fill mode while leaving it outside the realtime default path.
+
+### 2026-06-29 GUI FP16 Default Enablement
+
+- Enabled GUI `FP16` by default and changed config load to honor `settings.yaml` instead of forcing the checkbox back to the default each time.
+- Kept the existing MPS save guard so FP16 is still written as off for MPS devices.
+- Updated current `src/settings.yaml` to `FP16: true` for CUDA/TensorRT use.
+
+### 2026-06-29 GUI FP16 ONNX Dtype Wiring
+
+- Wired GUI `FP16` into `StereoRuntimeConfig.onnx_dtype`: checked maps to `fp16`, unchecked maps to `fp32`.
+- Updated runtime artifact report paths so `onnx_path` and `trt_engine_path` follow the selected dtype instead of always pointing at FP16 artifacts.
+- Added `DepthProviderConfig.onnx_dtype` and passed it through ONNX CUDA, TensorRT ORT, and native TensorRT provider artifact preparation.
+- With `FP16` unchecked, missing `model_fp32_<HxW>.onnx` now triggers the existing FP32 export/probe path instead of reusing an existing FP16 ONNX artifact via `auto`.
+
+### 2026-06-29 TensorRT Startup Console Logging
+
+- Restored TensorRT startup console visibility for native TensorRT and ONNXRuntime TensorRT EP first-load paths.
+- Native TensorRT now prints engine build start/ready messages plus first-load details: engine path, ONNX path, dtype, input size, CUDA graph/profile flags, and TensorRT DLL dirs.
+- ONNXRuntime TensorRT EP now prints first-load details: ONNX path, dtype, TensorRT cache path, active/available providers, and TensorRT DLL dirs.
+
+### 2026-06-29 FP16 Launch Persistence Fix
+
+- Removed the GUI subprocess-start cleanup that reset `FP16` back to `DEFAULTS["FP16"]` after launch.
+- Kept one-shot recompile flags resetting after launch, but preserved the user-selected FP16 checkbox state in `settings.yaml`.
+- Updated current `src/settings.yaml` to `FP16: false` to match the user's cancellation test state and avoid an initial FP16 TensorRT load before the FP32 runtime update.
+- Deferred ONNX / TensorRT provider `load()` when artifact input size has not been selected yet, preventing generic runtime preload from loading the default FP16 artifact before first-frame `_ensure_artifacts_for_input()` selects FP32.
+- Expanded slow-frame runtime logs with `depth_pre_ms`, `depth_post_ms`, and `depth_gap_ms` so depth bottlenecks can be separated into preprocess, model inference, postprocess, and unaccounted load/sync overhead.
+- Added steady-state runtime timing refresh logs: frames above `D2S_SLOW_RUNTIME_LOG_MS` still print as `slow frame`, while latest frames below the slow threshold print as `frame refresh` every `D2S_RUNTIME_FRAME_LOG_REFRESH_S` seconds by default.
+
 ### 2026-06-29 Legacy IPD / Parallax Multiplier Cleanup
 
 Continued compliance against `docs/26-desktop2stereo-engineering-design-specification.md`, with runtime semantics governed by `docs/28-Realtime-2d-to-3d-specification.md`. This pass removed the remaining runtime/config/test protection for the old physical-IPD-style parallax chain.
@@ -1090,7 +1183,7 @@ Continued the 2D-to-3D runtime specification compliance pass by closing the gap 
 
 Implemented in this follow-up:
 
-- Added `auto_reset_temporal`, `scene_reset_threshold`, and `reset_cooldown_frames` to `RuntimeSettingsSnapshot` hot-reload classification and runtime config update mapping.
+- Added `auto_reset_temporal` and `scene_reset_threshold` to `RuntimeSettingsSnapshot` hot-reload classification and runtime config update mapping.
 - Added `hot_reload_runtime_settings_snapshot()` so YAML-driven GUI hot-save updates are converted into a `RuntimeSettingsSnapshot` with source metadata.
 - Updated `StereoHotReloader.apply_if_needed()` to apply settings through `StereoRuntime.apply_settings_snapshot()` when available, while preserving the legacy direct config replacement fallback for compatibility tests and simple callers.
 - Updated OpenXR hot-reload propagation to send the same snapshot through `update_openxr_runtime_config(snapshot=...)` instead of separate loose stereo parameter arguments.

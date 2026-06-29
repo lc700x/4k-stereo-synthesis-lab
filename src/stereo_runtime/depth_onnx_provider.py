@@ -147,6 +147,7 @@ class DistillAnyDepthBaseOnnxCuda:
         device: str | torch.device = "cuda",
         cache_dir: str | Path | None = None,
         onnx_path: str | Path | None = None,
+        onnx_dtype: str = "auto",
         model_id: str = DISTILL_ANY_DEPTH_BASE_MODEL_ID,
         model_name: str = DISTILL_ANY_DEPTH_BASE_NAME,
         use_iobinding: bool = True,
@@ -159,6 +160,7 @@ class DistillAnyDepthBaseOnnxCuda:
         self.device = torch.device(device)
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
         self._explicit_onnx_path = Path(onnx_path) if onnx_path is not None else None
+        self.onnx_dtype = str(onnx_dtype)
         self.onnx_path = self._explicit_onnx_path or default_onnx_path(self.cache_dir)
         self.dtype = _dtype_from_onnx_name(self.onnx_path, torch.float16 if self.device.type == "cuda" else torch.float32)
         self.model_id = model_id
@@ -223,6 +225,7 @@ class DistillAnyDepthBaseOnnxCuda:
             cache_dir=self.cache_dir,
             local_files_only=self.local_files_only,
             force_download=self.force_download,
+            onnx_dtype=self.onnx_dtype,
         )
         artifacts = _prepare_accelerated_artifacts(cfg, input_size=input_size)
         if artifacts.selected_onnx_path is None:
@@ -232,6 +235,8 @@ class DistillAnyDepthBaseOnnxCuda:
     def load(self):
         if self._session is not None:
             return self._session
+        if self._explicit_onnx_path is None and self._artifact_input_size is None:
+            return None
         if not self.onnx_path.exists():
             raise FileNotFoundError(f"ONNX file not found: {self.onnx_path}")
 

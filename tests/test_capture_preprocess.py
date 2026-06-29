@@ -87,6 +87,15 @@ def test_capture_frame_to_rgb_tensor_path_accepts_torch_hwc():
     assert tensor._d2s_preprocess_device_transfer == "cpu->cpu"
 
 
+@pytest.mark.parametrize("device_type", ["cpu", "cuda", "mps", "xpu", "hip"])
+def test_same_torch_device_treats_default_device_as_device_zero(device_type):
+    torch = pytest.importorskip("torch")
+    from capture.preprocess import _same_torch_device
+
+    assert _same_torch_device(torch.device(f"{device_type}:0"), torch.device(device_type), torch)
+    assert not _same_torch_device(torch.device(f"{device_type}:1"), torch.device(device_type), torch)
+
+
 def test_capture_frame_to_rgb_requires_one_target_resolution_argument():
     frame = np.zeros((2, 2, 3), dtype=np.uint8)
 

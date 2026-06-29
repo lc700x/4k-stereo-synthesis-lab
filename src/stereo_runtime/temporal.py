@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
-import torch.nn.functional as F
 
 
 @dataclass
@@ -15,15 +14,16 @@ class TemporalState:
     cooldown_remaining: int = 0
     reset_count: int = 0
     last_scene_delta: float = 0.0
-    pending_scene_delta: torch.Tensor | None = None
-    pending_scene_event: torch.cuda.Event | None = None
+    last_scene_reset: bool = False
+    scene_check_counter: int = 0
 
     def reset(self) -> None:
         self.reset_stereo()
         self.scene_reference = None
         self.cooldown_remaining = 0
-        self.pending_scene_delta = None
-        self.pending_scene_event = None
+        self.last_scene_delta = 0.0
+        self.last_scene_reset = False
+        self.scene_check_counter = 0
 
     def reset_stereo(self) -> None:
         self.left = None
@@ -36,55 +36,37 @@ def detect_scene_change(
     state: TemporalState | None,
     *,
     threshold: float = 0.22,
-    cooldown_frames: int = 3,
     sample_size: int = 64,
+    scene_check_interval: int = 6,
 ) -> bool:
-    if state is None:
-        return False
+    return False
+
+
+def detect_scene_gate(
+    rgb: torch.Tensor,
+    state: TemporalState | None,
+    *,
+    threshold: float = 0.22,
+    sample_size: int = 64,
+    scene_check_interval: int = 6,
+) -> torch.Tensor | None:
+    if state is None or not rgb.is_cuda or not torch.cuda.is_available():
+        return None
+    state.last_scene_reset = False
+    interval = max(1, int(scene_check_interval))
+    if state.scene_reference is not None:
+        state.scene_check_counter = (state.scene_check_counter + 1) % interval
+        if state.scene_check_counter != 0:
+            return None
     sample = _scene_sample(rgb, sample_size=sample_size)
     if state.scene_reference is None or state.scene_reference.shape != sample.shape:
         state.scene_reference = sample.detach()
         state.last_scene_delta = 0.0
-        state.pending_scene_delta = None
-        state.pending_scene_event = None
-        return False
+        return None
 
-    changed = _consume_pending_scene_delta(state, threshold=threshold, cooldown_frames=cooldown_frames)
     delta_tensor = (sample - state.scene_reference.to(sample.device)).abs().mean()
     state.scene_reference = sample.detach()
-    if delta_tensor.is_cuda:
-        if state.pending_scene_delta is None:
-            event = torch.cuda.Event()
-            event.record(torch.cuda.current_stream(delta_tensor.device))
-            state.pending_scene_delta = delta_tensor.detach()
-            state.pending_scene_event = event
-        return changed
-    return _apply_scene_delta(state, float(delta_tensor.item()), threshold=threshold, cooldown_frames=cooldown_frames)
-
-
-def _consume_pending_scene_delta(state: TemporalState, *, threshold: float, cooldown_frames: int) -> bool:
-    pending = state.pending_scene_delta
-    if pending is None:
-        return False
-    event = state.pending_scene_event
-    if event is not None and not event.query():
-        return False
-    delta = float(pending.item())
-    state.pending_scene_delta = None
-    state.pending_scene_event = None
-    return _apply_scene_delta(state, delta, threshold=threshold, cooldown_frames=cooldown_frames)
-
-
-def _apply_scene_delta(state: TemporalState, delta: float, *, threshold: float, cooldown_frames: int) -> bool:
-    state.last_scene_delta = delta
-    if state.cooldown_remaining > 0:
-        state.cooldown_remaining -= 1
-        return False
-    changed = delta >= float(threshold)
-    if changed:
-        state.reset_count += 1
-        state.cooldown_remaining = max(0, int(cooldown_frames))
-    return changed
+    return (delta_tensor < float(threshold)).to(dtype=sample.dtype)
 
 def apply_temporal(
     left: torch.Tensor,
@@ -92,6 +74,7 @@ def apply_temporal(
     mask: torch.Tensor | None,
     state: TemporalState | None,
     strength: float = 0.85,
+    scene_gate: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     if state is None:
         return left, right
@@ -106,6 +89,8 @@ def apply_temporal(
         blend = alpha
     else:
         blend = (mask * alpha).to(device=left.device, dtype=left.dtype)
+    if scene_gate is not None:
+        blend = blend * scene_gate.to(device=left.device, dtype=left.dtype)
     left_out = left * (1.0 - blend) + state.left.to(left.device) * blend
     right_out = right * (1.0 - blend) + state.right.to(right.device) * blend
     state.left = left_out.detach()
@@ -119,9 +104,18 @@ def _scene_sample(rgb: torch.Tensor, *, sample_size: int) -> torch.Tensor:
         rgb = rgb.unsqueeze(0)
     if rgb.ndim != 4:
         raise ValueError(f"rgb must be CHW or BCHW, got shape {tuple(rgb.shape)}")
-    sample = rgb.detach().float()
+    sample = rgb.detach()
+    height = int(sample.shape[-2])
+    width = int(sample.shape[-1])
+    target = max(1, int(sample_size))
+    step_y = max(1, height // target)
+    step_x = max(1, width // target)
+    offset_y = max(0, step_y // 2)
+    offset_x = max(0, step_x // 2)
+    sample = sample[..., offset_y::step_y, offset_x::step_x]
+    sample = sample[..., :target, :target].float()
     if sample.shape[1] == 3:
         sample = sample[:, 0:1] * 0.299 + sample[:, 1:2] * 0.587 + sample[:, 2:3] * 0.114
     elif sample.shape[1] != 1:
         sample = sample.mean(dim=1, keepdim=True)
-    return F.interpolate(sample, size=(sample_size, sample_size), mode="area")
+    return sample.contiguous()

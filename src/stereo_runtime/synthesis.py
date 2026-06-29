@@ -19,7 +19,7 @@ from .layers import composite_layers, make_depth_layers
 from .occlusion import make_occlusion_mask, occlusion_backend
 from .output import AnaglyphMethod, OutputFormat, ensure_bchw, make_sbs, match_depth, sbs_backend
 from .refine import refine_local
-from .temporal import TemporalState, apply_temporal, detect_scene_change
+from .temporal import TemporalState, apply_temporal, detect_scene_gate
 
 Backend = Literal["fast", "fast_plus", "quality_4k", "hq_4k"]
 HoleFill = Literal["none", "fast", "edge_aware"]
@@ -43,7 +43,6 @@ class StereoConfig:
     temporal_strength: float = 0.85
     auto_reset_temporal: bool = False
     scene_reset_threshold: float = 0.22
-    reset_cooldown_frames: int = 3
     foreground_scale: float = 0.0
     depth_antialias_strength: float = 0.0
     edge_dilation: int = 2
@@ -233,17 +232,22 @@ def synthesize_stereo(
     config: StereoConfig | None = None,
     temporal_state: TemporalState | None = None,
 ) -> StereoResult:
+    synthesis_start = time.perf_counter()
+    stage_times: dict[str, float] = {}
     config = config or StereoConfig()
     temporal_reset = False
-    if config.temporal and config.auto_reset_temporal and temporal_state is not None:
-        temporal_reset = detect_scene_change(
+    scene_gate = None
+
+    stage_start = time.perf_counter()
+    if config.temporal and config.auto_reset_temporal and temporal_state is not None and rgb.is_cuda:
+        scene_gate = detect_scene_gate(
             rgb,
             temporal_state,
             threshold=config.scene_reset_threshold,
-            cooldown_frames=config.reset_cooldown_frames,
         )
-        if temporal_reset:
-            temporal_state.reset_stereo()
+        temporal_reset = bool(temporal_state.last_scene_reset)
+    stage_times["scene_detect_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
     if config.backend in {"fast", "fast_plus"}:
         params = ShiftParams(
             depth_strength=config.depth_strength,
@@ -251,13 +255,19 @@ def synthesize_stereo(
             max_disparity_px=config.max_disparity_px,
             parallax_preset=config.parallax_preset,
         )
+        stage_start = time.perf_counter()
         depth = postprocess_depth(
             depth,
             foreground_scale=config.foreground_scale,
             antialias_strength=config.depth_antialias_strength,
         )
+        stage_times["fast_depth_postprocess_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+        stage_start = time.perf_counter()
         left, right, shift_px = synthesize_baseline(rgb, depth, params)
+        stage_times["fast_baseline_ms"] = (time.perf_counter() - stage_start) * 1000.0
         if config.backend == "fast_plus":
+            stage_start = time.perf_counter()
             depth_for_mask = match_depth(depth, left.shape[-2], left.shape[-1])
             mask = make_occlusion_mask(
                 depth_for_mask,
@@ -269,6 +279,9 @@ def synthesize_stereo(
             )
             eyes = torch.cat([left, right], dim=0)
             fill_mask = mask.expand(eyes.shape[0], -1, -1, -1)
+            stage_times["fast_plus_mask_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+            stage_start = time.perf_counter()
             hole_fill_backend = directional_edge_aware_fill_backend()
             eyes = directional_edge_aware_fill(
                 eyes,
@@ -281,6 +294,9 @@ def synthesize_stereo(
                 depth_edge_threshold=0.03,
             )
             left, right = eyes.chunk(2, dim=0)
+            stage_times["fast_plus_fill_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+            stage_start = time.perf_counter()
             debug = {
                 "backend": config.backend,
                 "shift_px": shift_px,
@@ -300,25 +316,39 @@ def synthesize_stereo(
                 "mask_feather_radius": int(config.mask_feather_radius),
                 **shift_debug_info(depth, left.shape[-1], params),
             }
+            stage_times["fast_debug_ms"] = (time.perf_counter() - stage_start) * 1000.0
         else:
             mask = None
+            stage_start = time.perf_counter()
             debug = {"backend": config.backend, "shift_px": shift_px, **shift_debug_info(depth, left.shape[-1], params)}
+            stage_times["fast_debug_ms"] = (time.perf_counter() - stage_start) * 1000.0
     else:
         if config.backend == "hq_4k" and config.layers < 3:
             config = StereoConfig(**{**config.__dict__, "layers": 3})
+        stage_start = time.perf_counter()
         left, right, mask, debug = _layered_synthesis(rgb, depth, config)
+        stage_times["layered_total_ms"] = (time.perf_counter() - stage_start) * 1000.0
         debug["backend"] = config.backend
 
+    stage_start = time.perf_counter()
     if config.temporal:
-        left, right = apply_temporal(left, right, mask, temporal_state, strength=config.temporal_strength)
+        left, right = apply_temporal(left, right, mask, temporal_state, strength=config.temporal_strength, scene_gate=scene_gate)
+    stage_times["temporal_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
+    stage_start = time.perf_counter()
     output_depth = postprocess_depth(
         match_depth(depth, left.shape[-2], left.shape[-1]),
         foreground_scale=config.foreground_scale,
         antialias_strength=config.depth_antialias_strength,
     )
+    stage_times["output_depth_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+    stage_start = time.perf_counter()
     if config.cross_eyed:
         left, right = right, left
+    stage_times["cross_eye_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+    stage_start = time.perf_counter()
     if config.debug_output:
         debug["output_depth"] = output_depth
         debug["temporal_reset"] = int(temporal_reset)
@@ -338,6 +368,9 @@ def synthesize_stereo(
     debug["edge_threshold"] = float(config.edge_threshold)
     debug["edge_dilation"] = int(config.edge_dilation)
     debug["mask_feather_radius"] = int(config.mask_feather_radius)
+    stage_times["debug_finalize_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+    stage_start = time.perf_counter()
     debug["sbs_backend"] = sbs_backend(
         left,
         right,
@@ -346,6 +379,9 @@ def synthesize_stereo(
         depth=output_depth,
         anaglyph_method=config.anaglyph_method,
     )
+    stage_times["sbs_backend_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+    stage_start = time.perf_counter()
     sbs = make_sbs(
         left,
         right,
@@ -354,6 +390,14 @@ def synthesize_stereo(
         depth=output_depth,
         anaglyph_method=config.anaglyph_method,
     )
+    stage_times["make_sbs_ms"] = (time.perf_counter() - stage_start) * 1000.0
+
+    synthesis_total_ms = (time.perf_counter() - synthesis_start) * 1000.0
+    stage_accounted_ms = sum(stage_times.values())
+    debug.update(stage_times)
+    debug["synthesis_total_ms"] = float(synthesis_total_ms)
+    debug["synthesis_accounted_ms"] = float(stage_accounted_ms)
+    debug["synthesis_unaccounted_ms"] = max(0.0, float(synthesis_total_ms - stage_accounted_ms))
     if not config.debug_output:
         debug = {k: v for k, v in debug.items() if isinstance(v, (float, int, str))}
     return StereoResult(left_eye=left, right_eye=right, sbs=sbs, debug_info=debug)

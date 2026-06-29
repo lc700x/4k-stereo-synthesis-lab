@@ -76,10 +76,11 @@ def test_gui_hot_stereo_params_auto_save_on_select():
     assert '"Max Shift Ratio":' not in config_mgr_text
     assert '"Parallax Budget Preset": parallax_budget' in config_mgr_text
     assert '"Convergence": self._parse_float(self.convergence_dd.value' in config_mgr_text
-    assert '"Depth Strength": self._parse_float(self.depth_strength_dd.value' in config_mgr_text
+    assert '"Depth Strength": self._clamp_depth_strength(self.depth_strength_dd.value)' in config_mgr_text
     assert '"Temporal Strength": temporal_strength' in config_mgr_text
     assert '"Scene Reset Threshold": scene_reset_threshold' in config_mgr_text
-    assert '"Reset Cooldown Frames": self._parse_int(self.reset_cooldown_dd.value' in config_mgr_text
+    assert "self.temporal_strength_label, self.temporal_strength_dd,\n            ft.Container(width=S(40)), self.scene_reset_label, self.scene_reset_dd" in builders_text
+    assert ("Reset " + "Cooldown " + "Frames") not in config_mgr_text
     assert "def _clamp_foreground_scale" in all_text
     assert "fg_options = [f\"{i / 10:.1f}\" for i in range(-9, 0)]" in builders_text
     assert '"Foreground Scale": foreground_scale' in config_mgr_text
@@ -87,6 +88,8 @@ def test_gui_hot_stereo_params_auto_save_on_select():
     assert '"Edge Dilation": self._parse_int(self.edge_dilation_dd.value' in config_mgr_text
     assert '"Mask Feather Radius": self._parse_int(self.mask_feather_dd.value' in config_mgr_text
     assert '"Hole Fill Mode": self._display_to_hole_fill_mode(self.hole_fill_mode_dd.value)' in config_mgr_text
+    assert '"Hole Fill Radius": int(preset_values.get("hole_fill_radius", DEFAULTS["Hole Fill Radius"]))' in config_mgr_text
+    assert '"Hole Fill Strength": float(preset_values.get("hole_fill_strength", DEFAULTS["Hole Fill Strength"]))' in config_mgr_text
     assert '"Edge Threshold": self._parse_float(self.edge_threshold_dd.value' in config_mgr_text
     assert '"Anaglyph Method": self.anaglyph_dd.value' in config_mgr_text
     assert '"Cross Eyed": bool(self.cross_eyed_cb.value)' in config_mgr_text
@@ -116,9 +119,8 @@ def test_gui_scene_preset_loads_complete_advanced_stereo_controls():
     apply_start = text.index("def _apply_stereo_preset_values")
     block = text[apply_start:]
     assert "self.scene_reset_dd.value" in block
-    assert "self.reset_cooldown_dd.value" in block
     assert '"scene_reset_threshold"' in _file_text("config_mgr.py")
-    assert '"reset_cooldown_frames"' in _file_text("config_mgr.py")
+    assert ("reset_" + "cooldown" + "_frames") not in _file_text("config_mgr.py")
     assert "self.parallax_budget_dd.value" in block
     assert "self.stereo_scale_dd.value" not in block
     assert "on_select=self.on_stereo_preset_change" in _file_text("builders.py")
@@ -129,7 +131,9 @@ def test_advanced_stereo_is_not_persisted_and_starts_collapsed():
     cfg_text = _file_text("config_mgr.py")
     builders_text = _file_text("builders.py")
     assert '"Advanced Stereo": False' not in all_text
+    assert "self.hole_fill_mode_label, self.hole_fill_mode_dd,\n            ft.Container(width=S(40)), self.advanced_stereo_cb" in builders_text
     assert 'label="Advanced Stereo", value=False, on_change=self.on_advanced_stereo_change' in builders_text
+    assert "advanced_stereo_row =" not in builders_text
     assert 'self.advanced_stereo_cb.value = False' in cfg_text
     assert '"Advanced Stereo": self.advanced_stereo_cb.value' not in all_text
     assert 'cfg.get("Advanced Stereo"' not in all_text
@@ -323,11 +327,19 @@ def test_convergence_and_foreground_scale_tooltips_explain_tuning():
 
 def test_depth_strength_and_antialiasing_tooltips_explain_tuning():
     localization_text = _localization_source().read_text(encoding="utf-8")
-    assert 'Use Standard / 2.5 as the baseline' in localization_text
+    builders_text = _file_text("builders.py")
+    config_mgr_text = _file_text("config_mgr.py")
+    assert 'ds_options = [f"{i / 100:.2f}" for i in range(0, 51, 5)]' in builders_text
+    assert 'value="0.25"' in builders_text
+    handlers_text = _file_text("handlers.py")
+    assert 'def _clamp_depth_strength' in config_mgr_text
+    assert 'self.depth_strength_dd.value = f"{values[\'depth_strength\']:.2f}"' in handlers_text
+    assert 'self.depth_strength_dd.value = f"{strength:.2f}"' in handlers_text
+    assert 'Use Standard / 0.25 as the baseline' in localization_text
     assert 'foreground objects show ghosts' in localization_text
     assert 'Depth-map smoothing level' in localization_text
     assert 'soften fine geometry' in localization_text
-    assert '建议以标准档 2.5 为基准' in localization_text
+    assert '建议以标准档 0.25 为基准' in localization_text
     assert '前景重影、边缘撕裂或观看不舒服时下调' in localization_text
     assert '深度图平滑级别' in localization_text
     assert '游戏和实时观看保持较低' in localization_text
@@ -394,7 +406,7 @@ def test_mask_feather_radius_gui_control_is_localized_and_hot_reloadable():
     handlers_text = _file_text("handlers.py")
     localization_text = _localization_source().read_text(encoding="utf-8")
 
-    assert '"Mask Feather Radius": 3' in config_text
+    assert '"Mask Feather Radius": 1' in config_text
     assert 'self.mask_feather_label = ft.Text("Mask Feather:"' in builders_text
     assert 'self.mask_feather_dd = CompactDropdown(options=["0", "1", "2", "3", "4", "5"]' in builders_text
     assert 'self.mask_feather_dd.value = str(cfg.get("Mask Feather Radius", DEFAULTS["Mask Feather Radius"]))' in config_mgr_text
@@ -411,7 +423,7 @@ def test_reset_defaults_restore_cinema_stereo_defaults():
     process_text = _file_text("process.py")
 
     assert '"Stereo Preset": "cinema"' in config_text
-    assert '"Depth Strength": 2.5' in config_text
+    assert '"Depth Strength": 0.25' in config_text
     assert '"Depth Quick": "Standard"' in config_text
     assert '"IPD":' not in config_text
     assert '"Foreground Scale": 0.0' in config_text
@@ -420,8 +432,12 @@ def test_reset_defaults_restore_cinema_stereo_defaults():
     assert '"Stereo Scale":' not in config_text
     assert '"Anti-aliasing": 1' in config_text
     assert '"Depth Antialias Strength": 1.0' in config_text
-    assert '"Mask Feather Radius": 3' in config_text
+    assert '"Temporal Strength": 0.25' in config_text
+    assert '"Edge Dilation": 1' in config_text
+    assert '"Mask Feather Radius": 1' in config_text
     assert '"Hole Fill Mode": "balanced"' in config_text
+    assert '"Hole Fill Radius": 1' in config_text
+    assert '"Hole Fill Strength": 0.60' in config_text
     assert "dynamic_defaults = DEFAULTS.copy()" in process_text
     assert "self.apply_config(dynamic_defaults, keep_optional=False)" in process_text
 
@@ -433,6 +449,13 @@ def test_stereo_mode_presets_keep_expected_parallax_budget_combinations():
     assert '"cinema": {\n                "quality": "quality_4k", "parallax_budget": "standard"' in config_mgr_text
     assert '"game_low_latency": {\n                "quality": "fast_plus", "parallax_budget": "comfort"' in config_mgr_text
     assert '"still_image_hq": {\n                "quality": "hq_4k", "parallax_budget": "strong"' in config_mgr_text
+    assert '"cinema": {\n                "quality": "quality_4k", "parallax_budget": "standard", "depth_strength": 0.25' in config_mgr_text
+    assert '"edge_dilation": 1, "mask_feather_radius": 1, "hole_fill_mode": "balanced",' in config_mgr_text
+    assert '"hole_fill_radius": 1, "hole_fill_strength": 0.60' in config_mgr_text
+    assert '"game_low_latency": {\n                "quality": "fast_plus", "parallax_budget": "comfort", "depth_strength": 0.20' in config_mgr_text
+    assert '"temporal_strength": 0.0, "scene_reset_threshold": 0.18' in config_mgr_text
+    assert '"still_image_hq": {\n                "quality": "hq_4k", "parallax_budget": "strong", "depth_strength": 0.30' in config_mgr_text
+    assert '"edge_dilation": 3, "mask_feather_radius": 3, "hole_fill_mode": "quality",' in config_mgr_text
 
 
 def test_hole_fill_mode_gui_control_is_localized_and_hot_reloadable():
@@ -632,12 +655,19 @@ def test_gui_render_size_controls_expose_only_fixed_4k_scale_tiers():
     assert '(self.render_align_dd, "tooltip_render_align")' in handlers_text
 
 
-def test_gui_forces_fp16_off_for_mps_save():
+def test_gui_fp16_defaults_on_loads_config_and_still_forces_off_for_mps_save():
+    config_text = _config_source().read_text(encoding="utf-8")
     config_mgr_text = _file_text("config_mgr.py")
+
+    assert '"FP16": True' in config_text
+    assert 'self.fp16_cb.value = bool(cfg.get("FP16", DEFAULTS["FP16"]))' in config_mgr_text
+    assert 'self.fp16_cb.value = DEFAULTS["FP16"]' not in config_mgr_text
+    process_text = _file_text("process.py")
 
     assert 'fp16_value = False if "MPS" in (self.device_dd.value or "") else bool(self.fp16_cb.value)' in config_mgr_text
     assert '"FP16": fp16_value' in config_mgr_text
     assert '"FP16": self.fp16_cb.value' not in config_mgr_text
+    assert 'self._config["FP16"] = DEFAULTS["FP16"]' not in process_text
 
 
 def test_accelerator_policy_matches_teammate_config_semantics():

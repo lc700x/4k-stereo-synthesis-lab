@@ -288,7 +288,6 @@ class GUIProcessMixin:
             self._config["Recompile MIGraphX"] = False
             self._config["Recompile CoreML"] = False
             self._config["Recompile OpenVINO"] = False
-            self._config["FP16"] = DEFAULTS["FP16"]
             self._config["Stereo Preset"] = "cinema"
             save_yaml(os.path.join(BASE_DIR, "settings.yaml"), self._config)
         except Exception as e:

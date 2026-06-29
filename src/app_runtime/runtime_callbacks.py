@@ -35,6 +35,7 @@ class RuntimeCallbacks:
 
     def log_source_health(self, now=None, force=False):
         self.context.source_health.log(now, force)
+        self.context.fps_breakdown.log(now)
 
     def openxr_source_paused(self):
         return self.context.openxr_state.source_paused()

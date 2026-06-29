@@ -2,6 +2,8 @@ import sys
 import threading
 import types
 
+import pytest
+
 from capture import CaptureConfig, CapturedFrame, FrameCopyMode
 from capture.backends import windows_capture_event
 
@@ -163,6 +165,30 @@ def test_windows_capture_runner_marks_rocm_clone_device(monkeypatch):
     assert received[-1].copy_mode is FrameCopyMode.CLONE
     assert received[-1].frame_raw_device == "rocm"
     assert received[-1].metadata["zero_copy"] is False
+
+
+def test_windows_capture_cuda_logs_source_fps(capsys):
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_fps(10.0)
+    runner._log_capture_fps(10.5)
+    runner._log_capture_fps(11.0)
+
+    assert "[WindowsCaptureCUDA] capture_fps=2.0 frames=2 monitor=1 mode=Monitor" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("capture_tool", ["WindowsCapture", "WindowsCaptureROCm"])
+def test_non_cuda_capture_does_not_log_source_fps(capture_tool, capsys):
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool=capture_tool, capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_fps(10.0)
+    runner._log_capture_fps(11.0)
+
+    assert capsys.readouterr().out == ""
 
 
 def test_windows_capture_runner_uses_window_name_for_window_capture(monkeypatch):

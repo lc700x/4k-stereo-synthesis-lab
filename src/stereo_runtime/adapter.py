@@ -60,9 +60,8 @@ class StereoRuntimeConfig:
     hole_fill: HoleFill = "edge_aware"
     temporal: bool = True
     temporal_strength: float = 0.75
-    auto_reset_temporal: bool = True
+    auto_reset_temporal: bool = False
     scene_reset_threshold: float = 0.22
-    reset_cooldown_frames: int = 3
     foreground_scale: float = 0.0
     depth_antialias_strength: float = 0.0
     edge_threshold: float = 0.04
@@ -89,7 +88,10 @@ class StereoRuntimeConfig:
 
     @property
     def onnx_path(self) -> Path:
-        return self._artifact_paths().onnx_fp16_path
+        paths = self._artifact_paths()
+        if self.onnx_dtype == "fp32":
+            return paths.onnx_fp32_path
+        return paths.onnx_fp16_path
 
     @property
     def fp32_onnx_path(self) -> Path:
@@ -97,7 +99,10 @@ class StereoRuntimeConfig:
 
     @property
     def trt_engine_path(self) -> Path:
-        return self._artifact_paths().trt_fp16_path
+        paths = self._artifact_paths()
+        if self.onnx_dtype == "fp32":
+            return paths.trt_path_for_dtype("fp32")
+        return paths.trt_fp16_path
 
     @property
     def migraphx_graph_path(self) -> Path:
@@ -180,7 +185,7 @@ def runtime_config_from_d2s_settings(
     else:
         depth_backend = "pytorch_cuda"
 
-    onnx_dtype: OnnxDtypeMode = "auto"
+    onnx_dtype: OnnxDtypeMode = "fp16" if _to_bool(settings.get("FP16", True)) else "fp32"
     preset_value = settings.get("Stereo Preset", settings.get("Stereo Mode Preset"))
     mode_source = settings.get("Stereo Runtime Mode", settings.get("Run Mode"))
     if mode_source is None:
@@ -222,7 +227,6 @@ def runtime_config_from_d2s_settings(
         temporal_strength=float(settings.get("Temporal Strength", 0.75)),
         auto_reset_temporal=_to_bool(settings.get("Auto Scene Reset", settings.get("Auto Reset Temporal", True))),
         scene_reset_threshold=float(settings.get("Scene Reset Threshold", 0.22)),
-        reset_cooldown_frames=int(settings.get("Reset Cooldown Frames", 3)),
         foreground_scale=float(settings.get("Foreground Scale", 0.0)),
         depth_antialias_strength=float(settings.get("Depth Antialias Strength", settings.get("Anti-aliasing", 0.0))),
         edge_threshold=float(settings.get("Edge Threshold", 0.04)),
@@ -443,6 +447,7 @@ def depth_provider_config_from_runtime(config: StereoRuntimeConfig) -> "DepthPro
         onnx_path=onnx_path,
         engine_path=engine_path,
         depth_resolution=int(config.export_width),
+        onnx_dtype=config.onnx_dtype,
         local_files_only=False,
         prefer_native_tensorrt=backend == "tensorrt_native",
         prefer_tensorrt=backend == "tensorrt_native",
@@ -505,7 +510,6 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
     temporal_strength = config.temporal_strength
     auto_reset_temporal = config.auto_reset_temporal
     scene_reset_threshold = config.scene_reset_threshold
-    reset_cooldown_frames = config.reset_cooldown_frames
     foreground_scale = config.foreground_scale
     depth_antialias_strength = config.depth_antialias_strength
     if config.stereo_quality == "fast":
@@ -513,7 +517,6 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
         temporal_strength = 0.0
         auto_reset_temporal = False
         scene_reset_threshold = 0.0
-        reset_cooldown_frames = 0
         foreground_scale = 0.0
         depth_antialias_strength = 0.0
 
@@ -534,7 +537,6 @@ def stereo_config_from_runtime(config: StereoRuntimeConfig) -> "StereoConfig":
             "temporal_strength": temporal_strength,
             "auto_reset_temporal": auto_reset_temporal,
             "scene_reset_threshold": scene_reset_threshold,
-            "reset_cooldown_frames": reset_cooldown_frames,
             "foreground_scale": foreground_scale,
             "depth_antialias_strength": depth_antialias_strength,
             "edge_threshold": config.edge_threshold,

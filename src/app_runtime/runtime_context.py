@@ -142,7 +142,10 @@ def create_runtime_context(
         render_active=openxr_state.render_active.is_set,
         idle_active=openxr_state.wait_idle_active.is_set,
     )
-    fps_breakdown_log = env_flag("D2S_FPS_BREAKDOWN", "0")
+    fps_breakdown_log = env_flag(
+        "D2S_FPS_BREAKDOWN",
+        os.environ.get("D2S_OPENXR_DEBUG", "0"),
+    )
 
     return AppRuntimeContext(
         base_dir=base_dir,

@@ -175,7 +175,7 @@ def test_runtime_config_from_d2s_settings_maps_legacy_model_and_trt_flags():
 
     assert config.resolved_model_id == "lc700x/Distill-Any-Depth-Base-hf"
     assert config.depth_backend == "tensorrt_native"
-    assert config.onnx_dtype == "auto"
+    assert config.onnx_dtype == "fp16"
     assert config.build_trt_engine is True
     assert config.force_rebuild_trt is True
     assert config.output_format == "full_sbs"
@@ -224,8 +224,8 @@ def test_runtime_config_from_d2s_settings_defaults_convergence_to_zero():
     assert config.convergence == 0.0
 
 
-def test_runtime_config_from_d2s_settings_uses_dtype_auto_for_gui_fp16_flag():
-    config = runtime_config_from_d2s_settings(
+def test_runtime_config_from_d2s_settings_maps_gui_fp16_to_onnx_dtype():
+    fp32_config = runtime_config_from_d2s_settings(
         {
             "Depth Model": "DepthPro-Large",
             "TensorRT": False,
@@ -235,10 +235,24 @@ def test_runtime_config_from_d2s_settings_uses_dtype_auto_for_gui_fp16_flag():
         device="cuda",
     )
 
-    assert config.resolved_model_id == "apple/DepthPro-hf"
-    assert config.depth_backend == "pytorch_cuda"
-    assert config.onnx_dtype == "auto"
-    assert config.build_trt_engine is False
+    assert fp32_config.resolved_model_id == "apple/DepthPro-hf"
+    assert fp32_config.depth_backend == "pytorch_cuda"
+    assert fp32_config.onnx_dtype == "fp32"
+    assert fp32_config.build_trt_engine is False
+    assert fp32_config.onnx_path.name.startswith("model_fp32_")
+
+    fp16_config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "DepthPro-Large",
+            "TensorRT": False,
+            "FP16": True,
+            "Display Mode": "Half-SBS",
+        },
+        device="cuda",
+    )
+
+    assert fp16_config.onnx_dtype == "fp16"
+    assert fp16_config.onnx_path.name.startswith("model_fp16_")
 
 def test_runtime_config_from_d2s_settings_accepts_traditional_fastest_preset():
     config = runtime_config_from_d2s_settings(
@@ -275,7 +289,6 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
             "Temporal Strength": 0.4,
             "Auto Scene Reset": False,
             "Scene Reset Threshold": 0.18,
-            "Reset Cooldown Frames": 2,
             "Foreground Scale": 0.2,
             "Depth Antialias Strength": 0.6,
             "Edge Threshold": 0.06,
@@ -303,7 +316,7 @@ def test_runtime_config_from_d2s_settings_maps_realtime_stereo_options():
     assert stereo.temporal_strength == 0.4
     assert stereo.auto_reset_temporal is False
     assert stereo.scene_reset_threshold == 0.18
-    assert stereo.reset_cooldown_frames == 2
+    assert not hasattr(stereo, "reset_" + "cooldown" + "_frames")
     assert stereo.foreground_scale == 0.2
     assert stereo.depth_antialias_strength == 0.6
     assert stereo.edge_threshold == 0.06
@@ -342,7 +355,6 @@ def test_runtime_fast_quality_disables_temporal_and_postprocess_overrides():
             "Temporal Strength": 0.7,
             "Auto Scene Reset": True,
             "Scene Reset Threshold": 0.22,
-            "Reset Cooldown Frames": 3,
             "Foreground Scale": 0.5,
             "Depth Antialias Strength": 2.0,
         },
@@ -356,7 +368,7 @@ def test_runtime_fast_quality_disables_temporal_and_postprocess_overrides():
     assert stereo.temporal_strength == 0.0
     assert stereo.auto_reset_temporal is False
     assert stereo.scene_reset_threshold == 0.0
-    assert stereo.reset_cooldown_frames == 0
+    assert not hasattr(stereo, "reset_" + "cooldown" + "_frames")
     assert stereo.foreground_scale == 0.0
     assert stereo.depth_antialias_strength == 0.0
 
@@ -417,6 +429,18 @@ def test_runtime_config_profile_sync_defaults_off_and_maps_setting():
     profiled_config = runtime_config_from_d2s_settings({**base, "Depth Profile Sync": True}, device="cuda")
     assert profiled_config.profile_sync is True
     assert depth_provider_config_from_runtime(profiled_config).profile_sync is True
+
+
+def test_depth_provider_config_from_runtime_passes_onnx_dtype():
+    config = runtime_config_from_d2s_settings(
+        {"Depth Model": "Distill-Any-Depth-Base", "ONNX": True, "FP16": False},
+        device="cuda",
+    )
+
+    depth_config = depth_provider_config_from_runtime(config)
+
+    assert config.onnx_dtype == "fp32"
+    assert depth_config.onnx_dtype == "fp32"
 
 
 def test_runtime_config_keeps_fixed_stereo_preset_separate_from_run_mode():

@@ -631,7 +631,6 @@ class GUIHandlerMixin:
         self.parallax_budget_dd.value = self._parallax_budget_to_display(parallax_budget_key)
         self.temporal_strength_label.value = t["Temporal Strength:"]
         self.scene_reset_label.value = t["Scene Threshold:"]
-        self.reset_cooldown_label.value = t["Reset Cooldown:"]
         self.edge_dilation_label.value = t["Edge Dilation:"]
         self.mask_feather_label.value = t["Mask Feather:"]
         self.edge_threshold_label.value = t["Edge Threshold:"]
@@ -747,7 +746,6 @@ class GUIHandlerMixin:
             (self.parallax_budget_dd, "tooltip_parallax_budget"),
             (self.temporal_strength_dd, "tooltip_temporal_strength"),
             (self.scene_reset_dd, "tooltip_scene_reset"),
-            (self.reset_cooldown_dd, "tooltip_reset_cooldown"),
             (self.edge_dilation_dd, "tooltip_edge_dilation"),
             (self.mask_feather_dd, "tooltip_mask_feather"),
             (self.edge_threshold_dd, "tooltip_edge_threshold"),
@@ -993,12 +991,11 @@ class GUIHandlerMixin:
             return False
         self.stereo_quality_dd.value = self._stereo_quality_to_display(values["quality"])
         self.parallax_budget_dd.value = self._parallax_budget_to_display(values["parallax_budget"])
-        self.depth_strength_dd.value = f"{values['depth_strength']:.1f}"
+        self.depth_strength_dd.value = f"{values['depth_strength']:.2f}"
         self.depth_quick_dd.value = self._depth_quick_to_display(values["depth_quick"])
         self.convergence_dd.value = f"{values['convergence']:.2f}"
         self.temporal_strength_dd.value = f"{values['temporal_strength']:.2f}"
         self.scene_reset_dd.value = f"{values['scene_reset_threshold']:.2f}"
-        self.reset_cooldown_dd.value = str(values["reset_cooldown_frames"])
         self.foreground_scale_dd.value = f"{values['foreground_scale']:.1f}"
         self.antialiasing_dd.value = str(values["antialiasing"])
         self.edge_dilation_dd.value = str(values["edge_dilation"])
@@ -1009,7 +1006,7 @@ class GUIHandlerMixin:
         for ctrl in (
             self.stereo_quality_dd, self.parallax_budget_dd, self.depth_strength_dd, self.depth_quick_dd,
             self.convergence_dd, self.temporal_strength_dd,
-            self.scene_reset_dd, self.reset_cooldown_dd, self.foreground_scale_dd, self.antialiasing_dd, self.edge_dilation_dd,
+            self.scene_reset_dd, self.foreground_scale_dd, self.antialiasing_dd, self.edge_dilation_dd,
             self.mask_feather_dd, self.edge_threshold_dd, self.hole_fill_mode_dd, self.cross_eyed_cb,
         ):
             self._safe_update(ctrl)
@@ -1028,6 +1025,6 @@ class GUIHandlerMixin:
     def on_depth_quick_change(self, value):
         quick = value if isinstance(value, str) else getattr(getattr(value, "control", None), "value", self.depth_quick_dd.value)
         strength = self._depth_strength_for_quick(self._display_to_depth_quick(quick))
-        self.depth_strength_dd.value = f"{strength:.1f}"
+        self.depth_strength_dd.value = f"{strength:.2f}"
         self._safe_update(self.depth_strength_dd)
         self._schedule_stereo_hot_save()

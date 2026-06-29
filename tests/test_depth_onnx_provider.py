@@ -306,6 +306,22 @@ def test_infinidepth_onnx_preprocessor_uses_patch_16_without_normalization():
     assert float(actual.min()) >= 0.0
     assert float(actual.max()) <= 1.0
 
+def test_onnx_provider_defers_load_until_frame_artifact_size_is_known(tmp_path):
+    from stereo_runtime.depth_onnx_provider import OnnxCudaDepthProvider
+
+    provider = OnnxCudaDepthProvider(
+        device="cpu",
+        cache_dir=tmp_path,
+        model_id="lc700x/Distill-Any-Depth-Base-hf",
+        model_name="Distill-Any-Depth-Base",
+        onnx_dtype="fp32",
+    )
+
+    assert provider.load() is None
+    assert provider.onnx_path.name.startswith("model_fp16_")
+    assert provider._session is None
+
+
 def test_onnx_provider_prepares_artifact_for_first_frame_shape(monkeypatch, tmp_path):
     from stereo_runtime.depth_onnx_provider import OnnxCudaDepthProvider
 
@@ -350,6 +366,20 @@ def test_distill_preprocessor_can_use_fixed_tensorrt_input_size():
 
     assert tensor.shape == (1, 3, 294, 518)
     assert preprocessor.input_size(2160, 1920) == (294, 518)
+
+
+def test_native_tensorrt_defers_load_until_frame_artifact_size_is_known(tmp_path):
+    from stereo_runtime.providers.nvidia.tensorrt_native import NativeTensorRtDepthProvider
+
+    provider = NativeTensorRtDepthProvider(
+        device="cuda",
+        cache_dir=tmp_path,
+        onnx_dtype="fp32",
+    )
+
+    assert provider.load() is None
+    assert provider.onnx_path.name.startswith("model_fp16_")
+    assert provider._engine is None
 
 
 def test_native_tensorrt_provider_uses_engine_static_input_size(monkeypatch, tmp_path):

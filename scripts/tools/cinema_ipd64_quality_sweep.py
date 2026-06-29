@@ -213,7 +213,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                         temporal_strength=args.temporal_strength,
                         auto_reset_temporal=bool(args.auto_reset_temporal),
                         scene_reset_threshold=args.scene_reset_threshold,
-                        reset_cooldown_frames=args.reset_cooldown_frames,
                         foreground_scale=args.foreground_scale,
                         depth_antialias_strength=args.depth_antialias_strength,
                         edge_dilation=args.edge_dilation,
@@ -287,7 +286,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                         "temporal_strength": float(config.temporal_strength),
                         "auto_reset_temporal": bool(config.auto_reset_temporal),
                         "scene_reset_threshold": float(config.scene_reset_threshold),
-                        "reset_cooldown_frames": int(config.reset_cooldown_frames),
                         "temporal_reset": int(result.debug_info.get("temporal_reset", 0)),
                         "scene_delta": float(result.debug_info.get("scene_delta", 0.0)),
                         "temporal_reset_count": int(result.debug_info.get("temporal_reset_count", 0)),
@@ -341,7 +339,6 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             "temporal_strength": float(args.temporal_strength),
             "auto_reset_temporal": bool(args.auto_reset_temporal),
             "scene_reset_threshold": float(args.scene_reset_threshold),
-            "reset_cooldown_frames": int(args.reset_cooldown_frames),
         },
         "ipd_mapping": {
             "display_ipd_mm": float(args.ipd_mm),
@@ -384,7 +381,6 @@ def main() -> int:
     parser.add_argument("--temporal-strength", type=float, default=0.85)
     parser.add_argument("--auto-reset-temporal", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--scene-reset-threshold", type=float, default=0.22)
-    parser.add_argument("--reset-cooldown-frames", type=int, default=3)
     parser.add_argument("--sequence-frames", type=int, default=3)
     parser.add_argument("--sequence-shift-px", type=int, default=2)
     parser.add_argument("--depth-source", choices=["production", "proxy"], default="production")

@@ -114,7 +114,6 @@ def build_stereo_config(settings: dict[str, Any]) -> tuple[StereoConfig, dict[st
         temporal_strength=_setting_float(settings, "Temporal Strength", 0.85),
         auto_reset_temporal=_to_bool(settings.get("Auto Scene Reset"), True),
         scene_reset_threshold=_setting_float(settings, "Scene Reset Threshold", 0.22),
-        reset_cooldown_frames=_setting_int(settings, "Reset Cooldown Frames", 3),
         foreground_scale=_setting_float(settings, "Foreground Scale", 0.5),
         depth_antialias_strength=_setting_float(settings, "Depth Antialias Strength", _setting_float(settings, "Anti-aliasing", 1.0)),
         edge_dilation=_setting_int(settings, "Edge Dilation", 2),
@@ -350,8 +349,8 @@ def build_assessment(rows: list[dict[str, Any]], config: StereoConfig, threshold
     if config.temporal and reset_rate > thresholds.max_temporal_reset_rate:
         failures.append(f"temporal reset rate {reset_rate:.2f} > {thresholds.max_temporal_reset_rate:.2f}")
         recommendations.append({
-            "parameter": "Scene Reset Threshold / Temporal Strength / Reset Cooldown Frames",
-            "action": "若真实视频中频繁重置，提高 Scene Reset Threshold 或 Reset Cooldown Frames；若拖影明显，降低 Temporal Strength。",
+            "parameter": "Scene Reset Threshold / Temporal Strength",
+            "action": "若真实视频中频繁重置，提高 Scene Reset Threshold；若拖影明显，降低 Temporal Strength。",
             "reason": "样本平移序列中频繁 reset 表示时序阈值可能过敏。",
         })
 
@@ -454,7 +453,6 @@ def main() -> int:
             "Temporal Strength": settings.get("Temporal Strength"),
             "Auto Scene Reset": settings.get("Auto Scene Reset"),
             "Scene Reset Threshold": settings.get("Scene Reset Threshold"),
-            "Reset Cooldown Frames": settings.get("Reset Cooldown Frames"),
             "Stereo Quality": settings.get("Stereo Quality"),
             "Synthetic View": settings.get("Synthetic View"),
             "TensorRT": settings.get("TensorRT"),
@@ -479,7 +477,6 @@ def main() -> int:
             "temporal_strength": config.temporal_strength,
             "auto_reset_temporal": config.auto_reset_temporal,
             "scene_reset_threshold": config.scene_reset_threshold,
-            "reset_cooldown_frames": config.reset_cooldown_frames,
         },
         "config_meta": config_meta,
         "assessment": assessment,

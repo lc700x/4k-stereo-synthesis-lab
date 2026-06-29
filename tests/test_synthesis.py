@@ -15,12 +15,27 @@ from stereo_runtime.layers import composite_layers, depth_edges, make_depth_laye
 from stereo_runtime.occlusion import make_occlusion_mask, suppress_screen_edge_mask
 from stereo_runtime.output import OUTPUT_FORMAT_CHOICES, make_sbs, match_depth, sbs_backend
 from stereo_runtime.synthesis import StereoConfig, _try_fused_warp_composite2, synthesize_stereo
-from stereo_runtime.temporal import TemporalState
+from stereo_runtime.temporal import TemporalState, _scene_sample
 
 
 def test_triton_occlusion_hot_path_has_no_cpu_scalar_sync():
     source = (ROOT / "src" / "stereo_runtime" / "occlusion_triton.py").read_text(encoding="utf-8")
     assert ".item()" not in source
+
+
+def test_scene_sample_uses_bounded_spatial_sample():
+    rgb = torch.rand(1, 3, 216, 384)
+    sample = _scene_sample(rgb, sample_size=64)
+    assert sample.shape == (1, 1, 64, 64)
+    assert sample.is_contiguous()
+
+
+def test_scene_reset_hot_path_has_no_cuda_cpu_sync():
+    source = (ROOT / "src" / "stereo_runtime" / "temporal.py").read_text(encoding="utf-8")
+    assert ".item()" not in source
+    assert "event.query()" not in source
+    assert "pending_scene_event" not in source
+
 
 def make_inputs(width=64, height=32):
     y = torch.linspace(0, 1, height)
@@ -163,6 +178,21 @@ def test_synthesis_debug_keeps_runtime_contract_scalars_without_debug_output():
     assert result.debug_info["edge_threshold"] == 0.07
     assert result.debug_info["edge_dilation"] == 3
     assert result.debug_info["mask_feather_radius"] == 2
+    for key in (
+        "scene_detect_ms",
+        "fast_depth_postprocess_ms",
+        "fast_baseline_ms",
+        "fast_debug_ms",
+        "temporal_ms",
+        "output_depth_ms",
+        "sbs_backend_ms",
+        "make_sbs_ms",
+        "synthesis_total_ms",
+        "synthesis_accounted_ms",
+        "synthesis_unaccounted_ms",
+    ):
+        assert isinstance(result.debug_info[key], float)
+        assert result.debug_info[key] >= 0.0
     assert "shift_px" not in result.debug_info
 
 
@@ -627,7 +657,7 @@ def test_temporal_state_runs_twice():
     assert first.sbs.shape == second.sbs.shape
 
 
-def test_auto_temporal_reset_detects_scene_cut_without_retriggering_during_cooldown():
+def test_auto_temporal_reset_is_disabled_on_cpu_but_temporal_blending_stays_enabled():
     depth = torch.zeros(1, 1, 8, 8)
     state = TemporalState()
     config = StereoConfig(
@@ -636,7 +666,6 @@ def test_auto_temporal_reset_detects_scene_cut_without_retriggering_during_coold
         temporal_strength=0.75,
         auto_reset_temporal=True,
         scene_reset_threshold=0.2,
-        reset_cooldown_frames=2,
         debug_output=True,
     )
     dark = torch.zeros(1, 3, 8, 8)
@@ -644,13 +673,12 @@ def test_auto_temporal_reset_detects_scene_cut_without_retriggering_during_coold
 
     first = synthesize_stereo(dark, depth, config, temporal_state=state)
     second = synthesize_stereo(bright, depth, config, temporal_state=state)
-    third = synthesize_stereo(dark, depth, config, temporal_state=state)
 
     assert first.debug_info["temporal_reset"] == 0
-    assert second.debug_info["temporal_reset"] == 1
-    assert second.debug_info["temporal_reset_reason"] == "scene_reset"
-    assert third.debug_info["temporal_reset"] == 0
-    assert state.reset_count == 1
+    assert second.debug_info["temporal_reset"] == 0
+    assert "temporal_reset_reason" not in second.debug_info
+    assert second.debug_info["temporal_enabled"] == 1
+    assert state.reset_count == 0
 
 
 def test_box_blur_matches_2d_kernel():

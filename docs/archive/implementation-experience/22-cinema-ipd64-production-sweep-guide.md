@@ -172,7 +172,6 @@ src\python3\python.exe scripts\tools\cinema_ipd64_quality_sweep.py `
 --hole-fill-strength 1.0
 --temporal-strength 0.85
 --scene-reset-threshold 0.22
---reset-cooldown-frames 3
 ```
 
 ## 输出文件

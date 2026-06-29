@@ -313,31 +313,30 @@ Model List:
     resolutions:
     - 1536
 Depth Model: Distill-Any-Depth-Base
-Depth Strength: 2.5
+Depth Strength: 0.25
 Depth Quick: Standard
 Depth Resolution: 518
-Anti-aliasing: 2
-Depth Antialias Strength: 2.0
+Anti-aliasing: 1
+Depth Antialias Strength: 1.0
 Foreground Scale: 0.0
-Convergence: 0.55
+Convergence: 0.0
 Stereo Preset: cinema
 Stereo Quality: quality_4k
 Parallax Budget Preset: standard
-Temporal: false
-Temporal Strength: 0.0
+Temporal: true
+Temporal Strength: 0.25
 Auto Scene Reset: true
 Scene Reset Threshold: 0.22
-Reset Cooldown Frames: 3
-Edge Dilation: 3
-Mask Feather Radius: 3
-Hole Fill Mode: sharp_test
-Hole Fill Radius: 3
-Hole Fill Strength: 1.0
+Edge Dilation: 1
+Mask Feather Radius: 1
+Hole Fill Mode: balanced
+Hole Fill Radius: 1
+Hole Fill Strength: 0.6
 Edge Threshold: 0.04
 Cross Eyed: false
 Anaglyph Method: red_cyan
 Display Mode: Half-SBS
-FP16: false
+FP16: true
 torch.compile: true
 TensorRT: true
 Recompile TensorRT: false
@@ -354,12 +353,12 @@ VSync: false
 Target FPS: 0
 Processing Resolution: Auto
 Render Size Policy: scaled
-Render Scale: 1.0
+Render Scale: 4K / 100%
 Render Fixed Width: 1920
 Render Fixed Height: 1080
 Render Max Pixels: 8294400
 Render Min Dimension: 480
-Render Align: 16
+Render Align: 1
 Upscaler: 'Off'
 Upscaler Sharpness: 0.0
 Stream Protocol: HLS

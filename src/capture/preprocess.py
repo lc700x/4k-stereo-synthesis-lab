@@ -82,6 +82,32 @@ def _is_torch_tensor(value):
     return torch_type.startswith("torch") and hasattr(value, "permute")
 
 
+def _same_torch_device(source_device, requested_device, torch_module) -> bool:
+    source_device = torch_module.device(source_device)
+    requested_device = torch_module.device(requested_device)
+    if source_device.type != requested_device.type:
+        return False
+
+    def current_index(device_type):
+        backend = getattr(torch_module, device_type, None)
+        current_device = getattr(backend, "current_device", None)
+        if callable(current_device):
+            try:
+                return int(current_device())
+            except Exception:
+                pass
+        if device_type == "cuda" and torch_module.cuda.is_available():
+            return int(torch_module.cuda.current_device())
+        return 0
+
+    def device_index(device):
+        if device.index is not None:
+            return device.index
+        return current_index(device.type)
+
+    return device_index(source_device) == device_index(requested_device)
+
+
 def _capture_frame_to_rgb_torch(
     frame_raw,
     target_resolution,
@@ -115,7 +141,7 @@ def _capture_frame_to_rgb_torch(
     try:
         from capture.preprocess_triton import bgr_to_rgb_resize_norm, can_use_triton_preprocess
 
-        if can_use_triton_preprocess(frame_raw) and frame_raw.device == requested_device:
+        if can_use_triton_preprocess(frame_raw) and _same_torch_device(frame_raw.device, requested_device, torch):
             out = bgr_to_rgb_resize_norm(frame_raw, new_height, new_width)
             _mark_preprocess_metadata(
                 out,
@@ -131,7 +157,7 @@ def _capture_frame_to_rgb_torch(
         pass
 
     source_device = torch.device(frame_raw.device)
-    if source_device != requested_device:
+    if not _same_torch_device(source_device, requested_device, torch):
         frame_raw = frame_raw.to(device=requested_device, non_blocking=True)
 
     frame_rgb = frame_raw[..., [2, 1, 0]].permute(2, 0, 1).contiguous()

@@ -53,7 +53,6 @@ def main() -> None:
     parser.add_argument("--temporal-strength", type=float, default=0.85)
     parser.add_argument("--auto-reset-temporal", action="store_true")
     parser.add_argument("--scene-reset-threshold", type=float, default=0.22)
-    parser.add_argument("--reset-cooldown-frames", type=int, default=3)
     parser.add_argument("--foreground-scale", type=float, default=0.0)
     parser.add_argument("--depth-antialias-strength", type=float, default=0.0)
     parser.add_argument("--edge-dilation", type=int, default=2)
@@ -111,7 +110,6 @@ def main() -> None:
             temporal_strength=args.temporal_strength,
             auto_reset_temporal=args.auto_reset_temporal,
             scene_reset_threshold=args.scene_reset_threshold,
-            reset_cooldown_frames=args.reset_cooldown_frames,
             foreground_scale=args.foreground_scale,
             depth_antialias_strength=args.depth_antialias_strength,
             edge_dilation=args.edge_dilation,

@@ -197,6 +197,10 @@ class NativeTensorRtEngine:
                 pass
 
 
+def _dtype_label(dtype: torch.dtype) -> str:
+    return "fp16" if dtype == torch.float16 else "fp32" if dtype == torch.float32 else str(dtype).replace("torch.", "")
+
+
 def build_native_tensorrt_engine(
     onnx_path: str | Path,
     engine_path: str | Path,
@@ -211,6 +215,16 @@ def build_native_tensorrt_engine(
         return engine_path
     if not onnx_path.exists():
         raise FileNotFoundError(f"ONNX file not found: {onnx_path}")
+
+    print(
+        "[TensorRT] building native engine:"
+        f" onnx={onnx_path}"
+        f" engine={engine_path}"
+        f" dtype={'fp16' if fp16 else 'fp32'}"
+        f" workspace_gb={workspace_gb}"
+        f" force={force}",
+        flush=True,
+    )
 
     ensure_tensorrt_dll_path()
     import tensorrt as trt
@@ -247,6 +261,7 @@ def build_native_tensorrt_engine(
 
     engine_path.parent.mkdir(parents=True, exist_ok=True)
     engine_path.write_bytes(serialized)
+    print(f"[TensorRT] native engine ready: engine={engine_path}", flush=True)
     return engine_path
 
 
@@ -257,6 +272,7 @@ class DistillAnyDepthBaseNativeTensorRt:
         device: str | torch.device = "cuda",
         cache_dir: str | Path | None = None,
         onnx_path: str | Path | None = None,
+        onnx_dtype: str = "auto",
         engine_path: str | Path | None = None,
         model_id: str = DISTILL_ANY_DEPTH_BASE_MODEL_ID,
         model_name: str = DISTILL_ANY_DEPTH_BASE_NAME,
@@ -274,6 +290,7 @@ class DistillAnyDepthBaseNativeTensorRt:
             raise RuntimeError("Native TensorRT depth provider requires CUDA")
         self.cache_dir = Path(cache_dir) if cache_dir is not None else default_lab_cache_dir()
         self._explicit_onnx_path = Path(onnx_path) if onnx_path is not None else None
+        self.onnx_dtype = str(onnx_dtype)
         self._explicit_engine_path = Path(engine_path) if engine_path is not None else None
         self.onnx_path = self._explicit_onnx_path or default_onnx_path(self.cache_dir)
         self.engine_path = self._explicit_engine_path or default_native_tensorrt_engine_path(self.cache_dir)
@@ -347,6 +364,7 @@ class DistillAnyDepthBaseNativeTensorRt:
             cache_dir=self.cache_dir,
             local_files_only=self.local_files_only,
             force_download=self.force_download,
+            onnx_dtype=self.onnx_dtype,
             build_engine=self.build_engine,
             force_rebuild=self.force_rebuild,
         )
@@ -356,15 +374,28 @@ class DistillAnyDepthBaseNativeTensorRt:
         dtype_name = "fp32" if "fp32" in Path(artifacts.selected_onnx_path).name.lower() else "fp16"
         self._set_artifact_paths(Path(artifacts.selected_onnx_path), artifacts.paths.trt_path_for_dtype(dtype_name), input_size)
 
-    def load(self) -> NativeTensorRtEngine:
+    def load(self) -> NativeTensorRtEngine | None:
         if self._engine is not None:
             self._preprocessor.fixed_input_size = self._engine.input_image_size
             return self._engine
+        if self._explicit_onnx_path is None and self._explicit_engine_path is None and self._artifact_input_size is None:
+            return None
         if self.build_engine or self.force_rebuild or not self.engine_path.exists():
             build_native_tensorrt_engine(self.onnx_path, self.engine_path, fp16=self.dtype == torch.float16, force=self.force_rebuild)
         trt_lib_dirs = ensure_tensorrt_dll_path()
         self._engine = NativeTensorRtEngine(self.engine_path, device=self.device, dtype=self.dtype)
         self._preprocessor.fixed_input_size = self._engine.input_image_size
+        print(
+            "[TensorRT] native provider loaded:"
+            f" engine={self.engine_path}"
+            f" onnx={self.onnx_path}"
+            f" dtype={_dtype_label(self.dtype)}"
+            f" input_size={self._engine.input_image_size}"
+            f" cuda_graph={self.use_cuda_graph}"
+            f" profile_sync={self.profile_sync}"
+            f" dll_dirs={trt_lib_dirs or 'none'}",
+            flush=True,
+        )
         self.info = replace(
             self.info,
             execution_provider="TensorRT native",

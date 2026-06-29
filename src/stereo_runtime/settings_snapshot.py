@@ -33,7 +33,6 @@ _HOT_RELOAD_FIELDS = frozenset(
         "temporal_strength",
         "auto_reset_temporal",
         "scene_reset_threshold",
-        "reset_cooldown_frames",
         "foreground_scale",
         "depth_antialias_strength",
         "edge_dilation",
@@ -78,7 +77,6 @@ _CONFIG_UPDATE_FIELDS = frozenset(
         "temporal_strength",
         "auto_reset_temporal",
         "scene_reset_threshold",
-        "reset_cooldown_frames",
         "foreground_scale",
         "depth_antialias_strength",
         "edge_dilation",
@@ -131,7 +129,6 @@ class RuntimeSettingsSnapshot:
     temporal_strength: float | None = None
     auto_reset_temporal: bool | None = None
     scene_reset_threshold: float | None = None
-    reset_cooldown_frames: int | None = None
     foreground_scale: float | None = None
     depth_antialias_strength: float | None = None
     edge_dilation: int | None = None

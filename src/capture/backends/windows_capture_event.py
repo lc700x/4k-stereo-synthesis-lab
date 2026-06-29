@@ -56,6 +56,8 @@ class WindowsCaptureEventRunner:
         self._keyboard_thread = None
         self._session = None
         self._control = None
+        self._fps_last_log = 0.0
+        self._fps_frames = 0
 
     @property
     def session(self):
@@ -70,6 +72,26 @@ class WindowsCaptureEventRunner:
             self._control.stop()
         elif self._session is not None and hasattr(self._session, "stop"):
             self._session.stop()
+
+    def _log_capture_fps(self, now: float) -> None:
+        if self.capture_tool != "WindowsCaptureCUDA":
+            return
+        if self._fps_last_log <= 0.0:
+            self._fps_last_log = now
+            self._fps_frames = 0
+            return
+        self._fps_frames += 1
+        elapsed = now - self._fps_last_log
+        if elapsed < 1.0:
+            return
+        fps = self._fps_frames / elapsed
+        print(
+            f"[WindowsCaptureCUDA] capture_fps={fps:.1f} frames={self._fps_frames} "
+            f"monitor={self.config.monitor_index} mode={self.config.capture_mode}",
+            flush=True,
+        )
+        self._fps_last_log = now
+        self._fps_frames = 0
 
     def _start_keyboard_worker(self, shutdown_event):
         user32 = ctypes.windll.user32
@@ -164,6 +186,7 @@ class WindowsCaptureEventRunner:
                     if on_paused is not None:
                         on_paused("paused")
                     return
+                self._log_capture_fps(capture_start_time)
                 raw, copy_mode, frame_raw_device = _copy_frame_buffer(frame.frame_buffer, self.capture_tool)
                 on_frame(
                     capture_frame_from_raw(

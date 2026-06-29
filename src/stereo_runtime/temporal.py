@@ -91,6 +91,25 @@ def apply_temporal(
         blend = (mask * alpha).to(device=left.device, dtype=left.dtype)
     if scene_gate is not None:
         blend = blend * scene_gate.to(device=left.device, dtype=left.dtype)
+    elif mask is not None:
+        try:
+            from .temporal_triton import apply_temporal_masked, can_use_triton_temporal_masked
+
+            if can_use_triton_temporal_masked(left, right, state.left, state.right, blend):
+                left_out, right_out = apply_temporal_masked(
+                    left,
+                    right,
+                    state.left,
+                    state.right,
+                    blend,
+                    alpha=1.0,
+                )
+                state.left = left_out.detach()
+                state.right = right_out.detach()
+                state.mask = mask.detach()
+                return left_out, right_out
+        except Exception:
+            pass
     left_out = left * (1.0 - blend) + state.left.to(left.device) * blend
     right_out = right * (1.0 - blend) + state.right.to(right.device) * blend
     state.left = left_out.detach()

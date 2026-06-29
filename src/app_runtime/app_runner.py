@@ -67,8 +67,6 @@ class AppModeCallbacks:
     bootstrap_done_set: Callable
 
 
-
-
 def build_app_mode_settings(
     *,
     capture_mode,
@@ -128,8 +126,6 @@ def build_app_mode_settings(
     )
 
 
-
-
 def build_current_app_mode_settings(*, use_cudart, time_sleep):
     from utils import (
         CAPTURE_MODE,
@@ -187,6 +183,7 @@ def build_current_app_mode_settings(*, use_cudart, time_sleep):
         xr_preview_window=XR_PREVIEW_WINDOW,
     )
 
+
 def build_app_mode_callbacks(
     *,
     shutdown_is_set,
@@ -227,6 +224,7 @@ def build_app_mode_callbacks(
         bootstrap_done_set=bootstrap_done_set,
     )
 
+
 @dataclass
 class AppRunResult:
     stats: FrameStats
@@ -262,6 +260,7 @@ def run_app_mode(mode, *, runtime_q, thread_latencies, settings: AppModeSettings
             stream_quality=settings.stream_quality,
             time_sleep=settings.time_sleep,
         )
+
         def update_viewer_depth_strength(value):
             callbacks.send_settings_snapshot(
                 RuntimeSettingsSnapshot(
@@ -309,6 +308,8 @@ def run_app_mode(mode, *, runtime_q, thread_latencies, settings: AppModeSettings
             source_active_set=callbacks.source_active_set,
             wait_idle_clear=callbacks.wait_idle_clear,
             bootstrap_done_set=callbacks.bootstrap_done_set,
+            breakdown_inc=callbacks.breakdown_inc,
+            breakdown_add_time=callbacks.breakdown_add_time,
         )
         return AppRunResult(
             stats=stats,

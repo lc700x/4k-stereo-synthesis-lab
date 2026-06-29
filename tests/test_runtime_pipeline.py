@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import queue
+import sys
 from types import SimpleNamespace
 
 import pytest
 
 from capture.types import CapturedFrame, FrameCopyMode
-from stereo_runtime.pipeline import RuntimePipelineContext, RuntimePipelineLoop, _attach_pipeline_debug
+from stereo_runtime.pipeline import (
+    RuntimePipelineContext,
+    RuntimePipelineLoop,
+    _attach_cuda_ready_event,
+    _attach_pipeline_debug,
+    _add_cuda_event_timings,
+    _runtime_sync_after_frame_enabled,
+)
 from stereo_runtime.render_size import RenderSizeConfig, RenderSizePolicy
 from stereo_runtime.settings_snapshot import (
     RuntimeSettingsPipelineRebuildRequired,
@@ -47,15 +55,26 @@ class FakeRuntime:
         self.openxr_config = None
         self.rgb_calls = 0
         self.openxr_calls = 0
+        self.depth_calls = 0
+        self.load_calls = 0
         self.snapshots = []
+        self.skip_sbs_output = None
         self.temporal_state = CountingTemporalState()
+
+    def load(self):
+        self.load_calls += 1
+
+    def _predict_depth_profile(self, runtime_rgb):
+        self.depth_calls += 1
+        return SimpleNamespace(depth="depth", preprocess_ms=0.1, model_ms=0.2, postprocess_ms=0.1)
 
     def apply_settings_snapshot(self, snapshot, *, active_preset=None):
         self.snapshots.append((snapshot, active_preset))
         return snapshot.classify()
 
-    def process_rgb_frame(self, runtime_rgb):
+    def process_rgb_frame(self, runtime_rgb, **_kwargs):
         self.rgb_calls += 1
+        self.skip_sbs_output = _kwargs.get("skip_sbs_output")
         return SimpleNamespace(
             depth="depth",
             left_eye="left-eye",
@@ -79,6 +98,67 @@ class FakeRuntime:
 class PipelineRebuildRuntime(FakeRuntime):
     def apply_settings_snapshot(self, snapshot, *, active_preset=None):
         raise RuntimeSettingsPipelineRebuildRequired(snapshot, ("render_size_policy",))
+
+
+def test_attach_cuda_ready_event_records_on_cuda_result(monkeypatch):
+    events = []
+    stream = object()
+
+    class FakeEvent:
+        def __init__(self, blocking=False):
+            self.blocking = blocking
+            self.recorded_stream = None
+            events.append(self)
+
+        def record(self, recorded_stream):
+            self.recorded_stream = recorded_stream
+
+    fake_torch = SimpleNamespace(
+        cuda=SimpleNamespace(
+            Event=FakeEvent,
+            current_stream=lambda device: stream,
+        )
+    )
+    monkeypatch.setitem(sys.modules, "torch", fake_torch)
+    result = SimpleNamespace(left_eye=SimpleNamespace(device=SimpleNamespace(type="cuda")))
+
+    updated = _attach_cuda_ready_event(result)
+
+    assert updated is result
+    assert result.cuda_ready_event is events[0]
+    assert result.cuda_ready_event.blocking is False
+    assert result.cuda_ready_event.recorded_stream is stream
+
+
+def test_add_cuda_event_timings_records_elapsed_segments():
+    class FakeEvent:
+        def __init__(self, ms):
+            self.ms = float(ms)
+
+        def elapsed_time(self, other):
+            return other.ms - self.ms
+
+    events = {
+        "start": FakeEvent(0.0),
+        "depth": FakeEvent(10.0),
+        "synthesis": FakeEvent(25.0),
+        "pack": FakeEvent(30.0),
+        "openxr_pack_start": FakeEvent(30.0),
+        "openxr_pack": FakeEvent(32.0),
+        "end": FakeEvent(32.0),
+    }
+    recorded = {}
+    ctx = SimpleNamespace(
+        breakdown_add_time=lambda name, seconds: recorded.setdefault(name, seconds),
+    )
+
+    _add_cuda_event_timings(ctx, SimpleNamespace(cuda_timing_events=events))
+
+    assert recorded["rt_gpu_depth"] == 0.01
+    assert recorded["rt_gpu_synth"] == 0.015
+    assert recorded["rt_gpu_pack"] == 0.005
+    assert recorded["rt_gpu_openxr_pack"] == 0.002
+    assert recorded["rt_gpu_total"] == 0.032
 
 
 def test_pipeline_debug_transport_prefers_explicit_output_transport():
@@ -126,6 +206,23 @@ def test_pipeline_debug_transport_falls_back_for_openxr_and_local_window():
     assert local_result.debug_info["application_runtime_target"] == "local_viewer"
     assert local_result.debug_info["transport"] == "local_window"
     assert local_result.debug_info["output_transport"] == "local_window"
+
+
+def test_runtime_sync_after_frame_defaults_off_and_keeps_explicit_override(monkeypatch):
+    monkeypatch.delenv("D2S_RUNTIME_SYNC_AFTER_FRAME", raising=False)
+    ctx = SimpleNamespace(run_mode="Viewer", use_cudart=True)
+
+    assert _runtime_sync_after_frame_enabled(ctx) is False
+
+    ctx.use_cudart = False
+    assert _runtime_sync_after_frame_enabled(ctx) is False
+
+    monkeypatch.setenv("D2S_RUNTIME_SYNC_AFTER_FRAME", "1")
+    assert _runtime_sync_after_frame_enabled(ctx) is True
+    monkeypatch.setenv("D2S_RUNTIME_SYNC_AFTER_FRAME", "0")
+    assert _runtime_sync_after_frame_enabled(ctx) is False
+    monkeypatch.setenv("D2S_RUNTIME_SYNC_AFTER_FRAME", "auto")
+    assert _runtime_sync_after_frame_enabled(ctx) is False
 
 
 def test_runtime_pipeline_processes_one_frame():
@@ -197,6 +294,417 @@ def test_runtime_pipeline_processes_one_frame():
     assert "mode" in calls
     assert "hot-reload" in calls
     assert ("warmup", "runtime-rgb") in calls
+
+
+def test_runtime_pipeline_drops_raw_when_runtime_queue_is_backpressured():
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    runtime_q.put(("old-runtime", 9.0))
+    stats = {}
+    breakdown = {}
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    def fail_gpu_work(*args, **kwargs):
+        raise AssertionError("backpressure drop must not run GPU work")
+
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=fail_gpu_work,
+        prepare_rgb_for_stereo_runtime=fail_gpu_work,
+        current_openxr_render_config=fail_gpu_work,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+
+    RuntimePipelineLoop(context).run()
+
+    assert runtime_q.get_nowait() == ("old-runtime", 9.0)
+    assert raw_q.empty()
+    assert stats["raw_get"] == 1
+    assert stats["runtime_drop_backpressure"] == 1
+    assert breakdown["runtime_drop_backpressure"] == 1
+
+
+def test_runtime_pipeline_holds_pending_result_until_cuda_event_ready(monkeypatch):
+    import stereo_runtime.pipeline as pipeline
+
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    stats = {}
+    breakdown = {}
+
+    class DelayedEvent:
+        def __init__(self):
+            self.calls = 0
+
+        def query(self):
+            self.calls += 1
+            return self.calls >= 2
+
+    event = DelayedEvent()
+
+    def attach_ready_event(result):
+        result.cuda_ready_event = event
+        return result
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    context = RuntimePipelineContext(
+        shutdown_event=NFrameShutdown(2),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="Viewer",
+        openxr_runtime_direct=False,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=lambda frame, size, **kwargs: SimpleNamespace(
+            _d2s_preprocess_backend="fake-preprocess"
+        ),
+        prepare_rgb_for_stereo_runtime=lambda frame, **kwargs: "runtime-rgb",
+        current_openxr_render_config=lambda: None,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+    monkeypatch.setattr(pipeline, "_attach_cuda_ready_event", attach_ready_event)
+
+    RuntimePipelineLoop(context).run()
+
+    runtime_result, capture_start_time = runtime_q.get_nowait()
+    assert runtime_result.cuda_ready_event is event
+    assert capture_start_time == 10.0
+    assert stats["runtime_pending_cuda"] == 1
+    assert stats["runtime_frames"] == 1
+    assert breakdown["runtime_pending_cuda"] == 1
+    assert breakdown["runtime"] == 1
+
+
+def test_runtime_pipeline_continues_until_pending_cuda_depth_limit(monkeypatch):
+    import stereo_runtime.pipeline as pipeline
+
+    raw_q = queue.Queue(maxsize=2)
+    runtime_q = queue.Queue(maxsize=2)
+    raw_q.put(("raw-a", (2, 2), 10.0))
+    raw_q.put(("raw-b", (2, 2), 11.0))
+    stats = {}
+    breakdown = {}
+    runtime = FakeRuntime()
+
+    class NeverReadyEvent:
+        def query(self):
+            return False
+
+    def attach_ready_event(result):
+        result.cuda_ready_event = NeverReadyEvent()
+        return result
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    context = RuntimePipelineContext(
+        shutdown_event=NFrameShutdown(2),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="Viewer",
+        openxr_runtime_direct=False,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=runtime,
+        capture_frame_to_rgb=lambda frame, size, **kwargs: SimpleNamespace(
+            _d2s_preprocess_backend="fake-preprocess"
+        ),
+        prepare_rgb_for_stereo_runtime=lambda frame, **kwargs: "runtime-rgb",
+        current_openxr_render_config=lambda: None,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+    monkeypatch.setattr(pipeline, "_attach_cuda_ready_event", attach_ready_event)
+
+    RuntimePipelineLoop(context).run()
+
+    assert runtime.rgb_calls == 2
+    assert raw_q.empty()
+    assert runtime_q.empty()
+    assert stats["runtime_pending_cuda"] == 2
+    assert breakdown["runtime_pending_cuda"] == 2
+
+
+def test_runtime_pipeline_drops_raw_when_pending_cuda_depth_is_full():
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    stats = {}
+    breakdown = {}
+
+    class InflightEvent:
+        def query(self):
+            return False
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    def fail_gpu_work(*args, **kwargs):
+        raise AssertionError("full pending CUDA depth must not allow new GPU work")
+
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=fail_gpu_work,
+        prepare_rgb_for_stereo_runtime=fail_gpu_work,
+        current_openxr_render_config=fail_gpu_work,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+    loop = RuntimePipelineLoop(context)
+    loop._last_cuda_ready_event = InflightEvent()
+    loop._pending_runtime_items = [
+        (SimpleNamespace(cuda_ready_event=InflightEvent()), 8.0, 0.0, 0.0, 1.0),
+        (SimpleNamespace(cuda_ready_event=InflightEvent()), 9.0, 0.0, 0.0, 1.0),
+    ]
+
+    loop.run()
+
+    assert runtime_q.empty()
+    assert raw_q.empty()
+    assert stats["raw_get"] == 1
+    assert stats["runtime_drop_cuda_inflight"] == 1
+    assert breakdown["runtime_drop_cuda_inflight"] == 1
+
+
+def test_runtime_pipeline_drop_only_drains_raw_without_gpu_work(monkeypatch):
+    monkeypatch.setenv("D2S_RUNTIME_DROP_ONLY", "1")
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    stats = {}
+    breakdown = {}
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    def fail_gpu_work(*args, **kwargs):
+        raise AssertionError("drop-only mode must not run GPU work")
+
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=fail_gpu_work,
+        prepare_rgb_for_stereo_runtime=fail_gpu_work,
+        current_openxr_render_config=fail_gpu_work,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+
+    RuntimePipelineLoop(context).run()
+
+    assert runtime_q.empty()
+    assert stats["raw_get"] == 1
+    assert stats["runtime_diag_raw"] == 1
+    assert breakdown["raw_get"] == 1
+    assert breakdown["runtime_diag_raw"] == 1
+
+
+@pytest.mark.parametrize(
+    ("stage", "expected_stat"),
+    [
+        ("preprocess", "runtime_diag_preprocess"),
+        ("prepare", "runtime_diag_prepare"),
+        ("depth", "runtime_diag_depth"),
+        ("runtime", "runtime_diag_runtime"),
+    ],
+)
+def test_runtime_pipeline_diag_stage_stops_after_selected_stage(monkeypatch, stage, expected_stat):
+    monkeypatch.setenv("D2S_RUNTIME_DIAG_STAGE", stage)
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    stats = {}
+    calls = []
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def fail_runtime_work(*args, **kwargs):
+        raise AssertionError("diag stage must stop before runtime work")
+
+    runtime = FakeRuntime()
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=runtime,
+        capture_frame_to_rgb=lambda frame, size, **kwargs: calls.append("preprocess") or SimpleNamespace(
+            _d2s_preprocess_backend="fake-preprocess"
+        ),
+        prepare_rgb_for_stereo_runtime=lambda frame, **kwargs: calls.append("prepare") or "runtime-rgb",
+        current_openxr_render_config=lambda: "openxr-config",
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=lambda *args, **kwargs: None,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: calls.append("mode"),
+        apply_stereo_hot_reload_if_needed=lambda: calls.append("hot-reload"),
+        warmup_stereo_once_for_frame=lambda frame: calls.append("warmup"),
+        log_fast_plus_fused_runtime_state=lambda result: calls.append("fused"),
+    )
+
+    RuntimePipelineLoop(context).run()
+
+    assert runtime_q.empty()
+    assert stats[expected_stat] == 1
+    if stage == "preprocess":
+        assert calls == ["preprocess"]
+    elif stage == "prepare":
+        assert calls == ["preprocess", "prepare"]
+    elif stage == "depth":
+        assert calls == ["preprocess", "prepare"]
+        assert runtime.load_calls == 1
+        assert runtime.depth_calls == 1
+    else:
+        assert "mode" in calls
+        assert "hot-reload" in calls
+        assert "warmup" in calls
+        assert "fused" in calls
+        assert runtime.openxr_calls == 1
 
 
 def test_runtime_pipeline_resets_temporal_state_when_render_size_changes():
@@ -844,5 +1352,6 @@ def test_runtime_pipeline_openxr_quality_presets_use_full_synthesis_even_when_di
         runtime_result, capture_start_time = runtime_q.get_nowait()
         assert runtime.rgb_calls == 1
         assert runtime.openxr_calls == 0
+        assert runtime.skip_sbs_output is True
         assert runtime_result.debug_info["runtime_output_format"] == "openxr_full_synthesis_eyes"
         assert capture_start_time == 10.0

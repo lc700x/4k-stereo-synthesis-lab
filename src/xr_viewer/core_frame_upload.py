@@ -24,6 +24,7 @@ from OpenGL.GL import (
     GL_UNSIGNED_BYTE,
 )
 from viewer.viewer import BACKEND
+from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
 
 try:
     from viewer.viewer import CUDART_GL
@@ -164,9 +165,21 @@ class CoreFrameUploadMixin:
 
                 avg_t = (total / max(1, count)).float()
                 if avg_t.numel() and float(avg_t.detach().max().item()) <= 1.0:
+                    warn_cpu_transfer(
+                        "OpenXR glow color sampling",
+                        ".cpu().numpy()",
+                        detail=describe_tensor(avg_t),
+                        key="openxr_glow_target_color_cpu",
+                    )
                     avg = avg_t.clamp(0.0, 1.0).detach().cpu().numpy()
                     scale = 1.0
                 else:
+                    warn_cpu_transfer(
+                        "OpenXR glow color sampling",
+                        ".cpu().numpy()",
+                        detail=describe_tensor(avg_t),
+                        key="openxr_glow_target_color_cpu",
+                    )
                     avg = avg_t.clamp(0.0, 255.0).detach().cpu().numpy()
                     scale = 255.0
                 self._glow_target_color = (
@@ -192,9 +205,21 @@ class CoreFrameUploadMixin:
                             region = rgb_t[y0:y1:stride, x0:x1:stride, :].float()
                             avg_t = region.mean(dim=(0, 1))
                         if avg_t.numel() and float(avg_t.detach().max().item()) <= 1.0:
+                            warn_cpu_transfer(
+                                "OpenXR glow grid sampling",
+                                ".cpu().numpy()",
+                                detail=describe_tensor(avg_t),
+                                key="openxr_glow_grid_cpu",
+                            )
                             avg3 = avg_t.clamp(0.0, 1.0).detach().cpu().numpy()
                             scale3 = 1.0
                         else:
+                            warn_cpu_transfer(
+                                "OpenXR glow grid sampling",
+                                ".cpu().numpy()",
+                                detail=describe_tensor(avg_t),
+                                key="openxr_glow_grid_cpu",
+                            )
                             avg3 = avg_t.clamp(0.0, 255.0).detach().cpu().numpy()
                             scale3 = 255.0
                         grid.append((float(avg3[0]) / scale3, float(avg3[1]) / scale3, float(avg3[2]) / scale3))
@@ -291,7 +316,7 @@ class CoreFrameUploadMixin:
                     self._log_upload_perf_if_slow(perf_t0, perf_marks, w, h, 'd3d11')
                 return
             except Exception as e:
-                print(f"[OpenXRViewer] D3D11 native frame upload failed: {e}")
+                print(f"[OpenXRViewer] D3D11 native frame upload failed: {e}; falling back to OpenGL upload path")
                 try:
                     self._d3d11_native_renderer.cleanup()
                 except Exception:
@@ -315,12 +340,34 @@ class CoreFrameUploadMixin:
                 if perf_enabled:
                     _mark_upload('init_cuda_gl')
             except Exception as e:
-                print(f"[OpenXRViewer] GPU interop unavailable: {e}")
+                warn_cpu_fallback(
+                    "OpenXR RGB+depth GPU interop",
+                    "init_failed",
+                    detail=str(e),
+                    key="openxr_rgb_depth_gpu_interop_init_failed",
+                )
                 self._cuda_gl = False   # sentinel: don't retry
                 if perf_enabled:
                     _mark_upload('init_cuda_gl_failed')
 
-        gpu_ok = bool(self._cuda_gl) and is_tensor and BACKEND in ("CUDA", "HIP")
+        gpu_ok = bool(self._cuda_gl) and is_tensor and depth_gpu is not None and BACKEND in ("CUDA", "HIP")
+
+        if not gpu_ok:
+            reasons = []
+            if not self._cuda_gl:
+                reasons.append("cuda_gl_unavailable")
+            if not is_tensor:
+                reasons.append("rgb_not_tensor")
+            if BACKEND not in ("CUDA", "HIP"):
+                reasons.append(f"backend={BACKEND}")
+            if depth_gpu is None:
+                reasons.append("depth_not_tensor")
+            warn_cpu_fallback(
+                "OpenXR RGB+depth texture upload",
+                "+".join(reasons) or "gpu_path_unavailable",
+                detail=f"size={w}x{h}",
+                key="openxr_rgb_depth_cpu_upload",
+            )
 
         if gpu_ok:
             if self._pbo_texture_size != (w, h):
@@ -364,15 +411,33 @@ class CoreFrameUploadMixin:
         else:
             # CPU fallback - use PBO for async DMA when available.
             if hasattr(rgb, 'detach'):
+                warn_cpu_transfer(
+                    "OpenXR RGB texture upload",
+                    ".cpu().numpy()",
+                    detail=describe_tensor(rgb),
+                    key="openxr_rgb_upload_cpu_transfer",
+                )
                 rgb_np = (
                     rgb.permute(1, 2, 0).detach().contiguous()
                     .clamp(0, 255).to(torch.uint8).cpu().numpy()
                 )
             else:
+                warn_cpu_transfer(
+                    "OpenXR RGB texture upload",
+                    "numpy input path",
+                    detail=f"type={type(rgb).__name__}",
+                    key="openxr_rgb_upload_numpy_input",
+                )
                 rgb_np = np.asarray(rgb, dtype=np.uint8)
             if perf_enabled:
                 _mark_upload('rgb_to_cpu')
             if depth_np is None:
+                warn_cpu_transfer(
+                    "OpenXR depth texture upload",
+                    ".cpu().numpy()",
+                    detail=describe_tensor(depth_gpu),
+                    key="openxr_depth_upload_cpu_transfer",
+                )
                 depth_np = depth_gpu.cpu().numpy()
             if perf_enabled:
                 _mark_upload('depth_to_cpu')

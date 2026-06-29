@@ -44,6 +44,9 @@ Canonical specs for current work:
 ## Current Known Issues
 
 - D3D11 native OpenXR direct shader still needs a follow-up to match the OpenGL RGB+depth direct shader's core DIBR semantics. Current D3D11 already applies `screen_roll` to parallax direction, but still lacks the OpenGL shader's 3-tap depth smoothing, non-linear depth shaping, edge falloff, soft disocclusion confidence, push-pull inpaint, alpha edge fade, feather controls, corner radius, and `u_resolution` / `u_viewport` semantics. Estimated AI time for the focused direct-shader parity pass is about 60-90 minutes excluding headset validation; full OpenGL `_render_eye()` experience parity is a larger 3-5 hour follow-up.
+- Runtime scheduling/backpressure must stay latest-frame first. The recent high-refresh capture diagnosis showed direct `wc_cuda` capture can reach high cadence, but a full CUDA runtime frame without a GPU completion boundary can build an async GPU queue and backpressure WGC / CUDA interop down to roughly 50-60 FPS. This is a runtime scheduling issue, not an OpenXR-only presentation issue.
+- The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
+- TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
 
 ## Future Work
 
@@ -54,11 +57,93 @@ Current task queue:
 1. Complete GUI live hot-save direct emission of `RuntimeSettingsSnapshot`; keep settings.yaml polling as an explicit compatibility path.
 2. Bring D3D11 native OpenXR RGB+depth direct shader to parity with the OpenGL direct shader's core DIBR quality semantics.
 3. Validate CUDA/ROCm capture zero-copy on real hardware before any path reports `zero_copy=True`.
-4. Remove remaining compatibility redundancy after all consumers use the docs/28 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
-5. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
-6. Keep `docs/26-desktop2stereo-engineering-design-specification.md` aligned to the `docs/28-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
+4. Keep runtime scheduling/backpressure covered: CUDA runtime should default to `D2S_RUNTIME_SYNC_AFTER_FRAME=auto`, latest-frame overwrite/drop is expected, and non-CUDA backends must not be accidentally forced into the CUDA sync policy.
+5. Trace the remaining SBS/display FPS gap outside `StereoRuntime.process_*()`: add or inspect timing around raw dequeue, runtime call, runtime_q put/drop, viewer dequeue, texture upload, OpenXR/local submit, present/vsync, and FPS reporting.
+6. Optimize TensorRT ORT depth provider for real GPU zero-copy: replace CPU numpy input binding with CUDA/DLPack or direct CUDA OrtValue binding, keep iobinding output on CUDA, and return a CUDA torch tensor without `OrtValue.numpy()` / `torch.from_numpy()` CPU staging.
+7. Remove remaining compatibility redundancy after all consumers use the docs/28 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
+8. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
+9. Keep `docs/26-desktop2stereo-engineering-design-specification.md` aligned to the `docs/28-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
 
 ## Current Status
+
+### 2026-06-30 Realtime CPU Transfer Audit
+
+A realtime-path scan was run after adding red CPU fallback / CPU transfer console warnings:
+
+```powershell
+rg -n "\.cpu\(\)\.numpy|\.cpu\(\).*\.numpy|OrtValue\.numpy|\.numpy\(\)|torch\.from_numpy|np\.asarray\(" src\viewer src\xr_viewer src\streaming src\stereo_runtime
+```
+
+Classification:
+
+- Already red-warning covered realtime fallback paths: local `StereoWindow` RGB/depth texture CPU upload, OpenXR RGB+depth CPU upload, OpenXR runtime-eye CPU GL upload, OpenXR D3D11 CPU `UpdateSubresource`, Metal viewer RGB/depth upload, `runtime_output_to_numpy()`, legacy SBS streaming output, ONNX depth input `tensor.detach().cpu().numpy()`, and TensorRT ORT input/output CPU staging.
+- Offline/debug/report paths that are not realtime display or inference bottlenecks: `src/stereo_runtime/io.py` image save helpers and `src/stereo_runtime/report.py` report canvas export.
+- GPU zero-copy optimization targets that still need implementation, not just warnings: TensorRT ORT input binding currently converts CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`; TensorRT ORT output currently calls `OrtValue.numpy()` then `torch.from_numpy()`, putting depth back on CPU; ONNX depth provider should prefer DLPack / CUDA OrtValue path whenever available; legacy streaming/output numpy conversion remains inherently CPU until streamer transport accepts GPU frames.
+- Non-problem CPU conversions: `np.asarray()` on static matrices, UI/model metadata, glTF/environment data, or already-CPU inputs are not treated as realtime GPU fallback unless adjacent warning code marks an actual GPU-to-CPU transfer.
+
+Follow-up rule:
+
+- Red warnings are diagnostic visibility only. Any warning in the depth provider or display upload hot path should be treated as a bug for the 100% GPU zero-copy target unless the mode explicitly requires CPU transport, such as legacy MJPEG.
+
+### 2026-06-29 Remaining SBS FPS Gap Investigation
+
+Latest user log after CUDA runtime sync and CPU-side inference cleanup:
+
+```text
+StereoRuntime frame refresh: total_ms=3.4-3.7 depth_total_ms=1.7 synthesis_ms=1.7-2.0 pack_ms=0.0 stage_sbs=0.1
+WindowsCaptureCUDA capture_fps=72.4-82.3 copy_ms=0.04-0.07 enqueue_ms=0.04-0.05 handler_ms=0.09-0.13
+```
+
+Interpretation:
+
+- `StereoRuntime` compute is not the current 20 FPS limiter. A 3.4-3.7ms runtime frame implies the depth+synthesis+SBS compute path can run far above 20 FPS.
+- SBS packing is not the bottleneck: `sbs_backend=triton_half_sbs`, `stage_sbs=0.1`, and `pack_ms=0.0`.
+- Capture is also above the reported 20 FPS symptom in this run, though still below the 120Hz monitor cadence: `WindowsCaptureCUDA` reports roughly 72-82 FPS.
+- The likely bottleneck is after runtime compute: queue handoff, viewer/OpenXR/local display submit, texture upload, present/vsync, or a misleading FPS counter that is measuring presentation rather than runtime production.
+
+Next trace points:
+
+```text
+RuntimePipelineLoop raw dequeue
+StereoRuntime.process_* call boundary
+runtime_q put / overwrite / blocking time
+viewer or OpenXR runtime_q dequeue
+texture upload time
+swapchain/local present/submit time
+reported SBS FPS counter source
+```
+
+Do not spend more time optimizing depth, synthesis, or SBS pack until the outer-loop timings prove they are the limiter.
+
+### 2026-06-29 CUDA Runtime Backpressure Specification
+
+Documented the high-refresh capture finding across the canonical and engineering handoff docs.
+
+Finding:
+
+- Direct `wc_cuda` capture can reach high-refresh cadence in isolation.
+- Main pipeline stages before full runtime consumption can hold the expected capture cadence.
+- Full CUDA runtime processing can still reduce capture event rate when depth/synthesis/pack GPU work is submitted asynchronously without a per-frame completion boundary.
+- `runtime_sync` improving capture cadence while producing producer-side raw overwrite/drop confirms the fix belongs to runtime scheduling/backpressure, not to OpenXR viewer submit or capture callback cost.
+- `overwrite/drop` is the expected latest-frame loss point; `drain_drop=0` only means stale frames were overwritten before the consumer drain stage.
+
+Spec updates:
+
+- `docs/28-Realtime-2d-to-3d-specification.md`: added global realtime scheduling and backpressure rules.
+- `docs/26-desktop2stereo-engineering-design-specification.md`: added engineering rules for CUDA runtime sync, latest-frame queues, and log interpretation.
+- `docs/00-api-handoff-progress.md`: added this handoff entry plus future-work guardrails.
+
+Verification:
+
+```powershell
+git diff --check -- docs\28-Realtime-2d-to-3d-specification.md docs\26-desktop2stereo-engineering-design-specification.md docs\00-api-handoff-progress.md
+```
+
+Expected result:
+
+```text
+passed; CRLF warnings only
+```
 
 ### 2026-06-29 OpenXR Realtime Hot Path and Capture Diagnostics
 

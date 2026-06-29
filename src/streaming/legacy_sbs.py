@@ -5,6 +5,7 @@ import torch
 import torch.nn.functional as F
 
 from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px
+from utils.cpu_warnings import describe_tensor, warn_cpu_transfer
 
 DEVICE_INFO = "unknown"
 
@@ -143,6 +144,12 @@ def _pad_to_aspect_tensor(tensor: torch.Tensor, target_aspect: float = 16 / 9) -
 
 def _chw_tensor_to_numpy(tensor: torch.Tensor) -> np.ndarray:
     tensor = tensor.detach().clamp(0, 255).to(torch.uint8)
+    warn_cpu_transfer(
+        "legacy SBS streaming output",
+        ".cpu().numpy()",
+        detail=describe_tensor(tensor),
+        key="legacy_sbs_output_cpu_transfer",
+    )
     return tensor.permute(1, 2, 0).cpu().numpy()
 
 

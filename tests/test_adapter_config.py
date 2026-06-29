@@ -400,6 +400,41 @@ def test_runtime_config_hole_fill_mode_overrides_legacy_radius_strength_values()
     assert stereo.hole_fill_strength == 1.0
 
 
+def test_runtime_config_balanced_hole_fill_honors_explicit_lightweight_values():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Hole Fill Mode": "balanced",
+            "Hole Fill Radius": 1,
+            "Hole Fill Strength": 0.6,
+        }
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.hole_fill_mode == "balanced"
+    assert config.hole_fill_radius == 1
+    assert config.hole_fill_strength == 0.6
+    assert stereo.hole_fill_mode == "balanced"
+    assert stereo.hole_fill_radius == 1
+    assert stereo.hole_fill_strength == 0.6
+
+
+def test_runtime_config_balanced_hole_fill_defaults_to_lightweight_values():
+    config = runtime_config_from_d2s_settings(
+        {
+            "Depth Model": "Distill-Any-Depth-Base",
+            "Hole Fill Mode": "balanced",
+        }
+    )
+    stereo = stereo_config_from_runtime(config)
+
+    assert config.hole_fill_mode == "balanced"
+    assert config.hole_fill_radius == 1
+    assert config.hole_fill_strength == 0.6
+    assert stereo.hole_fill_radius == 1
+    assert stereo.hole_fill_strength == 0.6
+
+
 def test_runtime_config_accepts_content_aware_highest_quality_hole_fill_label():
     config = runtime_config_from_d2s_settings(
         {

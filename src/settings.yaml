@@ -350,7 +350,7 @@ Language: CN
 Run Mode: OpenXR Link
 XR Preview Window: false
 VSync: false
-Target FPS: 0
+Target FPS: 90
 Processing Resolution: Auto
 Render Size Policy: scaled
 Render Scale: 4K / 100%

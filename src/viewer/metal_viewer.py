@@ -5,6 +5,8 @@ from ctypes import c_void_p
 import glfw
 import numpy as np
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_transfer
+
 
 if platform.system() == "Darwin":
     import objc
@@ -239,7 +241,19 @@ def _as_numpy_rgb(rgb):
             t = t[..., :3]
         else:
             raise ValueError(f"Unsupported RGB tensor shape: {tuple(t.shape)}")
+        warn_cpu_transfer(
+            "Metal RGB texture upload",
+            ".cpu().numpy()",
+            detail=describe_tensor(t),
+            key="metal_rgb_cpu_transfer",
+        )
         return t.contiguous().clamp(0, 255).to(torch.uint8).cpu().numpy()
+    warn_cpu_transfer(
+        "Metal RGB texture upload",
+        "numpy input path",
+        detail=f"type={type(rgb).__name__}",
+        key="metal_rgb_numpy_input",
+    )
     arr = np.asarray(rgb)
     if arr.ndim != 3 or arr.shape[-1] < 3:
         raise ValueError(f"Unsupported RGB array shape: {arr.shape}")
@@ -248,7 +262,19 @@ def _as_numpy_rgb(rgb):
 
 def _as_numpy_depth(depth):
     if hasattr(depth, "detach"):
+        warn_cpu_transfer(
+            "Metal depth texture upload",
+            ".cpu().numpy()",
+            detail=describe_tensor(depth),
+            key="metal_depth_cpu_transfer",
+        )
         return depth.detach().contiguous().float().cpu().numpy()
+    warn_cpu_transfer(
+        "Metal depth texture upload",
+        "numpy input path",
+        detail=f"type={type(depth).__name__}",
+        key="metal_depth_numpy_input",
+    )
     return np.asarray(depth, dtype=np.float32)
 
 

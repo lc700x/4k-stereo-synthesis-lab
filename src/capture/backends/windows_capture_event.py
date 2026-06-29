@@ -12,6 +12,34 @@ from capture.types import FrameCopyMode, capture_frame_from_raw
 CAPTURE_CURSOR_DELAY_S = 0.2
 
 
+def _env_bool(name):
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    return str(value).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _env_int(name):
+    value = os.environ.get(name)
+    if value is None or str(value).strip() == "":
+        return None
+    return int(value)
+
+
+def _windows_capture_kwargs(config, capture_tool):
+    if config.capture_mode == "Window":
+        kwargs = {"window_name": config.window_title}
+    else:
+        kwargs = {"monitor_index": config.monitor_index}
+    if capture_tool == "WindowsCaptureCUDA":
+        optional = {
+            "reuse_output_buffer": _env_bool("D2S_WGC_REUSE_OUTPUT_BUFFER"),
+            "output_buffer_count": _env_int("D2S_WGC_OUTPUT_BUFFER_COUNT"),
+        }
+        kwargs.update({key: value for key, value in optional.items() if value is not None})
+    return kwargs
+
+
 def _load_windows_capture(capture_tool):
     if capture_tool == "WindowsCaptureROCm":
         from wc_rocm import WindowsCapture, Frame, InternalCaptureControl
@@ -58,6 +86,9 @@ class WindowsCaptureEventRunner:
         self._control = None
         self._fps_last_log = 0.0
         self._fps_frames = 0
+        self._fps_copy_seconds = 0.0
+        self._fps_enqueue_seconds = 0.0
+        self._fps_handler_seconds = 0.0
 
     @property
     def session(self):
@@ -85,13 +116,27 @@ class WindowsCaptureEventRunner:
         if elapsed < 1.0:
             return
         fps = self._fps_frames / elapsed
+        copy_ms = self._fps_copy_seconds * 1000.0 / max(self._fps_frames, 1)
+        enqueue_ms = self._fps_enqueue_seconds * 1000.0 / max(self._fps_frames, 1)
+        handler_ms = self._fps_handler_seconds * 1000.0 / max(self._fps_frames, 1)
         print(
             f"[WindowsCaptureCUDA] capture_fps={fps:.1f} frames={self._fps_frames} "
-            f"monitor={self.config.monitor_index} mode={self.config.capture_mode}",
+            f"monitor={self.config.monitor_index} mode={self.config.capture_mode} "
+            f"copy_ms={copy_ms:.2f} enqueue_ms={enqueue_ms:.2f} handler_ms={handler_ms:.2f}",
             flush=True,
         )
         self._fps_last_log = now
         self._fps_frames = 0
+        self._fps_copy_seconds = 0.0
+        self._fps_enqueue_seconds = 0.0
+        self._fps_handler_seconds = 0.0
+
+    def _record_capture_timing(self, *, copy_seconds: float, enqueue_seconds: float, handler_seconds: float) -> None:
+        if self.capture_tool != "WindowsCaptureCUDA":
+            return
+        self._fps_copy_seconds += copy_seconds
+        self._fps_enqueue_seconds += enqueue_seconds
+        self._fps_handler_seconds += handler_seconds
 
     def _start_keyboard_worker(self, shutdown_event):
         user32 = ctypes.windll.user32
@@ -159,16 +204,15 @@ class WindowsCaptureEventRunner:
                 time.sleep(0.1)
                 continue
 
-            if self.config.capture_mode == "Window":
-                cap = WindowsCapture(window_name=self.config.window_title)
-            else:
+            capture_kwargs = _windows_capture_kwargs(self.config, self.capture_tool)
+            if self.config.capture_mode != "Window":
                 if os.environ.get('D2S_DEBUG', '0') in ('1', 'true', 'yes', 'on'):
                     print(
                         f"[capture_loop] WindowsCapture monitor_index={self.config.monitor_index} "
-                        f"tool={self.capture_tool}",
+                        f"tool={self.capture_tool} kwargs={capture_kwargs}",
                         flush=True,
                     )
-                cap = WindowsCapture(monitor_index=self.config.monitor_index)
+            cap = WindowsCapture(**capture_kwargs)
             self._session = cap
             self._control = None
             if on_session_update is not None:
@@ -187,7 +231,9 @@ class WindowsCaptureEventRunner:
                         on_paused("paused")
                     return
                 self._log_capture_fps(capture_start_time)
+                copy_start_time = time.perf_counter()
                 raw, copy_mode, frame_raw_device = _copy_frame_buffer(frame.frame_buffer, self.capture_tool)
+                enqueue_start_time = time.perf_counter()
                 on_frame(
                     capture_frame_from_raw(
                         raw,
@@ -202,6 +248,12 @@ class WindowsCaptureEventRunner:
                             "zero_copy": False,
                         },
                     )
+                )
+                handler_end_time = time.perf_counter()
+                self._record_capture_timing(
+                    copy_seconds=enqueue_start_time - copy_start_time,
+                    enqueue_seconds=handler_end_time - enqueue_start_time,
+                    handler_seconds=handler_end_time - capture_start_time,
                 )
 
             @cap.event

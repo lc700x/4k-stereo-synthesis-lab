@@ -27,9 +27,13 @@ def edge_aware_fill(
     mask = ensure_b1hw(mask).to(device=image.device, dtype=image.dtype).clamp(0, 1)
     if mask.shape[-2:] != image.shape[-2:]:
         mask = F.interpolate(mask, size=image.shape[-2:], mode="bilinear", align_corners=False)
+    backend = edge_aware_fill_backend(image, mask, radius=radius, strength=strength, fused=fused, mask_feather_radius=mask_feather_radius)
+    if backend == "triton_radius1_feather1":
+        from .hole_fill_triton import edge_aware_fill_radius1_strength060_feather1
+
+        return edge_aware_fill_radius1_strength060_feather1(image.contiguous(), mask.contiguous())
     if mask_feather_radius > 0:
         mask = box_blur(mask, radius=int(mask_feather_radius)).clamp(0, 1)
-    backend = edge_aware_fill_backend(image, mask, radius=radius, strength=strength, fused=fused)
     if backend == "triton_radius1":
         from .hole_fill_triton import edge_aware_fill_radius1_strength060
 
@@ -145,9 +149,11 @@ def directional_edge_aware_fill(
 def directional_edge_aware_fill_backend() -> str:
     return "torch_directional_content_aware"
 
-def edge_aware_fill_backend(image: torch.Tensor, mask: torch.Tensor, *, radius: int, strength: float, fused: bool = True) -> str:
+def edge_aware_fill_backend(image: torch.Tensor, mask: torch.Tensor, *, radius: int, strength: float, fused: bool = True, mask_feather_radius: int = 0) -> str:
     if not fused or _triton_disabled_by_env():
         return "torch_avg_pool"
+    if int(mask_feather_radius) == 1 and _can_use_triton_fill_radius1_feather1(image, mask, radius=radius, strength=strength):
+        return "triton_radius1_feather1"
     if _can_use_triton_fill_radius1(image, mask, radius=radius, strength=strength):
         return "triton_radius1"
     if _can_use_triton_fill_radius3(image, mask, radius=radius, strength=strength):
@@ -156,6 +162,14 @@ def edge_aware_fill_backend(image: torch.Tensor, mask: torch.Tensor, *, radius: 
 
 
 def _can_use_triton_fill_radius1(image: torch.Tensor, mask: torch.Tensor, *, radius: int, strength: float) -> bool:
+    try:
+        from .hole_fill_triton import can_use_triton_radius1
+    except Exception:
+        return False
+    return can_use_triton_radius1(image, mask, radius=radius, strength=strength)
+
+
+def _can_use_triton_fill_radius1_feather1(image: torch.Tensor, mask: torch.Tensor, *, radius: int, strength: float) -> bool:
     try:
         from .hole_fill_triton import can_use_triton_radius1
     except Exception:

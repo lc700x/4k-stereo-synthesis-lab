@@ -25,6 +25,7 @@ from .depth_provider import (
 )
 from .depth_upsample import DepthUpsampleMode, upsample_depth
 from .output import ensure_b1hw, ensure_bchw, match_depth
+from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
 
 
 def default_distill_base_onnx_path(cache_dir: str | Path | None = None) -> Path:
@@ -269,7 +270,22 @@ class DistillAnyDepthBaseOnnxCuda:
         _, _, height, width = rgb.shape
         self._ensure_artifacts_for_input(height, width)
         tensor = self._preprocessor(rgb)
-        ort_input = tensor if self.use_dlpack else tensor.detach().cpu().numpy()
+        if self.use_dlpack:
+            ort_input = tensor
+        else:
+            warn_cpu_fallback(
+                "ONNX depth input binding",
+                "dlpack_disabled",
+                detail="using tensor.detach().cpu().numpy() for ORT input",
+                key="depth_onnx_input_dlpack_disabled",
+            )
+            warn_cpu_transfer(
+                "ONNX depth input tensor",
+                ".cpu().numpy()",
+                detail=describe_tensor(tensor),
+                key="depth_onnx_input_cpu_transfer",
+            )
+            ort_input = tensor.detach().cpu().numpy()
         sync()
         preprocess_ms = (time.perf_counter() - start) * 1000.0
 

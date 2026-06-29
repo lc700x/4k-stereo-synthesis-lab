@@ -231,16 +231,16 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._openxr_rgb_depth_shader_resolution = 'source'
         self._openxr_rgb_depth_shader_resolution_logged = False
         self._runtime_eye_gpu_logged = False
-        # The CUDA/GL *image* zero-copy path (register_image +
-        # cudaMemcpy2DToArray) only works for RGBA textures: a CUDA array has
-        # no 3-channel format, so uploading an RGB (3-byte) GL texture through
-        # it makes every row's stride mismatch and the image gets squeezed to
-        # the left with a black band on the right.  The runtime eye textures
-        # are RGB (see _ensure_runtime_eye_textures), so disable the image path
-        # and use the PBO path instead -- it is a linear buffer copy
-        # (register_buffer + memcpy_d2d + glTexSubImage2D GL_RGB) that is
-        # correct for 3-channel data and is still a GPU zero-copy upload.
-        self._runtime_eye_texture_gpu_enabled = False
+        # CUDA/GL image interop requires RGBA textures.  Use it as the primary
+        # runtime eye upload path; PBO remains a GPU fallback when image upload
+        # is explicitly disabled or fails with a logged reason.
+        self._runtime_eye_texture_gpu_enabled = str(
+            kwargs.get(
+                'openxr_runtime_eye_texture_gpu_upload',
+                os.environ.get('D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD', '1'),
+            ) or '1'
+        ).strip().lower() in ('1', 'true', 'yes', 'on')
+        self._runtime_eye_texture_components = 4 if self._runtime_eye_texture_gpu_enabled else 3
         self._runtime_eye_texture_logged = False
         self._runtime_eye_cpu_logged = False
         self._runtime_eye_diff_logged = False
@@ -4195,32 +4195,48 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 time.sleep(0.01)
                 continue
 
-            loop_perf_enabled = bool(getattr(self, '_openxr_perf_log', False))
-            loop_t0 = time.perf_counter() if loop_perf_enabled else 0.0
+            loop_perf_log_enabled = bool(getattr(self, '_openxr_perf_log', False))
+            loop_breakdown_enabled = callable(getattr(self, '_fps_breakdown_add_time', None))
+            loop_trace_enabled = loop_perf_log_enabled or loop_breakdown_enabled
+            loop_t0 = time.perf_counter() if loop_trace_enabled else 0.0
             loop_last = loop_t0
             loop_marks = []
+            self._breakdown_inc('openxr_loop')
 
             def _loop_mark(label):
                 nonlocal loop_last
-                if not loop_perf_enabled:
+                if not loop_trace_enabled:
                     return
                 t_mark = time.perf_counter()
-                loop_marks.append((label, (t_mark - loop_last) * 1000.0))
+                elapsed_s = t_mark - loop_last
+                if loop_perf_log_enabled:
+                    loop_marks.append((label, elapsed_s * 1000.0))
+                if loop_breakdown_enabled:
+                    self._breakdown_add_time(f'openxr_{label}', elapsed_s)
                 loop_last = t_mark
 
             # Keep source freshness updated even while the runtime is not yet
             # asking us to render. Otherwise a READY session that delays
             # should_render can be misclassified as a source stall.
             self._poll_source_frame(upload=False)
-            if loop_perf_enabled:
+            if loop_trace_enabled:
                 _loop_mark('poll_no_upload')
 
             # Wait for the runtime to signal frame timing.
             frame_state = xr.wait_frame(self._xr_session, self._xr_frame_wait_info)
-            if loop_perf_enabled:
+            if loop_breakdown_enabled:
+                predicted_time = getattr(frame_state, 'predicted_display_time', None)
+                previous_time = getattr(self, '_last_xr_predicted_display_time', None)
+                self._last_xr_predicted_display_time = predicted_time
+                if predicted_time is not None and previous_time is not None:
+                    predicted_delta_s = (int(predicted_time) - int(previous_time)) / 1_000_000_000.0
+                    if 0.0 < predicted_delta_s < 1.0:
+                        self._breakdown_add_time('openxr_predicted_period', predicted_delta_s)
+            if loop_trace_enabled:
                 _loop_mark('wait_frame')
+            submit_start = time.perf_counter() if loop_breakdown_enabled else 0.0
             xr.begin_frame(self._xr_session, self._xr_frame_begin_info)
-            if loop_perf_enabled:
+            if loop_trace_enabled:
                 _loop_mark('begin_frame')
 
             # sync_actions must happen before xr.locate_space for action spaces.
@@ -4230,13 +4246,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     xr.sync_actions(self._xr_session, self._xr_actions_sync_info)
                 except Exception:
                     pass
-            if loop_perf_enabled:
+            if loop_trace_enabled:
                 _loop_mark('sync_actions')
 
             # Locate controller spaces (now valid after sync_actions)
             self._update_aim_poses(frame_state.predicted_display_time)
             self._update_grip_poses(frame_state.predicted_display_time)
-            if loop_perf_enabled:
+            if loop_trace_enabled:
                 _loop_mark('controller_pose')
 
             # Skip smoothing + input polling when no controllers are tracked,
@@ -4253,7 +4269,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._smooth_controller_poses()
                 self._update_trackpad_button_emu()
                 self._poll_controller_input(dt)
-                if loop_perf_enabled:
+                if loop_trace_enabled:
                     _loop_mark('controller_input')
             else:
                 # No controllers -clear cursor/grab state so downstream code
@@ -4265,11 +4281,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._cursor_ctrl = None
                 self._cursor_smooth_uv = None
                 self._grabbed = False
-                if loop_perf_enabled:
+                if loop_trace_enabled:
                     _loop_mark('controller_missing')
 
             composition_layers = []
             session_idle_timeout = self._track_session_idle_render(frame_state.should_render, now)
+            if frame_state.should_render:
+                self._breakdown_inc('openxr_should_render')
+            else:
+                self._breakdown_inc('openxr_no_render')
 
             if self._session_ready_pending:
                 if frame_state.should_render:
@@ -4291,6 +4311,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                             layers=composition_layers,
                         ),
                     )
+                    if loop_trace_enabled:
+                        _loop_mark('end_frame')
+                    if loop_breakdown_enabled:
+                        self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
                     if session_idle_timeout:
                         if not self._hard_idle_active:
                             print(
@@ -4304,8 +4328,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     continue
 
             if not self._has_fresh_source_frame(now):
+                self._breakdown_inc('openxr_no_fresh')
                 self._pause_xr_output_for_source_stall()
                 if not self._has_renderable_source_frame():
+                    self._breakdown_inc('openxr_no_renderable')
                     xr.end_frame(
                         self._xr_session,
                         xr.FrameEndInfo(
@@ -4314,6 +4340,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                             layers=composition_layers,
                         ),
                     )
+                    if loop_trace_enabled:
+                        _loop_mark('end_frame')
+                    if loop_breakdown_enabled:
+                        self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
                     time.sleep(0.01)
                     continue
 
@@ -4326,7 +4356,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             if frame_state.should_render:
                 # Drain depth_q non-blocking -keep only the newest frame
                 self._poll_source_frame(upload=True)
-                if loop_perf_enabled:
+                if loop_trace_enabled:
                     _loop_mark('poll_upload')
 
                 # Head-tracking pose for this frame
@@ -4341,7 +4371,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     )
                 except Exception:
                     views = [None, None]
-                if loop_perf_enabled:
+                if loop_trace_enabled:
                     _loop_mark('locate_views')
 
                 if self._apply_profile_view_pose_to_xr_space(views):
@@ -4358,7 +4388,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         views = [None, None]
                     self._update_aim_poses(frame_state.predicted_display_time)
                     self._update_grip_poses(frame_state.predicted_display_time)
-                    if loop_perf_enabled:
+                    if loop_trace_enabled:
                         _loop_mark('view_pose_adjust')
 
                 # Cache head pose for the next frame's input handlers (left-stick
@@ -4647,7 +4677,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         ))
 
                 if eye_layer_views:
-                    if loop_perf_enabled:
+                    if loop_trace_enabled:
                         _loop_mark('render_eyes')
                     proj_layer = xr.CompositionLayerProjection(
                         space=self._xr_space,
@@ -4668,10 +4698,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                                 ctypes.cast(ctypes.pointer(quad_layer),
                                             ctypes.POINTER(xr.CompositionLayerBaseHeader))
                             )
-                    if loop_perf_enabled:
+                    if loop_trace_enabled:
                         _loop_mark('layers')
                 else:
-                    if loop_perf_enabled:
+                    if loop_trace_enabled:
                         _loop_mark('render_no_layers')
 
             xr.end_frame(
@@ -4682,9 +4712,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     layers=composition_layers,
                 ),
             )
-            if loop_perf_enabled:
+            if loop_trace_enabled:
                 _loop_mark('end_frame')
-            if loop_perf_enabled:
+            if loop_breakdown_enabled:
+                self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
+            if loop_perf_log_enabled:
                 loop_total_ms = (time.perf_counter() - loop_t0) * 1000.0
                 loop_log_now = time.perf_counter()
                 loop_last_log = float(getattr(self, '_xr_loop_perf_last_log', 0.0) or 0.0)

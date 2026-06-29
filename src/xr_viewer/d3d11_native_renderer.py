@@ -4,6 +4,8 @@ import sys
 
 import numpy as np
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
+
 
 DXGI_FORMAT_R32G32_FLOAT = 16
 DXGI_FORMAT_R8G8B8A8_UNORM = 28
@@ -891,15 +893,49 @@ class D3D11NativeRenderer:
                     self._release_frame_textures()
                 except Exception:
                     pass
-                print(f"[OpenXRViewer] D3D11 CUDA upload unavailable: {e}; falling back to CPU upload")
+                warn_cpu_fallback(
+                    "OpenXR D3D11 RGB+depth CUDA upload",
+                    "upload_failed",
+                    detail=str(e),
+                    key="openxr_d3d11_frame_cuda_failed",
+                )
 
+        warn_cpu_fallback(
+            "OpenXR D3D11 RGB+depth texture upload",
+            "using_cpu_update_subresource",
+            key="openxr_d3d11_frame_cpu_upload",
+        )
         if torch is not None and hasattr(rgb, "detach"):
+            warn_cpu_transfer(
+                "OpenXR D3D11 RGB texture upload",
+                ".cpu().numpy()",
+                detail=describe_tensor(rgb),
+                key="openxr_d3d11_rgb_cpu_transfer",
+            )
             rgb_np = rgb.detach().permute(1, 2, 0).contiguous().clamp(0, 255).to(torch.uint8).cpu().numpy()
         else:
+            warn_cpu_transfer(
+                "OpenXR D3D11 RGB texture upload",
+                "numpy input path",
+                detail=f"type={type(rgb).__name__}",
+                key="openxr_d3d11_rgb_numpy_input",
+            )
             rgb_np = np.asarray(rgb, dtype=np.uint8)
         if torch is not None and hasattr(depth, "detach"):
+            warn_cpu_transfer(
+                "OpenXR D3D11 depth texture upload",
+                ".cpu().numpy()",
+                detail=describe_tensor(depth),
+                key="openxr_d3d11_depth_cpu_transfer",
+            )
             depth_np = depth.detach().contiguous().float().cpu().numpy()
         else:
+            warn_cpu_transfer(
+                "OpenXR D3D11 depth texture upload",
+                "numpy input path",
+                detail=f"type={type(depth).__name__}",
+                key="openxr_d3d11_depth_numpy_input",
+            )
             depth_np = np.asarray(depth, dtype=np.float32)
 
         h, w = depth_np.shape[:2]

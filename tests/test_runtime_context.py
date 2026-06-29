@@ -1,4 +1,5 @@
 import queue
+from pathlib import Path
 from types import SimpleNamespace
 
 from app_runtime.runtime_context import (
@@ -28,6 +29,14 @@ def test_initial_stereo_preset_state_falls_back_to_runtime_mode():
     config = SimpleNamespace(stereo_preset=None, mode="cinema")
 
     assert initial_stereo_preset_state(config) == (False, "cinema")
+
+
+def test_openxr_fps_breakdown_defaults_to_enabled_for_diagnostics():
+    source = (Path(__file__).resolve().parents[1] / "src" / "app_runtime" / "runtime_context.py").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'fps_breakdown_default = "1" if run_mode == "OpenXR"' in source
 
 
 def test_runtime_contract_from_settings_maps_targets_and_transports():

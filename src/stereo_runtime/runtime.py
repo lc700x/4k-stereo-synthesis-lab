@@ -185,6 +185,8 @@ class StereoRuntimeResult:
     debug_info: dict[str, Any] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
     provider_info: dict[str, Any] = field(default_factory=dict)
+    cuda_ready_event: Any | None = None
+    cuda_timing_events: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -205,12 +207,15 @@ class OpenXRRuntimeResult:
     debug_info: dict[str, Any] = field(default_factory=dict)
     timing: dict[str, float] = field(default_factory=dict)
     provider_info: dict[str, Any] = field(default_factory=dict)
+    cuda_ready_event: Any | None = None
+    cuda_timing_events: dict[str, Any] = field(default_factory=dict)
 
 
 def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> OpenXRRuntimeResult:
     debug = dict(stereo_result.debug_info or {})
     left_eye = stereo_result.left_eye
     right_eye = stereo_result.right_eye
+    cuda_events = dict(getattr(stereo_result, "cuda_timing_events", None) or {})
     display_size = _runtime_frame_size(left_eye)
     stereo_output_format = getattr(stereo_result, "output_format", None) or debug.get("runtime_output_format")
     if stereo_output_format == "half_sbs" and _should_split_half_sbs_for_openxr(debug):
@@ -219,6 +224,23 @@ def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> Open
             left_eye, right_eye = split_eyes
             display_size = _runtime_frame_size(stereo_result.sbs)
             debug.setdefault("runtime_output_pack_backend", "split_half_sbs")
+
+    pack_start = time.perf_counter()
+    _record_cuda_event(cuda_events, "openxr_pack_start", left_eye if isinstance(left_eye, torch.Tensor) else None)
+    if _openxr_runtime_output_uint8_enabled():
+        packed_left, left_pack_backend = _pack_openxr_eye_rgba_u8_with_backend(left_eye)
+        packed_right, right_pack_backend = _pack_openxr_eye_rgba_u8_with_backend(right_eye)
+        if packed_left is not left_eye or packed_right is not right_eye:
+            left_eye = packed_left
+            right_eye = packed_right
+            pack_backend = _merge_openxr_rgba_pack_backend(left_pack_backend, right_pack_backend)
+            previous = debug.get("runtime_output_pack_backend")
+            debug["runtime_output_pack_backend"] = (
+                pack_backend if previous in (None, "none") else f"{previous}+{pack_backend}"
+            )
+    _record_cuda_event(cuda_events, "openxr_pack", left_eye if isinstance(left_eye, torch.Tensor) else None)
+    _record_cuda_event(cuda_events, "end", left_eye if isinstance(left_eye, torch.Tensor) else None)
+    pack_ms = (time.perf_counter() - pack_start) * 1000.0
 
     debug["application_runtime_target"] = "openxr"
     debug["stereo_synthesis_mode"] = "full_synthesis_eyes"
@@ -229,6 +251,7 @@ def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> Open
     debug.setdefault("runtime_output_pack_backend", "none")
     output_eye_size = _runtime_frame_size(left_eye)
     output_display_size = display_size
+    timing = {**dict(stereo_result.timing or {}), "pack_ms": float(pack_ms)}
 
     return OpenXRRuntimeResult(
         depth=stereo_result.depth,
@@ -244,9 +267,80 @@ def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> Open
         hot_reload_class=getattr(stereo_result, "hot_reload_class", None),
         hot_reload_changed_fields=tuple(getattr(stereo_result, "hot_reload_changed_fields", ()) or ()),
         debug_info=debug,
-        timing=dict(stereo_result.timing or {}),
+        timing=timing,
         provider_info=dict(stereo_result.provider_info or {}),
+        cuda_ready_event=getattr(stereo_result, "cuda_ready_event", None),
+        cuda_timing_events=cuda_events,
     )
+
+
+
+def _pack_openxr_eye_rgba_u8(eye: torch.Tensor) -> torch.Tensor:
+    return _pack_openxr_eye_rgba_u8_with_backend(eye)[0]
+
+
+def _pack_openxr_eye_rgba_u8_with_backend(eye: torch.Tensor) -> tuple[torch.Tensor, str]:
+    if not isinstance(eye, torch.Tensor):
+        return eye, "none"
+    tensor = eye.detach()
+    triton_packed = _try_pack_openxr_eye_rgba_u8_triton(tensor)
+    if triton_packed is not None:
+        return triton_packed, "triton_openxr_rgba_u8"
+    if tensor.ndim == 4:
+        if tensor.shape[0] != 1:
+            return eye, "none"
+        tensor = tensor[0]
+    if tensor.ndim == 3 and tensor.shape[0] in (3, 4):
+        tensor = tensor[:3].permute(1, 2, 0)
+    elif tensor.ndim == 3 and tensor.shape[-1] == 4 and tensor.dtype == torch.uint8:
+        return tensor.contiguous(), "torch_openxr_rgba_u8"
+    elif tensor.ndim == 3 and tensor.shape[-1] >= 3:
+        tensor = tensor[..., :3]
+    else:
+        return eye, "none"
+    if tensor.is_floating_point():
+        tensor = tensor.clamp(0.0, 1.0).mul(255.0).round()
+    rgb = tensor.contiguous().clamp(0, 255).to(torch.uint8)
+    h, w = rgb.shape[:2]
+    rgba = torch.empty((h, w, 4), dtype=torch.uint8, device=rgb.device)
+    rgba[..., :3].copy_(rgb[..., :3])
+    rgba[..., 3].fill_(255)
+    return rgba, "torch_openxr_rgba_u8"
+
+
+def _try_pack_openxr_eye_rgba_u8_triton(tensor: torch.Tensor) -> torch.Tensor | None:
+    if not (
+        tensor.is_cuda
+        and tensor.dtype == torch.float32
+        and tensor.ndim == 4
+        and tensor.shape[0] == 1
+        and tensor.shape[1] == 3
+    ):
+        return None
+    try:
+        from .output_triton import make_chw_rgb_to_hwc_rgba_u8
+
+        return make_chw_rgb_to_hwc_rgba_u8(tensor)
+    except Exception:
+        return None
+
+
+def _merge_openxr_rgba_pack_backend(left_backend: str, right_backend: str) -> str:
+    if left_backend == right_backend:
+        return left_backend
+    backends = [backend for backend in (left_backend, right_backend) if backend and backend != "none"]
+    return "+".join(backends) if backends else "none"
+
+
+def _record_cuda_event(events: dict[str, Any], name: str, frame: torch.Tensor | None) -> None:
+    if not isinstance(frame, torch.Tensor) or not frame.is_cuda:
+        return
+    try:
+        event = torch.cuda.Event(blocking=False, enable_timing=True)
+        event.record(torch.cuda.current_stream(frame.device))
+        events[name] = event
+    except Exception:
+        return
 
 
 def _should_split_half_sbs_for_openxr(debug: dict[str, Any]) -> bool:
@@ -665,20 +759,23 @@ class StereoRuntime:
         report["rolling_stats"] = self.stats.to_report()
         return report
 
-    def process_rgb_frame(self, rgb_frame: torch.Tensor) -> StereoRuntimeResult:
+    def process_rgb_frame(self, rgb_frame: torch.Tensor, *, skip_sbs_output: bool = False) -> StereoRuntimeResult:
         self.load()
         self._reset_cuda_peak_if_needed()
         rgb_frame = _validate_runtime_rgb_frame(rgb_frame)
 
+        cuda_events: dict[str, Any] = {}
+        _record_cuda_event(cuda_events, "start", rgb_frame)
         total_start = time.perf_counter()
         depth_start = time.perf_counter()
         profile = self._predict_depth_profile(rgb_frame)
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
+        _record_cuda_event(cuda_events, "depth", rgb_frame)
         stereo_config = self.stereo_config
 
         synth_start = time.perf_counter()
-        fused_sbs, fused_skip = self._try_fast_plus_fused_sbs(rgb_frame, depth, stereo_config)
+        fused_sbs, fused_skip = (None, "skip_sbs_output") if skip_sbs_output else self._try_fast_plus_fused_sbs(rgb_frame, depth, stereo_config)
         if fused_sbs is not None:
             stereo = StereoResult(
                 left_eye=rgb_frame,
@@ -694,15 +791,22 @@ class StereoRuntime:
                 },
             )
         else:
+            stereo_config_for_frame = stereo_config
+            if skip_sbs_output:
+                stereo_config_for_frame = replace(stereo_config, output_format="mono")
             stereo = synthesize_stereo(
                 rgb_frame,
                 depth,
-                stereo_config,
+                stereo_config_for_frame,
                 temporal_state=self.temporal_state,
             )
             stereo.debug_info.setdefault("fast_plus_fused_backend", "not_used")
             stereo.debug_info.setdefault("fast_plus_fused_skip", fused_skip)
+            if stereo_config_for_frame is not stereo_config:
+                stereo.debug_info["sbs_backend"] = "openxr_eyes_only"
+                stereo.debug_info["make_sbs_ms"] = 0.0
         synthesis_ms = (time.perf_counter() - synth_start) * 1000.0
+        _record_cuda_event(cuda_events, "synthesis", rgb_frame)
         total_ms = (time.perf_counter() - total_start) * 1000.0
 
         timing = {
@@ -737,7 +841,10 @@ class StereoRuntime:
 
         sbs = stereo.sbs
         pack_start = time.perf_counter()
-        if _runtime_output_uint8_enabled() and sbs.is_floating_point():
+        if skip_sbs_output:
+            debug["runtime_output_pack_backend"] = "openxr_eyes_only"
+            debug["runtime_output_dtype"] = str(sbs.dtype).replace("torch.", "")
+        elif _runtime_output_uint8_enabled() and sbs.is_floating_point():
             fused_uint8 = _try_make_runtime_uint8_sbs(stereo, self.stereo_config.output_format)
             if fused_uint8 is not None:
                 sbs = fused_uint8
@@ -754,6 +861,8 @@ class StereoRuntime:
                 debug["runtime_output_dtype"] = str(sbs.dtype).replace("torch.", "")
         output_eye_size, output_display_size = _add_runtime_output_size_debug_info(debug, stereo.left_eye, sbs)
         pack_ms = (time.perf_counter() - pack_start) * 1000.0
+        _record_cuda_event(cuda_events, "pack", rgb_frame)
+        _record_cuda_event(cuda_events, "end", rgb_frame)
         timing["pack_ms"] = float(pack_ms)
         slow_log_ms = float(os.environ.get("D2S_SLOW_RUNTIME_LOG_MS", "200") or "200")
         refresh_log_s = float(os.environ.get("D2S_RUNTIME_FRAME_LOG_REFRESH_S", "5") or "0")
@@ -814,6 +923,8 @@ class StereoRuntime:
             debug_info=debug,
             timing=timing,
             provider_info=provider_info,
+            cuda_ready_event=None,
+            cuda_timing_events=cuda_events,
         )
 
     def process_openxr_frame(
@@ -825,11 +936,14 @@ class StereoRuntime:
         self._reset_cuda_peak_if_needed()
         rgb_frame = _validate_runtime_rgb_frame(rgb_frame)
 
+        cuda_events: dict[str, Any] = {}
+        _record_cuda_event(cuda_events, "start", rgb_frame)
         total_start = time.perf_counter()
         depth_start = time.perf_counter()
         profile = self._predict_depth_profile(rgb_frame)
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
+        _record_cuda_event(cuda_events, "depth", rgb_frame)
 
         prewarp_eyes = _openxr_prewarp_eyes_enabled()
         openxr_render_ms = 0.0
@@ -841,25 +955,33 @@ class StereoRuntime:
             render_start = time.perf_counter()
             openxr = render_openxr_stereo(rgb_frame, depth, openxr_config)
             openxr_render_ms = (time.perf_counter() - render_start) * 1000.0
+            _record_cuda_event(cuda_events, "openxr_render", rgb_frame)
 
             pack_start = time.perf_counter()
             left_eye = openxr.left_eye
             right_eye = openxr.right_eye
-            if _openxr_runtime_output_uint8_enabled() and (left_eye.is_floating_point() or right_eye.is_floating_point()):
-                left_eye = left_eye.detach().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8)
-                right_eye = right_eye.detach().clamp(0.0, 1.0).mul(255.0).round().to(torch.uint8)
-                pack_backend = "torch_float_eye_to_uint8"
+            _record_cuda_event(cuda_events, "openxr_pack_start", left_eye)
+            if _openxr_runtime_output_uint8_enabled():
+                packed_left, left_pack_backend = _pack_openxr_eye_rgba_u8_with_backend(left_eye)
+                packed_right, right_pack_backend = _pack_openxr_eye_rgba_u8_with_backend(right_eye)
+                if packed_left is not left_eye or packed_right is not right_eye:
+                    left_eye = packed_left
+                    right_eye = packed_right
+                    pack_backend = _merge_openxr_rgba_pack_backend(left_pack_backend, right_pack_backend)
             pack_ms = (time.perf_counter() - pack_start) * 1000.0
+            _record_cuda_event(cuda_events, "openxr_pack", left_eye)
             output_format = "openxr_eye_views"
             render_backend = dict(openxr.debug_info)
         else:
             depth = self._prepare_openxr_rgb_depth(depth)
+            _record_cuda_event(cuda_events, "openxr_depth_prepare", rgb_frame)
             self._maybe_dump_openxr_rgb_depth(source_rgb=source_rgb, raw_depth=raw_depth, prepared_depth=depth)
             left_eye = rgb_frame
             right_eye = rgb_frame
             output_format = "openxr_rgb_depth"
             render_backend = {"backend": "openxr_viewer_shader_dibr"}
         total_ms = (time.perf_counter() - total_start) * 1000.0
+        _record_cuda_event(cuda_events, "end", left_eye if isinstance(left_eye, torch.Tensor) else rgb_frame)
 
         timing = {
             "depth_preprocess_ms": float(profile.preprocess_ms),
@@ -932,6 +1054,7 @@ class StereoRuntime:
             debug_info=debug,
             timing=timing,
             provider_info=provider_info,
+            cuda_timing_events=cuda_events,
         )
 
     def _prepare_openxr_rgb_depth(self, depth: torch.Tensor) -> torch.Tensor:

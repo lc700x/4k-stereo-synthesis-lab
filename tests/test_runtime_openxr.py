@@ -175,23 +175,28 @@ def test_openxr_result_from_stereo_result_keeps_full_size_eye_views_for_quality_
     assert isinstance(result, OpenXRRuntimeResult)
     assert result.depth is depth
     assert result.source_rgb is None
-    assert result.left_eye is source_left
-    assert result.right_eye is source_right
-    assert result.timing == {"total_ms": 5.0}
+    assert result.left_eye.dtype == torch.uint8
+    assert result.right_eye.dtype == torch.uint8
+    assert result.left_eye.shape == (2, 4, 4)
+    assert result.right_eye.shape == (2, 4, 4)
+    assert torch.all(result.left_eye[..., 3] == 255)
+    assert torch.all(result.right_eye[..., 3] == 255)
+    assert result.timing["total_ms"] == 5.0
+    assert result.timing["pack_ms"] >= 0.0
     assert result.provider_info == {"provider": "fake"}
     assert result.debug_info["backend"] == "quality_4k"
     assert result.debug_info["application_runtime_target"] == "openxr"
     assert result.debug_info["stereo_synthesis_mode"] == "full_synthesis_eyes"
     assert result.debug_info["runtime_output_format"] == "openxr_full_synthesis_eyes"
-    assert result.debug_info["runtime_output_dtype"] == "float32"
+    assert result.debug_info["runtime_output_dtype"] == "uint8"
     assert result.debug_info["runtime_output_eye_size"] == "4x2"
     assert result.debug_info["runtime_output_display_size"] == "4x2"
-    assert result.debug_info["runtime_output_pack_backend"] == "none"
+    assert result.debug_info["runtime_output_pack_backend"] == "torch_openxr_rgba_u8"
     assert result.output_format == "openxr_full_synthesis_eyes"
-    assert result.output_dtype == "float32"
+    assert result.output_dtype == "uint8"
     assert result.output_eye_size == (4, 2)
     assert result.output_display_size == (4, 2)
-    assert result.output_pack_backend == "none"
+    assert result.output_pack_backend == "torch_openxr_rgba_u8"
     assert result.active_settings_version == 7
     assert result.hot_reload_class == "hot_reload"
     assert result.hot_reload_changed_fields == ("max_disparity_px",)
@@ -219,18 +224,22 @@ def test_openxr_result_from_stereo_result_splits_fused_half_sbs_eye_views_and_pr
 
     result = openxr_result_from_stereo_result(stereo_result)
 
-    assert torch.equal(result.left_eye, sbs[:, :, :, :4])
-    assert torch.equal(result.right_eye, sbs[:, :, :, 4:8])
+    expected_left = sbs[:, :, :, :4][0].permute(1, 2, 0).contiguous()
+    expected_right = sbs[:, :, :, 4:8][0].permute(1, 2, 0).contiguous()
+    assert torch.equal(result.left_eye[..., :3], expected_left)
+    assert torch.equal(result.right_eye[..., :3], expected_right)
+    assert torch.all(result.left_eye[..., 3] == 255)
+    assert torch.all(result.right_eye[..., 3] == 255)
     assert result.debug_info["runtime_output_format"] == "openxr_full_synthesis_eyes"
     assert result.debug_info["runtime_output_dtype"] == "uint8"
     assert result.debug_info["runtime_output_eye_size"] == "4x2"
     assert result.debug_info["runtime_output_display_size"] == "8x2"
-    assert result.debug_info["runtime_output_pack_backend"] == "split_half_sbs"
+    assert result.debug_info["runtime_output_pack_backend"] == "split_half_sbs+torch_openxr_rgba_u8"
     assert result.output_format == "openxr_full_synthesis_eyes"
     assert result.output_dtype == "uint8"
     assert result.output_eye_size == (4, 2)
     assert result.output_display_size == (8, 2)
-    assert result.output_pack_backend == "split_half_sbs"
+    assert result.output_pack_backend == "split_half_sbs+torch_openxr_rgba_u8"
 
 
 def test_openxr_rgb_depth_debug_info_carries_structured_shader_uniforms():
@@ -429,8 +438,12 @@ def test_process_openxr_frame_can_pack_prewarped_eye_views_to_uint8(monkeypatch)
 
     assert result.left_eye.dtype == torch.uint8
     assert result.right_eye.dtype == torch.uint8
+    assert result.left_eye.shape == (12, 16, 4)
+    assert result.right_eye.shape == (12, 16, 4)
+    assert torch.all(result.left_eye[..., 3] == 255)
+    assert torch.all(result.right_eye[..., 3] == 255)
     assert result.debug_info["runtime_output_dtype"] == "uint8"
-    assert result.debug_info["runtime_output_pack_backend"] == "torch_float_eye_to_uint8"
+    assert result.debug_info["runtime_output_pack_backend"] == "torch_openxr_rgba_u8"
     assert "pack_ms" in result.timing
 
 

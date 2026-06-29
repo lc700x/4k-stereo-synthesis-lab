@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import numpy as np
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_transfer
+
 
 def runtime_output_to_numpy(frame):
     import torch
@@ -18,8 +20,20 @@ def runtime_output_to_numpy(frame):
             raise RuntimeError(f"Unsupported runtime output shape: {tuple(frame.shape)}")
         if frame.is_floating_point():
             frame = frame.clamp(0.0, 1.0).mul(255.0)
+        warn_cpu_transfer(
+            "runtime output conversion",
+            ".cpu().numpy()",
+            detail=describe_tensor(frame),
+            key="runtime_output_to_numpy_cpu_transfer",
+        )
         return frame.contiguous().to(torch.uint8).cpu().numpy()
 
+    warn_cpu_transfer(
+        "runtime output conversion",
+        "numpy input path",
+        detail=f"type={type(frame).__name__}",
+        key="runtime_output_to_numpy_numpy_input",
+    )
     frame_np = np.asarray(frame)
     if frame_np.ndim == 4:
         frame_np = frame_np[0]

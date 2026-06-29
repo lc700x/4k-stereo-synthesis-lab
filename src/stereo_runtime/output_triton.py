@@ -168,6 +168,37 @@ def make_half_sbs_uint8(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor
     _half_sbs_uint8_kernel[grid](left, right, out, total, width, half_width, pixels, block)
     return out
 
+
+@triton.jit
+def _chw_rgb_to_hwc_rgba_u8_kernel(src, out, pixels: tl.constexpr, width: tl.constexpr, block: tl.constexpr):
+    offsets = tl.program_id(0) * block + tl.arange(0, block)
+    active = offsets < pixels
+    y = offsets // width
+    x = offsets - y * width
+    src_offset = y * width + x
+    r = tl.load(src + src_offset, mask=active, other=0.0)
+    g = tl.load(src + pixels + src_offset, mask=active, other=0.0)
+    b = tl.load(src + pixels * 2 + src_offset, mask=active, other=0.0)
+    out_base = offsets * 4
+    tl.store(out + out_base, (tl.minimum(tl.maximum(r, 0.0), 1.0) * 255.0).to(tl.uint8), mask=active)
+    tl.store(out + out_base + 1, (tl.minimum(tl.maximum(g, 0.0), 1.0) * 255.0).to(tl.uint8), mask=active)
+    tl.store(out + out_base + 2, (tl.minimum(tl.maximum(b, 0.0), 1.0) * 255.0).to(tl.uint8), mask=active)
+    tl.store(out + out_base + 3, 255, mask=active)
+
+
+def make_chw_rgb_to_hwc_rgba_u8(tensor: torch.Tensor) -> torch.Tensor:
+    tensor = tensor.contiguous()
+    _, channels, height, width = tensor.shape
+    if channels != 3:
+        raise ValueError("expected BCHW RGB tensor with 3 channels")
+    out = torch.empty((height, width, 4), device=tensor.device, dtype=torch.uint8)
+    pixels = height * width
+    block = 256
+    grid = (triton.cdiv(pixels, block),)
+    _chw_rgb_to_hwc_rgba_u8_kernel[grid](tensor, out, pixels, width, block)
+    return out
+
+
 def make_half_sbs(left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
     left = left.contiguous()
     right = right.contiguous()

@@ -30,15 +30,20 @@ class FPSBreakdown:
             "raw_get": 0,
             "runtime": 0,
             "viewer_get": 0,
+            "viewer_drop": 0,
             "loops": 0,
             "update_ms": 0.0,
             "render_ms": 0.0,
             "swap_ms": 0.0,
             "wait_ms": 0.0,
+            "openxr_poll_ms": 0.0,
+            "openxr_upload_ms": 0.0,
             "update_count": 0,
             "render_count": 0,
             "swap_count": 0,
             "wait_count": 0,
+            "openxr_poll_count": 0,
+            "openxr_upload_count": 0,
         }
         self.last_log = time.perf_counter()
 
@@ -122,19 +127,58 @@ class FPSBreakdown:
             f"target={self.target_fps}Hz "
             f"cap={rate('capture'):.1f} raw={rate('raw_get'):.1f} "
             f"overwrite={rate('raw_overwritten'):.1f} drain_drop={rate('raw_dropped_stale'):.1f} "
-            f"runtime={rate('runtime'):.1f} viewer_get={rate('viewer_get'):.1f} "
+            f"runtime={rate('runtime'):.1f} rt_overwrite={rate('runtime_overwrite'):.1f} "
+            f"rt_backpressure_drop={rate('runtime_drop_backpressure'):.1f} "
+            f"rt_cuda_inflight_drop={rate('runtime_drop_cuda_inflight'):.1f} "
+            f"rt_pending_cuda={rate('runtime_pending_cuda'):.1f} "
+            f"rt_pending_wait={rate('runtime_pending_cuda_inflight'):.1f} "
+            f"rt_pending_age={avg_ms('rt_pending_age'):.2f}ms "
+            f"viewer_get={rate('viewer_get'):.1f} "
+            f"viewer_drop={rate('viewer_drop'):.1f} "
             f"loop={rate('loops'):.1f} "
+            f"xr_loop={rate('openxr_loop'):.1f} "
+            f"xr_should={rate('openxr_should_render'):.1f} "
+            f"xr_no_render={rate('openxr_no_render'):.1f} "
+            f"xr_no_fresh={rate('openxr_no_fresh'):.1f} "
+            f"xr_no_renderable={rate('openxr_no_renderable'):.1f} "
             f"update={avg_ms('update'):.2f}ms "
             f"render={avg_ms('render'):.2f}ms "
             f"post={avg_ms('post'):.2f}ms "
             f"swap={avg_ms('swap'):.2f}ms "
             f"wait={avg_ms('wait'):.2f}ms "
+            f"openxr_poll={avg_ms('openxr_poll'):.2f}ms "
+            f"openxr_upload={avg_ms('openxr_upload'):.2f}ms "
+            f"eye_total={avg_ms('runtime_eye_total'):.2f}ms "
+            f"eye_tensor={avg_ms('runtime_eye_tensor'):.2f}ms "
+            f"eye_sync={avg_ms('runtime_eye_sync'):.2f}ms "
+            f"eye_image={avg_ms('runtime_eye_image'):.2f}ms "
+            f"eye_mipmap={avg_ms('runtime_eye_mipmap'):.2f}ms "
+            f"eye_verify={avg_ms('runtime_eye_verify'):.2f}ms "
+            f"xr_poll0={avg_ms('openxr_poll_no_upload'):.2f}ms "
+            f"xr_wait={avg_ms('openxr_wait_frame'):.2f}ms "
+            f"xr_pred={avg_ms('openxr_predicted_period'):.2f}ms "
+            f"xr_submit={avg_ms('openxr_submit_frame'):.2f}ms "
+            f"xr_begin={avg_ms('openxr_begin_frame'):.2f}ms "
+            f"xr_sync={avg_ms('openxr_sync_actions'):.2f}ms "
+            f"xr_pose={avg_ms('openxr_controller_pose'):.2f}ms "
+            f"xr_input={avg_ms('openxr_controller_input'):.2f}ms "
+            f"xr_poll1={avg_ms('openxr_poll_upload'):.2f}ms "
+            f"xr_locate={avg_ms('openxr_locate_views'):.2f}ms "
+            f"xr_render={avg_ms('openxr_render_eyes'):.2f}ms "
+            f"xr_layers={avg_ms('openxr_layers'):.2f}ms "
+            f"xr_no_layers={avg_ms('openxr_render_no_layers'):.2f}ms "
+            f"xr_end={avg_ms('openxr_end_frame'):.2f}ms "
             f"rt_loop={avg_ms('rt_loop'):.2f}ms "
             f"rt_cap2rgb={avg_ms('rt_cap2rgb'):.2f}ms "
             f"rt_prepare={avg_ms('rt_prepare'):.2f}ms "
             f"pre={stats.get('rt_preprocess_backend', 'unknown')} "
             f"rt_call={avg_ms('rt_call'):.2f}ms "
             f"rt_put={avg_ms('rt_put'):.2f}ms "
+            f"rt_gpu_total={avg_ms('rt_gpu_total'):.2f}ms "
+            f"rt_gpu_depth={avg_ms('rt_gpu_depth'):.2f}ms "
+            f"rt_gpu_synth={avg_ms('rt_gpu_synth'):.2f}ms "
+            f"rt_gpu_pack={avg_ms('rt_gpu_pack'):.2f}ms "
+            f"rt_gpu_openxr_pack={avg_ms('rt_gpu_openxr_pack'):.2f}ms "
             f"rt_backend={stats.get('rt_backend', 'unknown')} "
             f"rt_depth={stats.get('rt_depth_total_ms', 0.0):.2f}ms "
             f"rt_model={stats.get('rt_depth_model_ms', 0.0):.2f}ms "

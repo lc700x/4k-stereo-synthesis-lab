@@ -80,6 +80,7 @@ CaptureSessionLoop
 raw_q 只保留最新 capture frame，旧帧可丢弃。
 runtime_q 只保留最新 runtime result，避免渲染端积压。
 丢帧优先于增加交互延迟。
+CUDA runtime 后段慢于 capture cadence 时，必须按 GPU 完成节奏推进 latest frame，不能无限异步排队。
 ```
 
 ## docs/28 流程到工程实现映射
@@ -861,6 +862,24 @@ OpenXR hard idle 时清 raw_q/runtime_q 并停止 active capture session。
 render_size 变化时必须释放或重建 textures/buffers/temporal state。
 ```
 
+### 实时调度与 GPU 反压
+
+```text
+实时链路以 latest-frame / low-latency 为优先目标，旧 raw frame 可被 overwrite/drop。
+CUDA runtime 不得把每帧 depth/synthesis/pack GPU work 无界异步提交后继续消费下一帧。
+D2S_RUNTIME_SYNC_AFTER_FRAME=auto 时，只要 runtime 使用 CUDA 后端，就在完整 runtime frame 后同步到 GPU 完成边界。
+该规则由 runtime 后段决定，不由 OpenXR、Local Viewer、3D Monitor、MJPEG/RTMP 等 presentation target 决定。
+```
+
+诊断解释：
+
+```text
+capture_fps 表示 capture callback 到达速率。
+runtime FPS 表示后段实际消费速率。
+raw overwrite/drop 是 producer-side latest-frame 丢帧，属于预期反压控制。
+drain_drop=0 不代表没有丢帧，只表示旧帧已在 raw_q 入口被覆盖。
+```
+
 ### Warmup
 
 当前 runtime 支持：
@@ -975,6 +994,7 @@ scripts/tools/openxr_visual_regression.py
 | Capture preprocess device contract | 已显式处理 numpy / CPU tensor / CUDA tensor / ROCm tensor 形态，并记录 origin/output device 与 transfer metadata | 跨设备 fallback 和硬件路径仍需按目标机器补充验证矩阵 |
 | OpenXR direct uniforms | 已输出规范 `shader_uniforms`，字段以 `max_disparity_px`、`depth_strength`、`depth_response`、`convergence`、`render_size`、`screen_roll` 为主；OpenGL 与 D3D11 RGB+D direct 调用层均按 `max_disparity_px / render_width` 派生每眼 shader offset，并使用同一 `depth_strength` 放大实际视差位移，不再消费 IPD / Stereo Scale / Max Shift Ratio 旧强度链 | D3D11 native direct shader 仍需追平 OpenGL direct shader 的完整 DIBR 质量语义；这是独立 follow-up |
 | Render Size / 4K scale tier | 已收敛为固定 scale 档位 Render Scale：非 4K 保持 capture_size；4K 级输入按 4K/3K/2K/1K 稳定 scale 档位解析，并保持横屏、竖屏、16:10、DCI 4K、常见 4K 超宽比例；判断排除面积不足的窄高/1440p 超宽；旧 numeric / short alias Render Scale 输入已清理为默认回退 | 继续通过测试防止重新引入 `0.75`、`75%`、`2K` 等用户侧别名；无新的运行时语义待办 |
+| Runtime scheduling / backpressure | 已确认 capture 前段可到高刷 cadence，完整 CUDA runtime 后段若无 GPU 完成边界会因异步队列积压反压 WGC / CUDA interop；规范要求 latest-frame、raw overwrite/drop 和 `D2S_RUNTIME_SYNC_AFTER_FRAME=auto` 的 CUDA runtime 同步策略 | 继续用真实高刷显示器验证 CUDA/ROCm/非 CUDA 后端矩阵；不得把该问题误归因到 OpenXR presentation target |
 | Debug / result contract | `StereoRuntimeResult` / `OpenXRRuntimeResult` 已暴露 output/timing/provider 结构化字段；每帧 debug_info 已补齐 application_runtime_target、stereo_synthesis_mode、transport、output_transport、capture/render/depth size 和 active settings metadata | debug-only 兼容键仍按兼容清理表逐步移除；host/viewer 新消费路径应继续优先读结构化字段 |
 | Network stream | MJPEG/legacy stream 已消费 packed frame，并引入 `EncoderProfile` 描述 transport 侧 resize、pixel format、quality/FPS 等 | RTMP/更低延迟编码仍是后续工程；不能重新定义立体参数语义 |
 
@@ -983,8 +1003,9 @@ scripts/tools/openxr_visual_regression.py
 1. 完成 GUI live hot-save 到 `RuntimeSettingsSnapshot` 的直接发送路径，把 settings.yaml polling 降为持久化同步路径。
 2. 做 D3D11 native OpenXR direct shader parity，使其核心 DIBR 质量语义追平 OpenGL direct shader。
 3. 做 CUDA/ROCm capture zero-copy 硬件验证，只有实测无 CPU 中转后才允许把 metadata 标为 `zero_copy=True`。
-4. 清理兼容冗余：旧 snapshot/API 字段、debug-only 兼容字段；legacy parallax 乘数字段和 render-scale 数值/短写别名已清理，后续只需防回归。
-5. 继续完善 network_stream 的 encoder transport contract，尤其是 RTMP/低延迟编码路径，但保持其只消费 packed synthesis 输出。
+4. 做 runtime scheduling/backpressure 回归验证：CUDA 默认同步、latest-frame overwrite/drop、非 CUDA 后端无误触发。
+5. 清理兼容冗余：旧 snapshot/API 字段、debug-only 兼容字段；legacy parallax 乘数字段和 render-scale 数值/短写别名已清理，后续只需防回归。
+6. 继续完善 network_stream 的 encoder transport contract，尤其是 RTMP/低延迟编码路径，但保持其只消费 packed synthesis 输出。
 
 ## 结论
 

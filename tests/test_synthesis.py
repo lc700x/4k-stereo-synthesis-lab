@@ -394,6 +394,29 @@ def test_tab_mono_and_depth_map_shapes():
     assert torch.equal(depth_map.sbs[:, 0:1], depth)
 
 
+def test_non_debug_mono_skips_unused_output_depth_postprocess(monkeypatch: pytest.MonkeyPatch):
+    import stereo_runtime.synthesis as synthesis_module
+
+    calls = 0
+    original = synthesis_module.postprocess_depth
+
+    def wrapped_postprocess_depth(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(synthesis_module, "postprocess_depth", wrapped_postprocess_depth)
+    rgb, depth = make_inputs()
+
+    synthesize_stereo(
+        rgb,
+        depth,
+        StereoConfig(backend="quality_4k", output_format="mono", debug_output=False, temporal=False),
+    )
+
+    assert calls == 1
+
+
 def test_composite_display_output_semantics():
     left = torch.zeros(1, 3, 4, 6)
     right = torch.ones(1, 3, 4, 6)
@@ -657,6 +680,26 @@ def test_temporal_state_runs_twice():
     assert first.sbs.shape == second.sbs.shape
 
 
+def test_triton_temporal_masked_matches_torch_when_available():
+    if not torch.cuda.is_available():
+        return
+    from stereo_runtime.temporal_triton import apply_temporal_masked
+
+    torch.manual_seed(41)
+    left = torch.rand(1, 3, 24, 40, device="cuda")
+    right = torch.rand(1, 3, 24, 40, device="cuda")
+    prev_left = torch.rand_like(left)
+    prev_right = torch.rand_like(right)
+    mask = torch.rand(1, 1, 24, 40, device="cuda") * 0.25
+
+    actual_left, actual_right = apply_temporal_masked(left, right, prev_left, prev_right, mask, alpha=1.0)
+    expected_left = left * (1.0 - mask) + prev_left * mask
+    expected_right = right * (1.0 - mask) + prev_right * mask
+
+    assert torch.allclose(actual_left, expected_left, atol=1e-6, rtol=1e-6)
+    assert torch.allclose(actual_right, expected_right, atol=1e-6, rtol=1e-6)
+
+
 def test_auto_temporal_reset_is_disabled_on_cpu_but_temporal_blending_stays_enabled():
     depth = torch.zeros(1, 1, 8, 8)
     state = TemporalState()
@@ -755,6 +798,69 @@ def test_fused_occlusion_cuda_matches_torch_path_when_available():
     expected = make_occlusion_mask(depth, base_shift, fused=False)
     actual = make_occlusion_mask(depth, base_shift, fused=True)
     assert torch.equal(actual, expected)
+
+
+def test_triton_occlusion_radius2_accepts_float_rounding_when_available():
+    if not torch.cuda.is_available():
+        return
+    from stereo_runtime.occlusion import occlusion_backend
+
+    depth = torch.rand(1, 1, 24, 40, device="cuda", dtype=torch.float32)
+    shift_px = torch.rand_like(depth)
+
+    backend = occlusion_backend(
+        depth,
+        shift_px,
+        edge_threshold=0.04000000000000001,
+        dilation=2,
+        fused=True,
+    )
+
+    assert backend == "triton_occlusion_radius2"
+
+
+def test_triton_occlusion_radius1_accepts_realtime_threshold_when_available():
+    if not torch.cuda.is_available():
+        return
+    from stereo_runtime.occlusion import occlusion_backend
+
+    depth = torch.rand(1, 1, 24, 40, device="cuda", dtype=torch.float32)
+    shift_px = torch.rand_like(depth)
+
+    backend = occlusion_backend(
+        depth,
+        shift_px,
+        edge_threshold=0.04,
+        dilation=1,
+        fused=True,
+    )
+
+    assert backend == "triton_occlusion_radius1"
+
+
+def test_lightweight_balanced_fill_uses_triton_radius1_when_available():
+    if not torch.cuda.is_available():
+        return
+    rgb, depth = make_inputs(width=40, height=24)
+    result = synthesize_stereo(
+        rgb.cuda(),
+        depth.cuda(),
+        StereoConfig(
+            backend="quality_4k",
+            output_format="mono",
+            debug_output=True,
+            temporal=False,
+            edge_dilation=1,
+            edge_threshold=0.04,
+            mask_feather_radius=0,
+            hole_fill_mode="balanced",
+            hole_fill_radius=1,
+            hole_fill_strength=0.6,
+        ),
+    )
+
+    assert result.debug_info["occlusion_mask_backend"] == "triton_occlusion_radius1"
+    assert result.debug_info["hole_fill_backend"] == "triton_radius1"
 
 
 def test_fused_half_sbs_cuda_matches_torch_path_when_available():

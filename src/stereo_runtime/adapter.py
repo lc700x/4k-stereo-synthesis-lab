@@ -198,7 +198,7 @@ def runtime_config_from_d2s_settings(
     hole_fill_mode, hole_fill_radius, hole_fill_strength = _normalize_hole_fill_mode(
         settings.get("Hole Fill Mode", settings.get("Hole Fill", "balanced"))
     )
-    if not has_hole_fill_mode:
+    if not has_hole_fill_mode or hole_fill_mode == "balanced":
         hole_fill_radius = int(settings.get("Hole Fill Radius", hole_fill_radius))
         hole_fill_strength = float(settings.get("Hole Fill Strength", hole_fill_strength))
     export_height, export_width = _depth_export_size_from_settings(settings)
@@ -333,7 +333,7 @@ def _normalize_stereo_quality(value: Any) -> StereoQuality:
 def _normalize_hole_fill_mode(value: Any) -> tuple[str, int, float]:
     key = _normalize_hole_fill_mode_key(value)
     mapping = {
-        "balanced": ("balanced", 3, 1.0),
+        "balanced": ("balanced", 1, 0.6),
         "soft": ("soft_low_ghost", 1, 0.6),
         "low_ghost": ("soft_low_ghost", 1, 0.6),
         "soft_low_ghost": ("soft_low_ghost", 1, 0.6),
@@ -346,7 +346,7 @@ def _normalize_hole_fill_mode(value: Any) -> tuple[str, int, float]:
         "directional": ("quality", 3, 1.0),
         "directional_content_aware": ("quality", 3, 1.0),
     }
-    return mapping.get(key, ("balanced", 3, 1.0))
+    return mapping.get(key, ("balanced", 1, 0.6))
 
 
 def _normalize_hole_fill_mode_key(value: Any) -> str:

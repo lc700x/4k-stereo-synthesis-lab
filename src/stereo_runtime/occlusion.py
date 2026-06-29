@@ -47,7 +47,7 @@ def make_occlusion_mask(
     if backend == "triton_occlusion_radius1":
         from .occlusion_triton import make_occlusion_mask_radius1
 
-        return suppress_screen_edge_mask(make_occlusion_mask_radius1(depth, shift_px), border_px=screen_edge_suppression)
+        return suppress_screen_edge_mask(make_occlusion_mask_radius1(depth, shift_px, edge_threshold=edge_threshold), border_px=screen_edge_suppression)
     if backend == "triton_occlusion_radius2":
         from .occlusion_triton import make_occlusion_mask_radius2
 

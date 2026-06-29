@@ -207,6 +207,55 @@ def test_runtime_eye_stats_log_prefers_structured_output_fields(monkeypatch, cap
     assert "legacy_pack" not in output
 
 
+def test_cpu_fallback_paths_emit_red_console_warnings(monkeypatch):
+    monkeypatch.chdir(SRC)
+    runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    frame_upload = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
+    d3d11 = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    viewer = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
+    metal = (SRC / "viewer" / "metal_viewer.py").read_text(encoding="utf-8")
+    output_convert = (SRC / "stereo_runtime" / "output_convert.py").read_text(encoding="utf-8")
+    depth_onnx = (SRC / "stereo_runtime" / "depth_onnx_provider.py").read_text(encoding="utf-8")
+    tensorrt_ort = (SRC / "stereo_runtime" / "providers" / "nvidia" / "tensorrt_ort.py").read_text(encoding="utf-8")
+    legacy_sbs = (SRC / "streaming" / "legacy_sbs.py").read_text(encoding="utf-8")
+    warnings = (SRC / "utils" / "cpu_warnings.py").read_text(encoding="utf-8")
+
+    assert "\\033[91m" in warnings
+    assert "warn_cpu_fallback" in runtime_eye
+    assert "warn_cpu_transfer" in runtime_eye
+    assert "runtime_eye_not_cuda" in runtime_eye
+    assert "continuing with GPU PBO fallback" in runtime_eye
+    assert "texture_image_status" in runtime_eye
+    assert "texture_image={texture_image_status}" in runtime_eye
+    assert "requires register_image support" in runtime_eye
+    assert "runtime_eye_tensor" in runtime_eye
+    assert "runtime_eye_sync" in runtime_eye
+    assert "runtime_eye_image" in runtime_eye
+    assert "runtime_eye_mipmap" in runtime_eye
+    assert "runtime_eye_total" in runtime_eye
+    assert "if not self._update_runtime_frame_pbo_gpu" in runtime_eye
+    assert "_runtime_eye_tensor_rgba_u8" in runtime_eye
+    assert "w * 4, w * 4" in runtime_eye
+    assert "D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD" in implementation
+    assert "os.environ.get('D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD', '1')" in implementation
+    assert "_runtime_eye_texture_components = 4" in implementation
+    assert "warn_cpu_fallback" in frame_upload
+    assert "OpenXR RGB+depth texture upload" in frame_upload
+    assert "OpenXR depth texture upload" in frame_upload
+    assert "OpenXR D3D11 RGB+depth texture upload" in d3d11
+    assert "using_cpu_update_subresource" in d3d11
+    assert "StereoWindow runtime texture upload" in viewer
+    assert "StereoWindow RGB+depth texture upload" in viewer
+    assert "metal_rgb_cpu_transfer" in metal
+    assert "metal_depth_cpu_transfer" in metal
+    assert "runtime_output_to_numpy_cpu_transfer" in output_convert
+    assert "depth_onnx_input_cpu_transfer" in depth_onnx
+    assert "tensorrt_ort_input_cpu_transfer" in tensorrt_ort
+    assert "tensorrt_ort_output_numpy_transfer" in tensorrt_ort
+    assert "legacy_sbs_output_cpu_transfer" in legacy_sbs
+
+
 def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     monkeypatch.chdir(SRC)
     source = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")

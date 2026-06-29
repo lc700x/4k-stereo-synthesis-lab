@@ -49,8 +49,8 @@ class StereoConfig:
     edge_threshold: float = 0.04
     mask_feather_radius: int = 3
     hole_fill_mode: HoleFillMode = "balanced"
-    hole_fill_radius: int = 3
-    hole_fill_strength: float = 1.0
+    hole_fill_radius: int = 1
+    hole_fill_strength: float = 0.6
     screen_edge_mask_suppression: int = 0
     cross_eyed: bool = False
     anaglyph_method: AnaglyphMethod = "red_cyan"
@@ -167,6 +167,7 @@ def _layered_synthesis(rgb: torch.Tensor, depth: torch.Tensor, config: StereoCon
                 radius=radius,
                 strength=strength,
                 fused=config.fused,
+                mask_feather_radius=config.mask_feather_radius,
             )
             eyes = edge_aware_fill(
                 eyes,
@@ -336,11 +337,14 @@ def synthesize_stereo(
     stage_times["temporal_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
     stage_start = time.perf_counter()
-    output_depth = postprocess_depth(
-        match_depth(depth, left.shape[-2], left.shape[-1]),
-        foreground_scale=config.foreground_scale,
-        antialias_strength=config.depth_antialias_strength,
-    )
+    needs_output_depth = config.output_format == "depth_map" or bool(config.debug_output)
+    output_depth = None
+    if needs_output_depth:
+        output_depth = postprocess_depth(
+            match_depth(depth, left.shape[-2], left.shape[-1]),
+            foreground_scale=config.foreground_scale,
+            antialias_strength=config.depth_antialias_strength,
+        )
     stage_times["output_depth_ms"] = (time.perf_counter() - stage_start) * 1000.0
 
     stage_start = time.perf_counter()
@@ -376,7 +380,7 @@ def synthesize_stereo(
         right,
         config.output_format,
         fused=config.fused,
-        depth=output_depth,
+        depth=output_depth if config.output_format == "depth_map" else None,
         anaglyph_method=config.anaglyph_method,
     )
     stage_times["sbs_backend_ms"] = (time.perf_counter() - stage_start) * 1000.0
@@ -387,7 +391,7 @@ def synthesize_stereo(
         right,
         config.output_format,
         fused=config.fused,
-        depth=output_depth,
+        depth=output_depth if config.output_format == "depth_map" else None,
         anaglyph_method=config.anaglyph_method,
     )
     stage_times["make_sbs_ms"] = (time.perf_counter() - stage_start) * 1000.0

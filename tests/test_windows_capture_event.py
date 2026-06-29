@@ -173,10 +173,15 @@ def test_windows_capture_cuda_logs_source_fps(capsys):
     )
 
     runner._log_capture_fps(10.0)
+    runner._record_capture_timing(copy_seconds=0.002, enqueue_seconds=0.001, handler_seconds=0.004)
     runner._log_capture_fps(10.5)
+    runner._record_capture_timing(copy_seconds=0.004, enqueue_seconds=0.003, handler_seconds=0.006)
     runner._log_capture_fps(11.0)
 
-    assert "[WindowsCaptureCUDA] capture_fps=2.0 frames=2 monitor=1 mode=Monitor" in capsys.readouterr().out
+    assert (
+        "[WindowsCaptureCUDA] capture_fps=2.0 frames=2 monitor=1 mode=Monitor "
+        "copy_ms=3.00 enqueue_ms=2.00 handler_ms=5.00"
+    ) in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("capture_tool", ["WindowsCapture", "WindowsCaptureROCm"])
@@ -216,3 +221,18 @@ def test_windows_capture_runner_uses_window_name_for_window_capture(monkeypatch)
     )
 
     assert module.WindowsCapture.last_instance.kwargs == {"window_name": "Stereo Viewer"}
+
+
+def test_windows_capture_cuda_accepts_env_capture_options(monkeypatch):
+    config = CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+
+    assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {"monitor_index": 1}
+
+    monkeypatch.setenv("D2S_WGC_REUSE_OUTPUT_BUFFER", "1")
+    monkeypatch.setenv("D2S_WGC_OUTPUT_BUFFER_COUNT", "6")
+
+    assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {
+        "monitor_index": 1,
+        "reuse_output_buffer": True,
+        "output_buffer_count": 6,
+    }

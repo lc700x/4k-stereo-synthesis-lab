@@ -212,32 +212,62 @@ class CoreSourceStateMixin:
         except Exception:
             pass
 
+    def _breakdown_inc(self, name, amount=1):
+        callback = getattr(self, "_fps_breakdown_inc", None)
+        if not callable(callback):
+            return
+        try:
+            callback(name, amount)
+        except Exception:
+            pass
+
+    def _breakdown_add_time(self, name, seconds):
+        callback = getattr(self, "_fps_breakdown_add_time", None)
+        if not callable(callback):
+            return
+        try:
+            callback(name, seconds)
+        except Exception:
+            pass
+
     def _poll_source_frame(self, upload=False):
+        poll_start = time.perf_counter()
         latest = None
+        dequeued = 0
         try:
             while True:
                 latest = self.depth_q.get_nowait()
+                dequeued += 1
         except _queue.Empty:
             pass
+
+        if dequeued:
+            self._breakdown_inc("viewer_get", dequeued)
+            if dequeued > 1:
+                self._breakdown_inc("viewer_drop", dequeued - 1)
 
         if latest is not None:
             self._pending_source_frame = latest
             self._mark_source_frame_received()
 
         if not upload:
+            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return latest is not None
 
         if self._pending_source_frame is None:
+            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
 
         source_frame, frame_ts = self._normalize_source_frame(self._pending_source_frame)
         self._pending_source_frame = None
 
+        upload_start = time.perf_counter()
         if self._is_runtime_result(source_frame):
             self._update_runtime_frame(source_frame)
         else:
             rgb, depth = source_frame
             self._update_frame(rgb, depth)
+        self._breakdown_add_time("openxr_upload", time.perf_counter() - upload_start)
         if frame_ts is not None:
             self.total_latency = (time.perf_counter() - frame_ts) * 1000.0
         sbs_now = time.perf_counter()
@@ -247,6 +277,7 @@ class CoreSourceStateMixin:
             sbs_span = sbs_now - self._sbs_ts_ring[0]
             if sbs_span > 0:
                 self.sbs_fps = (m - 1) / sbs_span
+        self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
         return True
 
     def _normalize_source_frame(self, item):

@@ -8,6 +8,7 @@ from PIL import Image, ImageDraw, ImageFont
 from OpenGL.GL import *
 # Get OS name and settings
 from utils import OS_NAME, DEVICE_INFO
+from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
 from viewer.assets import crop_icon, get_font_type
 # 3D monitor mode to hide viewer
 if OS_NAME == "Windows":
@@ -1596,7 +1597,12 @@ class StereoWindow:
                   f"({BACKEND}: {self.cuda_device_id}, {gpu_kind} GPU)")
         except Exception as e:
             print(f"[Main] {BACKEND}-GL interop initialization failed: {e}")
-            print(f"[Main] Falling back to CPU-GL interop.")
+            warn_cpu_fallback(
+                "StereoWindow CUDA/HIP-GL interop initialization",
+                "init_failed",
+                detail=str(e),
+                key="stereo_window_cuda_gl_init_failed",
+            )
             self.use_cuda = False
             self.cleanup_cuda()   # clean up any partial allocations
 
@@ -2422,7 +2428,12 @@ class StereoWindow:
                     self.cleanup_cuda()
                     self._init_cuda_pbos(w, h)
                 except Exception as e:
-                    print(f"[update_frame] Error initializing CUDA PBOs: {e}")
+                    warn_cpu_fallback(
+                        "StereoWindow RGB+depth CUDA PBO initialization",
+                        "init_failed",
+                        detail=str(e),
+                        key="stereo_window_update_frame_pbo_init_failed",
+                    )
                     self.use_cuda = False
 
         cuda_success = False
@@ -2450,18 +2461,47 @@ class StereoWindow:
                 self._upload_depth_cuda(depth_gpu)
                 cuda_success = True
             except Exception as e:
-                print(f"[update_frame] CUDA-GL upload disabled: {e}")
+                warn_cpu_fallback(
+                    "StereoWindow RGB+depth CUDA-GL upload",
+                    "upload_failed",
+                    detail=str(e),
+                    key="stereo_window_update_frame_cuda_upload_failed",
+                )
                 self.use_cuda = False
                 self.cleanup_cuda()
 
         if not cuda_success:
+            warn_cpu_fallback(
+                "StereoWindow RGB+depth texture upload",
+                "cuda_upload_not_active",
+                detail=f"use_cuda={self.use_cuda} stream_mode={self.stream_mode}",
+                key="stereo_window_update_frame_cpu_upload",
+            )
             if hasattr(depth, 'detach'):
+                warn_cpu_transfer(
+                    "StereoWindow depth texture upload",
+                    ".cpu().numpy()",
+                    detail=describe_tensor(depth),
+                    key="stereo_window_update_frame_depth_cpu_transfer",
+                )
                 depth_np = depth.detach().cpu().contiguous().float().numpy()
             else:
+                warn_cpu_transfer(
+                    "StereoWindow depth texture upload",
+                    "numpy input path",
+                    detail=f"type={type(depth).__name__}",
+                    key="stereo_window_update_frame_depth_numpy_input",
+                )
                 depth_np = np.asarray(depth, dtype=np.float32)
 
             if hasattr(rgb, 'detach'):
                 try:
+                    warn_cpu_transfer(
+                        "StereoWindow RGB texture upload",
+                        ".cpu().numpy()",
+                        detail=describe_tensor(rgb),
+                        key="stereo_window_update_frame_rgb_cpu_transfer",
+                    )
                     rgb_np = rgb.permute(1, 2, 0).detach().contiguous().clamp(0, 255).to(torch.uint8).cpu().numpy()
                 except RuntimeError as e:
                     print(f"[update_frame] RuntimeError converting RGB tensor to numpy: {e}")
@@ -2470,6 +2510,12 @@ class StereoWindow:
                     print(f"[update_frame] Error converting RGB tensor to numpy: {e}")
                     return
             else:
+                warn_cpu_transfer(
+                    "StereoWindow RGB texture upload",
+                    "numpy input path",
+                    detail=f"type={type(rgb).__name__}",
+                    key="stereo_window_update_frame_rgb_numpy_input",
+                )
                 rgb_np = np.asarray(rgb)
 
             if self.stream_mode is not None and self.display_mode != "Depth Map":
@@ -2578,6 +2624,12 @@ class StereoWindow:
             self._update_overlay_texture()
         elif self.display_mode != "Depth Map":
             if rgb_np is None:
+                warn_cpu_transfer(
+                    "StereoWindow stream overlay runtime frame",
+                    ".cpu().numpy()",
+                    detail=describe_tensor(frame_gpu),
+                    key="stereo_window_runtime_overlay_cpu_transfer",
+                )
                 rgb_np = frame_gpu.cpu().numpy()
             rgb_np = self._add_overlay(rgb_np)
 
@@ -2599,7 +2651,12 @@ class StereoWindow:
                     self.cleanup_cuda()
                     self._init_cuda_pbos(w, h)
                 except Exception as e:
-                    print(f"[update_runtime_frame] Error initializing CUDA PBOs: {e}")
+                    warn_cpu_fallback(
+                        "StereoWindow runtime CUDA PBO initialization",
+                        "init_failed",
+                        detail=str(e),
+                        key="stereo_window_runtime_pbo_init_failed",
+                    )
                     self.use_cuda = False
             self.depth_tex.write(np.zeros((h, w), dtype=np.float32).tobytes())
 
@@ -2636,12 +2693,29 @@ class StereoWindow:
                         self._cuda_image_upload_logged = True
                 cuda_success = True
             except Exception as e:
-                print(f"[update_runtime_frame] CUDA-GL upload disabled: {e}")
+                warn_cpu_fallback(
+                    "StereoWindow runtime CUDA-GL upload",
+                    "upload_failed",
+                    detail=str(e),
+                    key="stereo_window_runtime_cuda_upload_failed",
+                )
                 self.use_cuda = False
                 self.cleanup_cuda()
 
         if not cuda_success:
+            warn_cpu_fallback(
+                "StereoWindow runtime texture upload",
+                "cuda_upload_not_active",
+                detail=f"use_cuda={self.use_cuda} stream_mode={self.stream_mode}",
+                key="stereo_window_runtime_cpu_upload",
+            )
             if rgb_np is None:
+                warn_cpu_transfer(
+                    "StereoWindow runtime texture upload",
+                    ".cpu().numpy()",
+                    detail=describe_tensor(frame_gpu),
+                    key="stereo_window_runtime_cpu_transfer",
+                )
                 rgb_np = frame_gpu.cpu().numpy()
             if self._color_tex_components == 4 and rgb_np.shape[-1] == 3:
                 alpha = np.full((h, w, 1), 255, dtype=np.uint8)

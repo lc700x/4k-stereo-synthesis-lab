@@ -55,7 +55,7 @@ def can_use_triton_occlusion_radius2(
     dilation: int,
 ) -> bool:
     return (
-        edge_threshold == 0.04
+        abs(float(edge_threshold) - 0.04) < 1e-6
         and dilation == 2
         and depth.is_cuda
         and shift_px.is_cuda
@@ -90,6 +90,7 @@ def _occlusion_radius1_kernel(
     total: tl.constexpr,
     width: tl.constexpr,
     height: tl.constexpr,
+    edge_threshold: tl.constexpr,
     block: tl.constexpr,
 ):
     offsets = tl.program_id(0) * block + tl.arange(0, block)
@@ -116,7 +117,7 @@ def _occlusion_radius1_kernel(
             shift_right = tl.load(shift_abs + center + 1, mask=valid_right, other=shift_value * amax_shift) / amax_shift
             shift_down = tl.load(shift_abs + center + width, mask=valid_down, other=shift_value * amax_shift) / amax_shift
 
-            edge = (tl.abs(depth_right - depth_value) + tl.abs(depth_down - depth_value)) > 0.03
+            edge = (tl.abs(depth_right - depth_value) + tl.abs(depth_down - depth_value)) > edge_threshold
             shift_edge = (tl.abs(shift_right - shift_value) + tl.abs(shift_down - shift_value)) > 0.05
             found = found | (valid & (edge | shift_edge))
 
@@ -131,7 +132,7 @@ def can_use_triton_occlusion_radius1(
     dilation: int,
 ) -> bool:
     return (
-        abs(float(edge_threshold) - 0.03) < 1e-6
+        (abs(float(edge_threshold) - 0.03) < 1e-6 or abs(float(edge_threshold) - 0.04) < 1e-6)
         and dilation == 1
         and depth.is_cuda
         and shift_px.is_cuda
@@ -145,7 +146,7 @@ def can_use_triton_occlusion_radius1(
     )
 
 
-def make_occlusion_mask_radius1(depth: torch.Tensor, shift_px: torch.Tensor) -> torch.Tensor:
+def make_occlusion_mask_radius1(depth: torch.Tensor, shift_px: torch.Tensor, *, edge_threshold: float = 0.03) -> torch.Tensor:
     depth = depth.contiguous()
     shift_abs = shift_px.abs().contiguous()
     out = torch.empty_like(depth)
@@ -154,5 +155,5 @@ def make_occlusion_mask_radius1(depth: torch.Tensor, shift_px: torch.Tensor) -> 
     amax_shift = shift_abs.amax().clamp_min(1e-6).reshape(1)
     block = 256
     grid = (triton.cdiv(total, block),)
-    _occlusion_radius1_kernel[grid](depth, shift_abs, out, amax_shift, total, width, height, block)
+    _occlusion_radius1_kernel[grid](depth, shift_abs, out, amax_shift, total, width, height, float(edge_threshold), block)
     return out

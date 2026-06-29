@@ -4,6 +4,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 
+def _noop(*args, **kwargs):
+    return None
+
+
 @dataclass
 class OpenXRRuntimeConfig:
     depth_strength: float
@@ -25,6 +29,8 @@ class OpenXRRuntimeCallbacks:
     source_active_set: Callable
     wait_idle_clear: Callable
     bootstrap_done_set: Callable
+    breakdown_inc: Callable = _noop
+    breakdown_add_time: Callable = _noop
 
 
 def use_environment_viewer(environment_model):
@@ -81,6 +87,7 @@ def load_openxr_viewer(environment_model):
 def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRuntimeCallbacks):
     OpenXRViewer = load_openxr_viewer(config.environment_model)
     runtime_result, capture_start_time = runtime_q.get()
+    callbacks.breakdown_inc("viewer_get")
     width, height = frame_size_from_runtime_result(runtime_result)
     try:
         viewer = OpenXRViewer(
@@ -101,6 +108,8 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
             idle_active_event=None,
             runtime_config_callback=callbacks.update_runtime_config,
         )
+        viewer._fps_breakdown_inc = callbacks.breakdown_inc
+        viewer._fps_breakdown_add_time = callbacks.breakdown_add_time
         callbacks.source_active_set()
         callbacks.render_active_clear()
         callbacks.wait_idle_clear()

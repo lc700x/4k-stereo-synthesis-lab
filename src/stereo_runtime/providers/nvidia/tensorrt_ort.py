@@ -28,6 +28,7 @@ from ...depth_provider import (
 from ...depth_upsample import DepthUpsampleMode, upsample_depth
 from ...output import ensure_b1hw, ensure_bchw, match_depth
 from .onnx_cuda import OnnxCudaDepthProvider
+from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
 
 
 def default_distill_base_trt_cache_dir(cache_dir: str | Path | None = None) -> Path:
@@ -238,6 +239,18 @@ class DistillAnyDepthBaseTensorRtOrt:
         _, _, height, width = rgb.shape
         self._ensure_artifacts_for_input(height, width)
         tensor = self._preprocessor(rgb)
+        warn_cpu_fallback(
+            "TensorRT ORT depth input binding",
+            "numpy_input_required",
+            detail="using tensor.detach().cpu().numpy() before OrtValue.ortvalue_from_numpy",
+            key="tensorrt_ort_input_numpy_required",
+        )
+        warn_cpu_transfer(
+            "TensorRT ORT depth input tensor",
+            ".cpu().numpy()",
+            detail=describe_tensor(tensor),
+            key="tensorrt_ort_input_cpu_transfer",
+        )
         ort_input = tensor.detach().cpu().numpy()
         sync()
         preprocess_ms = (time.perf_counter() - start) * 1000.0
@@ -254,8 +267,21 @@ class DistillAnyDepthBaseTensorRtOrt:
         io_binding.bind_ortvalue_input("pixel_values", input_ort)
         io_binding.bind_output("predicted_depth", "cuda")
         session.run_with_iobinding(io_binding)
-        output_np = io_binding.get_outputs()[0].numpy()
+        output_ort = io_binding.get_outputs()[0]
+        warn_cpu_transfer(
+            "TensorRT ORT depth output",
+            "OrtValue.numpy()",
+            detail="output becomes CPU numpy before torch.from_numpy",
+            key="tensorrt_ort_output_numpy_transfer",
+        )
+        output_np = output_ort.numpy()
         if not isinstance(output_np, np.ndarray):
+            warn_cpu_transfer(
+                "TensorRT ORT depth output",
+                "np.asarray()",
+                detail=f"type={type(output_np).__name__}",
+                key="tensorrt_ort_output_asarray_transfer",
+            )
             output_np = np.asarray(output_np)
         sync()
         model_ms = (time.perf_counter() - start) * 1000.0

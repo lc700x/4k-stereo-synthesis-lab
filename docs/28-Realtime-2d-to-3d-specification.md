@@ -66,6 +66,7 @@ Stereo Warp → Mask and Hole Fill → Temporal Stabilization → Output Pack / 
 5. **Render Scale约束**：`Render Scale` 只表示 4K级输入的固定 scale 档位选择；它不是任意连续滑杆，也不得改变输入宽高比。
 6. **坐标系规则**：所有图像坐标系采用**左上角为原点**（0,0），x轴向右，y轴向下。
 7. **输出分层约束**：运行目标、质量模式、合成方式、render size、transport、packing format 必须分层表达，不能互相替代。
+8. **实时调度约束**：实时 runtime 必须以 latest-frame / low-latency 为优先目标；当 GPU runtime 工作慢于捕获节奏时，必须丢弃旧帧或覆盖旧 raw frame，不得让后段 CUDA 工作无限异步排队并反压捕获链路。
 
 ### 3.3 工程分层定义
 
@@ -806,6 +807,14 @@ right_shift_px = -disparity_px / 2
 - normalized-depth 路径不得把 `IPD`、`stereo_scale`、`depth_strength`、`max_shift_ratio` 作为旧核心强度链。
 - `depth_strength` 保留为独立用户 gain，用于连续调节实际视差位移；它不得重新引入 IPD / Stereo Scale / Max Shift Ratio。
 - 应用层可根据具体显示设备特性选择不同 `parallax_budget_preset`，但管线内部不做硬件参数解析。
+
+### 5.6 实时调度与反压约束（新增）
+
+- 实时捕获到 runtime 的链路必须采用 latest-frame 语义：下游处理落后时保留最新帧、丢弃旧帧，不允许按捕获帧序无界排队。
+- CUDA runtime 路径不得把每帧 GPU work 无限制异步提交到默认流或后台流后继续消费下一帧；否则即使 capture handler 本身很快，也会因为 GPU 队列积压反压 WGC / CUDA interop，使高刷捕获退化到 50-60 FPS。
+- 默认策略为 `D2S_RUNTIME_SYNC_AFTER_FRAME=auto`：当 runtime 使用 CUDA 后端时，每个完整 runtime frame 结束后必须同步到 GPU 完成边界，再释放本帧并进入下一帧。`D2S_RUNTIME_SYNC_AFTER_FRAME=1` 可强制启用；`D2S_RUNTIME_SYNC_AFTER_FRAME=0` 仅用于诊断或明确接受更高延迟/反压风险的实验路径。
+- 该约束由 runtime 后段决定，不由 OpenXR、Local Viewer、3D Monitor、MJPEG/RTMP 等输出目标决定。只要进入同一个 CUDA runtime 合成/深度/输出后段，就必须遵守相同的反压控制语义。
+- 捕获统计中 `overwrite/drop` 是正常的 latest-frame 丢帧位置；`drain_drop=0` 不代表没有丢帧，只表示旧帧已经在 producer-side raw queue 被覆盖。测试和日志解释必须区分 capture FPS、runtime FPS、raw overwrite/drop 和 consumer drain drop。
 
 
 ## 6. 测试与验证建议

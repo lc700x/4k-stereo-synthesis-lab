@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import queue
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, is_dataclass, replace
 from typing import Callable
 
 from capture.types import CapturedFrame
@@ -13,6 +13,21 @@ from .runtime import openxr_result_from_stereo_result
 from .settings_snapshot import RuntimeSettingsPipelineRebuildRequired, RuntimeSettingsRestartRequired
 
 _OPENXR_FULL_SYNTHESIS_PRESETS = {"cinema", "game_low_latency", "still_image_hq", "debug_export"}
+
+
+def _env_flag(name: str) -> bool:
+    return str(os.environ.get(name, "0") or "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _runtime_diag_stage() -> str:
+    if _env_flag("D2S_RUNTIME_DROP_ONLY"):
+        return "raw"
+    return str(os.environ.get("D2S_RUNTIME_DIAG_STAGE", "full") or "full").strip().lower()
 
 
 @dataclass(frozen=True)
@@ -247,31 +262,194 @@ def _size_debug_text(size) -> str:
     return str(size)
 
 
+def _run_depth_only(runtime, runtime_rgb) -> None:
+    load = getattr(runtime, "load", None)
+    if callable(load):
+        load()
+    predict = getattr(runtime, "_predict_depth_profile")
+    predict(runtime_rgb)
+
+
+def _synchronize_runtime_device(runtime_rgb) -> None:
+    device = getattr(runtime_rgb, "device", None)
+    if getattr(device, "type", None) != "cuda":
+        return
+    try:
+        import torch
+
+        torch.cuda.synchronize(device)
+    except Exception:
+        return
+
+
+def _runtime_sync_after_frame_enabled(ctx: RuntimePipelineContext) -> bool:
+    value = str(os.environ.get("D2S_RUNTIME_SYNC_AFTER_FRAME", "0") or "0").strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off", "auto"}:
+        return False
+    return False
+
+
+def _runtime_result_cuda_device(runtime_result):
+    for name in ("left_eye", "right_eye", "depth", "source_rgb"):
+        tensor = getattr(runtime_result, name, None)
+        device = getattr(tensor, "device", None)
+        if getattr(device, "type", None) == "cuda":
+            return device
+    return None
+
+
+def _attach_cuda_ready_event(runtime_result):
+    if getattr(runtime_result, "cuda_ready_event", None) is not None:
+        return runtime_result
+    device = _runtime_result_cuda_device(runtime_result)
+    if device is None:
+        return runtime_result
+    try:
+        import torch
+
+        event = torch.cuda.Event(blocking=False)
+        event.record(torch.cuda.current_stream(device))
+        if is_dataclass(runtime_result):
+            return replace(runtime_result, cuda_ready_event=event)
+        setattr(runtime_result, "cuda_ready_event", event)
+    except Exception:
+        return runtime_result
+    return runtime_result
+
+
+def _cuda_event_ready(event) -> bool:
+    if event is None:
+        return True
+    query = getattr(event, "query", None)
+    if not callable(query):
+        return True
+    try:
+        return bool(query())
+    except Exception:
+        return True
+
+
+def _runtime_pending_depth_limit() -> int:
+    value = str(os.environ.get("D2S_RUNTIME_PENDING_CUDA_DEPTH", "2") or "2").strip()
+    try:
+        return max(1, int(value))
+    except ValueError:
+        return 2
+
+
+def _cuda_elapsed_ms(events: dict, start: str, end: str) -> float | None:
+    first = events.get(start)
+    second = events.get(end)
+    if first is None or second is None:
+        return None
+    elapsed_time = getattr(first, "elapsed_time", None)
+    if not callable(elapsed_time):
+        return None
+    try:
+        return float(elapsed_time(second))
+    except Exception:
+        return None
+
+
+def _add_cuda_event_timings(ctx: RuntimePipelineContext, runtime_result) -> None:
+    events = getattr(runtime_result, "cuda_timing_events", None)
+    if not isinstance(events, dict) or not events:
+        return
+    for name, start, end in (
+        ("rt_gpu_depth", "start", "depth"),
+        ("rt_gpu_synth", "depth", "synthesis"),
+        ("rt_gpu_pack", "synthesis", "pack"),
+        ("rt_gpu_openxr_pack", "openxr_pack_start", "openxr_pack"),
+        ("rt_gpu_total", "start", "end"),
+    ):
+        elapsed_ms = _cuda_elapsed_ms(events, start, end)
+        if elapsed_ms is not None:
+            ctx.breakdown_add_time(name, elapsed_ms / 1000.0)
+
+
 class RuntimePipelineLoop:
     def __init__(self, context: RuntimePipelineContext):
         self.context = context
         self._logged_rgb_shape = False
+        self._logged_drop_only = False
         self._last_render_size = None
         self._last_source_target_key = None
         self._has_source_target_key = False
+        self._last_cuda_ready_event = None
+        self._pending_runtime_items = []
+
+    def _publish_runtime_item(self, item) -> None:
+        ctx = self.context
+        runtime_result, capture_start_time, process_latency, runtime_latency, pending_since = item
+        queue_put_start_time = time.perf_counter()
+        _add_cuda_event_timings(ctx, runtime_result)
+        try:
+            runtime_q_was_full = ctx.runtime_q.full()
+        except Exception:
+            runtime_q_was_full = False
+        ctx.queue_put_latest(ctx.runtime_q, (runtime_result, capture_start_time))
+        if runtime_q_was_full:
+            ctx.breakdown_inc("runtime_overwrite")
+            ctx.source_stat_inc("runtime_overwrite")
+        ctx.breakdown_add_time("rt_put", time.perf_counter() - queue_put_start_time)
+        if pending_since is not None:
+            ctx.breakdown_add_time("rt_pending_age", time.perf_counter() - pending_since)
+        ctx.source_stat_inc(
+            "runtime_frames",
+            last_runtime_ts=time.perf_counter(),
+            last_process_latency=process_latency,
+            last_runtime_latency=runtime_latency,
+        )
+        ctx.breakdown_inc("runtime")
+
+    def _publish_ready_pending_items(self) -> int:
+        published = 0
+        while self._pending_runtime_items:
+            pending_result = self._pending_runtime_items[0][0]
+            if not _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
+                break
+            item = self._pending_runtime_items.pop(0)
+            self._publish_runtime_item(item)
+            published += 1
+        return published
 
     def run(self) -> None:
         ctx = self.context
         while not ctx.shutdown_event.is_set():
             ctx.log_source_health()
             try:
+                diag_stage = _runtime_diag_stage()
                 if ctx.shutdown_event.is_set():
                     break
                 if ctx.is_hard_idle():
+                    self._pending_runtime_items.clear()
+                    self._last_cuda_ready_event = None
                     ctx.queue_clear(ctx.raw_q)
                     ctx.queue_clear(ctx.runtime_q)
                     time.sleep(0.1)
                     continue
                 if ctx.is_source_paused():
+                    self._pending_runtime_items.clear()
+                    self._last_cuda_ready_event = None
                     ctx.queue_clear(ctx.raw_q)
                     ctx.queue_clear(ctx.runtime_q)
                     ctx.source_stat_inc("runtime_dropped_paused")
                     time.sleep(0.01)
+                    continue
+                self._publish_ready_pending_items()
+                if len(self._pending_runtime_items) >= _runtime_pending_depth_limit():
+                    try:
+                        ctx.queue_drain_latest(ctx.raw_q, ctx.raw_q.get_nowait())
+                        ctx.source_stat_inc("raw_get", last_raw_get_ts=time.perf_counter())
+                        ctx.breakdown_inc("raw_get")
+                        ctx.source_stat_inc("runtime_drop_cuda_inflight")
+                        ctx.breakdown_inc("runtime_drop_cuda_inflight")
+                    except queue.Empty:
+                        ctx.source_stat_inc("runtime_pending_cuda_inflight")
+                        ctx.breakdown_inc("runtime_pending_cuda_inflight")
+                        time.sleep(min(ctx.time_sleep, 0.001))
                     continue
 
                 _apply_latest_settings_snapshot(ctx)
@@ -284,6 +462,28 @@ class RuntimePipelineLoop:
                 )
                 ctx.source_stat_inc("raw_get", last_raw_get_ts=time.perf_counter())
                 ctx.breakdown_inc("raw_get")
+
+                if diag_stage == "raw":
+                    if not self._logged_drop_only:
+                        self._logged_drop_only = True
+                        print("[RuntimePipeline] diag_stage=raw: dropping raw frames before GPU work", flush=True)
+                    ctx.source_stat_inc("runtime_diag_raw")
+                    ctx.breakdown_inc("runtime_diag_raw")
+                    continue
+
+                try:
+                    runtime_backpressured = ctx.runtime_q.full()
+                except Exception:
+                    runtime_backpressured = False
+                if runtime_backpressured:
+                    ctx.source_stat_inc("runtime_drop_backpressure")
+                    ctx.breakdown_inc("runtime_drop_backpressure")
+                    continue
+                if len(self._pending_runtime_items) >= _runtime_pending_depth_limit() and not _cuda_event_ready(self._last_cuda_ready_event):
+                    ctx.source_stat_inc("runtime_drop_cuda_inflight")
+                    ctx.breakdown_inc("runtime_drop_cuda_inflight")
+                    continue
+                self._last_cuda_ready_event = None
 
                 if ctx.is_source_paused():
                     ctx.queue_clear(ctx.raw_q)
@@ -329,6 +529,10 @@ class RuntimePipelineLoop:
                 ctx.set_preprocess_backend(
                     str(getattr(frame_rgb, "_d2s_preprocess_backend", "unknown"))
                 )
+                if diag_stage == "preprocess":
+                    ctx.source_stat_inc("runtime_diag_preprocess")
+                    ctx.breakdown_inc("runtime_diag_preprocess")
+                    continue
                 process_latency = process_start_time - capture_start_time
                 ctx.thread_latencies["capture"] = process_latency
 
@@ -343,18 +547,33 @@ class RuntimePipelineLoop:
                 prepare_start_time = time.perf_counter()
                 runtime_rgb = ctx.prepare_rgb_for_stereo_runtime(frame_rgb, device=ctx.device)
                 ctx.breakdown_add_time("rt_prepare", time.perf_counter() - prepare_start_time)
+                if diag_stage == "prepare":
+                    ctx.source_stat_inc("runtime_diag_prepare")
+                    ctx.breakdown_inc("runtime_diag_prepare")
+                    continue
+                if diag_stage == "depth":
+                    depth_start_time = time.perf_counter()
+                    _run_depth_only(ctx.stereo_runtime, runtime_rgb)
+                    ctx.breakdown_add_time("rt_call", time.perf_counter() - depth_start_time)
+                    ctx.source_stat_inc("runtime_diag_depth")
+                    ctx.breakdown_inc("runtime_diag_depth")
+                    continue
                 ctx.log_stereo_runtime_mode_once()
                 ctx.apply_stereo_hot_reload_if_needed()
                 _apply_latest_settings_snapshot(ctx)
                 ctx.warmup_stereo_once_for_frame(runtime_rgb)
                 runtime_call_start_time = time.perf_counter()
-                if ctx.run_mode == "OpenXR" and not _openxr_full_synthesis_enabled(ctx):
+                openxr_full_synthesis = ctx.run_mode == "OpenXR" and _openxr_full_synthesis_enabled(ctx)
+                if ctx.run_mode == "OpenXR" and not openxr_full_synthesis:
                     runtime_result = ctx.stereo_runtime.process_openxr_frame(
                         runtime_rgb,
                         ctx.current_openxr_render_config(),
                     )
                 else:
-                    runtime_result = ctx.stereo_runtime.process_rgb_frame(runtime_rgb)
+                    runtime_result = ctx.stereo_runtime.process_rgb_frame(
+                        runtime_rgb,
+                        skip_sbs_output=openxr_full_synthesis,
+                    )
                     if ctx.run_mode == "OpenXR":
                         runtime_result = openxr_result_from_stereo_result(runtime_result)
                 ctx.breakdown_add_time("rt_call", time.perf_counter() - runtime_call_start_time)
@@ -384,21 +603,34 @@ class RuntimePipelineLoop:
                     ctx.queue_clear(ctx.runtime_q)
                     ctx.source_stat_inc("runtime_none")
                     continue
+                if diag_stage == "runtime_sync" or _runtime_sync_after_frame_enabled(ctx):
+                    sync_start_time = time.perf_counter()
+                    _synchronize_runtime_device(runtime_rgb)
+                    ctx.breakdown_add_time("rt_sync", time.perf_counter() - sync_start_time)
+                    ctx.source_stat_inc("runtime_gpu_sync")
+                if diag_stage in {"runtime", "runtime_sync"}:
+                    ctx.source_stat_inc("runtime_diag_runtime")
+                    ctx.breakdown_inc("runtime_diag_runtime")
+                    continue
+                runtime_result = _attach_cuda_ready_event(runtime_result)
+                self._last_cuda_ready_event = getattr(runtime_result, "cuda_ready_event", None)
                 runtime_latency = time.perf_counter() - runtime_start_time
                 ctx.thread_latencies["resize"] = process_latency
                 ctx.thread_latencies["runtime"] = runtime_latency
 
-                queue_put_start_time = time.perf_counter()
-                ctx.queue_put_latest(ctx.runtime_q, (runtime_result, capture_start_time))
-                ctx.breakdown_add_time("rt_put", time.perf_counter() - queue_put_start_time)
-                ctx.breakdown_add_time("rt_loop", time.perf_counter() - loop_start_time)
-                ctx.source_stat_inc(
-                    "runtime_frames",
-                    last_runtime_ts=time.perf_counter(),
-                    last_process_latency=process_latency,
-                    last_runtime_latency=runtime_latency,
+                if not _cuda_event_ready(self._last_cuda_ready_event):
+                    self._pending_runtime_items.append(
+                        (runtime_result, capture_start_time, process_latency, runtime_latency, time.perf_counter())
+                    )
+                    ctx.breakdown_inc("runtime_pending_cuda")
+                    ctx.source_stat_inc("runtime_pending_cuda")
+                    ctx.breakdown_add_time("rt_loop", time.perf_counter() - loop_start_time)
+                    continue
+
+                self._publish_runtime_item(
+                    (runtime_result, capture_start_time, process_latency, runtime_latency, None)
                 )
-                ctx.breakdown_inc("runtime")
+                ctx.breakdown_add_time("rt_loop", time.perf_counter() - loop_start_time)
 
             except queue.Empty:
                 ctx.source_stat_inc("raw_queue_empty")

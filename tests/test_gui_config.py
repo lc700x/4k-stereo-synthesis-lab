@@ -167,6 +167,29 @@ def test_advanced_device_options_is_not_persisted_and_starts_collapsed():
     assert 'cfg.get("Advanced Device Options"' not in all_text
 
 
+def test_xr_preview_window_is_advanced_next_to_capture_fps():
+    builders_text = _file_text("builders.py")
+    handlers_text = _file_text("handlers.py")
+    localization_text = _localization_source().read_text(encoding="utf-8")
+
+    assert 'self.xr_preview_cb = ft.Checkbox(label="XR Preview Window"' in builders_text
+    row_start = builders_text.index("self.row6b = ft.Row([")
+    row_end = builders_text.index("], spacing=1)", row_start)
+    row6b = builders_text[row_start:row_end]
+    assert "self.target_fps_label" in row6b
+    assert "self.target_fps_dd" in row6b
+    assert "self.xr_preview_cb" in row6b
+    assert row6b.index("self.target_fps_dd") < row6b.index("self.xr_preview_cb")
+
+    row7_start = builders_text.index("self.row7a = ft.Row([")
+    row7_end = builders_text.index("], spacing=1)", row7_start)
+    assert "self.xr_preview_cb" not in builders_text[row7_start:row7_end]
+    assert 'self.xr_preview_cb.visible = advanced and mode == "OpenXR Link"' in handlers_text
+    assert "self.xr_preview_cb.visible = is_openxr" not in handlers_text
+    assert '(self.xr_preview_cb, "tooltip_xr_preview")' in handlers_text
+    assert '"tooltip_xr_preview"' in localization_text
+
+
 def test_console_output_is_filtered_after_full_log_write():
     text = _file_text("process.py")
     assert "def _is_key_console_output" in text
@@ -278,6 +301,7 @@ def test_gui_environment_discovery_accepts_panorama_image_folders():
 
     assert "def _find_env_image_for_gui" in config_text
     assert '"background", "panorama", "equirectangular", "360", "sky", "skybox"' in config_text
+    assert '".hdr"' in config_text
     assert "or _find_env_image_for_gui(room_dir)" in config_text
 
 
@@ -755,3 +779,37 @@ def test_stream_url_local_ip_detection_runs_async_after_gui_update():
     assert "get_local_ip()" not in update_block
     assert 'self._local_ip_cache = "127.0.0.1"' in gui_text
     assert "self._local_ip_task = None" in gui_text
+
+
+def test_openxr_headset_preset_dropdown_is_visible_only_for_openxr_and_saved():
+    config_text = _config_source().read_text(encoding="utf-8")
+    builders_text = _file_text("builders.py")
+    handlers_text = _file_text("handlers.py")
+    config_mgr_text = _file_text("config_mgr.py")
+    localization_text = _localization_source().read_text(encoding="utf-8")
+
+    assert '"XR Headset Model": DEFAULT_XR_HEADSET_MODEL' in config_text
+    assert 'from utils.xr_headset_presets import DEFAULT_XR_HEADSET_MODEL' in config_text
+    assert 'from utils.xr_headset_presets import xr_headset_options, xr_headset_to_display' in builders_text
+    assert 'self.xr_headset_label = ft.Text("Headset Model:"' in builders_text
+    assert 'self.xr_headset_dd = CompactDropdown(' in builders_text
+    assert 'options=xr_headset_options(self.locale)' in builders_text
+    assert 'value=xr_headset_to_display(DEFAULTS.get("XR Headset Model"), self.locale)' in builders_text
+    assert 'width=S(130))' in builders_text[builders_text.index('self.xr_headset_dd = CompactDropdown('):builders_text.index('self.display_mode_label = ft.Text', builders_text.index('self.xr_headset_dd = CompactDropdown('))]
+    row_start = builders_text.index('self.row7a = ft.Row([')
+    row_end = builders_text.index('], spacing=1)', row_start)
+    row7a = builders_text[row_start:row_end]
+    assert row7a.index('self.run_mode_dd') < row7a.index('self.xr_headset_label') < row7a.index('self.display_mode_label')
+
+    assert 'def on_xr_headset_change' in handlers_text
+    assert 'self._config["XR Headset Model"] = display_to_xr_headset(value)' in handlers_text
+    assert 'self.xr_headset_label.visible = is_openxr' in handlers_text
+    assert 'self.xr_headset_dd.visible = is_openxr' in handlers_text
+    assert 'self.xr_headset_dd.options = xr_headset_options(self.locale)' in handlers_text
+    assert '(self.xr_headset_dd, "tooltip_xr_headset")' in handlers_text
+
+    assert 'cfg.get("XR Headset Model", DEFAULTS["XR Headset Model"])' in config_mgr_text
+    assert '"XR Headset Model": display_to_xr_headset(self.xr_headset_dd.value)' in config_mgr_text
+    assert '"Headset Model:": "Headset Model:"' in localization_text
+    assert '"Headset Model:": "头显型号:"' in localization_text
+    assert '"tooltip_xr_headset"' in localization_text

@@ -4,6 +4,13 @@ import numpy as np
 
 
 class CoreScreenStateMixin:
+    def _screen_view_distance(self):
+        if getattr(self, '_head_pos_w', None) is None:
+            return float(self.screen_distance)
+        screen_pos = np.array([self.screen_pan_x, self.screen_pan_y, -self.screen_distance], dtype='f8')
+        head_pos = np.asarray(self._head_pos_w, dtype='f8')
+        return float(np.linalg.norm(screen_pos - head_pos))
+
     def _screen_pose_mat4(self):
         """Screen rigid transform without width/height scale."""
         cy = math.cos(self.screen_yaw)

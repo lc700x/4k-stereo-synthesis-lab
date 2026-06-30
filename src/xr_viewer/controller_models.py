@@ -78,6 +78,12 @@ class ControllerModelsMixin:
                     ),
                     'render_mode': gltf_primitive_mode_to_moderngl(pd.get('primitive_mode', 4)),
                     'tri_count': len(pd['indices']) // 3,
+                    'node_name': pd.get('node_name', ''),
+                    'mesh_name': pd.get('mesh_name', ''),
+                    'press_anim': pd.get('press_anim'),
+                    'axis_anim': pd.get('axis_anim'),
+                    'anim_key': pd.get('anim_key', ''),
+                    'visible_key': pd.get('visible_key', ''),
                 })
 
         try:

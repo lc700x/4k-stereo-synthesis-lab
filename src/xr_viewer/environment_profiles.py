@@ -3,7 +3,7 @@
 from .implementation import *
 from .constants import _BG_COLORS
 
-_PANORAMA_IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff')
+_PANORAMA_IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.hdr')
 _PANORAMA_IMAGE_NAMES = (
     'background',
     'panorama',
@@ -133,6 +133,7 @@ class EnvironmentProfileMixin:
         self._screen_light_dynamic = bool(base.get('screen_light_dynamic', False))
         self._screen_light_sample_interval = max(1, int(base.get('screen_light_sample_interval', 15)))
         self._screen_light_lerp = max(0.0, min(1.0, float(base.get('screen_light_lerp', 0.14))))
+        self._controller_hdr_lighting = bool(base.get('controller_hdr_lighting', True))
         self._panorama_background_path = None
         self._panorama_background_settings = {}
 
@@ -294,6 +295,12 @@ class EnvironmentProfileMixin:
                 self._screen_light_lerp = max(0.0, min(1.0, float(profile['screen_light_lerp'])))
             except (TypeError, ValueError):
                 pass
+        hdr_lighting = profile.get('controller_hdr_lighting', profile.get('controller_hdr_reflection'))
+        if hdr_lighting is None and is_panorama:
+            image_name = str(panorama_cfg.get('image', panorama_path or '') or '')
+            hdr_lighting = os.path.splitext(image_name)[1].lower() == '.hdr'
+        if hdr_lighting is not None:
+            self._controller_hdr_lighting = bool(hdr_lighting)
         if 'dark_room_background' in profile:
             self._dark_room_background = bool(profile.get('dark_room_background'))
         for key, attr in (

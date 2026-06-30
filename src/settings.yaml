@@ -348,9 +348,10 @@ Recompile OpenVINO: false
 Computing Device: 0
 Language: CN
 Run Mode: OpenXR Link
+XR Headset Model: Meta Quest Pro
 XR Preview Window: false
 VSync: false
-Target FPS: 90
+Target FPS: 0
 Processing Resolution: Auto
 Render Size Policy: scaled
 Render Scale: 4K / 100%
@@ -358,7 +359,7 @@ Render Fixed Width: 1920
 Render Fixed Height: 1080
 Render Max Pixels: 8294400
 Render Min Dimension: 480
-Render Align: 1
+Render Align: 8
 Upscaler: 'Off'
 Upscaler Sharpness: 0.0
 Stream Protocol: HLS

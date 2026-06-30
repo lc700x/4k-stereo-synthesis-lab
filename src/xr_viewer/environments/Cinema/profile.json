@@ -44,6 +44,7 @@
   "screen_light_dynamic": true,
   "screen_light_sample_interval": 3,
   "screen_light_lerp": 0.35,
+  "controller_hdr_lighting": false,
   "env_fill_lights": [],
   "lighting_presets": [
     {

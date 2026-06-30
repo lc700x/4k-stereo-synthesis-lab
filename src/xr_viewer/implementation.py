@@ -283,8 +283,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._grip_r_now          = False
         self._haptic_last_l       = 0.0
         self._haptic_last_r       = 0.0
-        self._ctrl_press_l        = 0.0
-        self._ctrl_press_r        = 0.0
+        self._ctrl_press_l        = {}
+        self._ctrl_press_r        = {}
 
 
         # FPS display -timestamp ring: (len-1)/(last-first) is exact over the window
@@ -308,7 +308,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         # Virtual screen transform (world space, metres / radians)
         self.screen_distance = _float_option(kwargs, 'openxr_screen_distance', 'D2S_OPENXR_SCREEN_DISTANCE', 16.0, 0.25, 40.0)
-        self.screen_width    = _float_option(kwargs, 'openxr_screen_width', 'D2S_OPENXR_SCREEN_WIDTH', 16.0, 0.25, 20.0)
+        self.screen_width    = _float_option(kwargs, 'openxr_screen_width', 'D2S_OPENXR_SCREEN_WIDTH', 16.0, 0.25, 30.0)
+        self._initial_screen_preset = ('Headset Recommended', self.screen_width, self.screen_distance) if (
+            'openxr_screen_width' in kwargs or 'openxr_screen_distance' in kwargs
+        ) else None
         self._screen_ref_size = self.screen_width   # long-dimension reference for resize
         self.screen_height   = None   # derived from frame aspect ratio on first frame
 
@@ -344,8 +347,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._frosted_glow_threshold = float(kwargs.get('frosted_glow_threshold', 0.46))
         self._frosted_glow_lod = float(kwargs.get('frosted_glow_lod', 5.4))
         self._frosted_glow_margin_m = float(kwargs.get('frosted_glow_margin', 3.6))
-        self._frosted_glow_blend = float(kwargs.get('frosted_glow_blend', 1.35))
-        self._frosted_glow_thickness = float(kwargs.get('frosted_glow_thickness', 1.6))
+        self._frosted_glow_blend = float(kwargs.get('frosted_glow_blend', 2.40))
+        self._frosted_glow_thickness = float(kwargs.get('frosted_glow_thickness', 2.40))
         self._frosted_glow_inset = float(kwargs.get('frosted_glow_inset', 0.045))
         self._frosted_glow_diffuse = float(kwargs.get('frosted_glow_diffuse', 0.85))
         self._frosted_veil_intensity = float(kwargs.get('frosted_veil_intensity', 1.65))
@@ -365,6 +368,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._screen_light_dynamic = bool(kwargs.get('screen_light_dynamic', False))
         self._screen_light_sample_interval = max(1, int(kwargs.get('screen_light_sample_interval', 15)))
         self._screen_light_lerp = max(0.0, min(1.0, float(kwargs.get('screen_light_lerp', 0.14))))
+        self._controller_hdr_lighting = bool(kwargs.get('controller_hdr_lighting', False))
         self._env_model_path = None
         self._env_model_prims = []        # list of {'vao', 'vbo', 'ibo', 'tex_key', 'tri_count'}
         self._scene_lights = []            # KHR_lights_punctual lights
@@ -435,6 +439,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             'screen_light_dynamic': self._screen_light_dynamic,
             'screen_light_sample_interval': self._screen_light_sample_interval,
             'screen_light_lerp': self._screen_light_lerp,
+            'controller_hdr_lighting': self._controller_hdr_lighting,
         }
         self._configure_environment_profile()
 
@@ -503,6 +508,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             ('1000" IMAX', 22.0, 20.0),
         ]
         self._default_screen_preset_index = 5
+        if self._initial_screen_preset is not None:
+            self._screen_presets[self._default_screen_preset_index] = self._initial_screen_preset
         self._preset_index = self._default_screen_preset_index
         _default_preset = self._screen_presets[self._default_screen_preset_index]
         self.screen_width = float(_default_preset[1])
@@ -940,7 +947,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._rot_smooth = 0.10   # rotation smoothing (base damping)
         self._ray_deadzone_rad = 0.0052  # angle dead zone (~0.3 degrees)
         self._ray_deadzone_pos = 0.002   # position dead zone (2mm)
-        self._ray_edge_deadzone_rad = 0.035  # edge snap release angle (~2 degrees)
+        self._ray_edge_deadzone_rad = math.radians(6.0)  # edge snap release angle
         self._ray_edge_margin = 0.04   # edge deceleration region (~10cm at 2.4m screen)
         self._ray_edge_slow = 0.012  # smoothing factor after edge deceleration
         self._ray_prev_uv_l = None
@@ -1040,8 +1047,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._panorama_vbo = None
         self._panorama_tex = None
         self._panorama_tex_path = None
-        self._panorama_background_path = None
-        self._panorama_background_settings = {}
 
     # Initialisation helpers
     def _init_moderngl(self):
@@ -1388,8 +1393,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._controller_prog['u_tex'].value = 3
         self._controller_prog['u_use_texture'].value = 1
         self._controller_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)
-        self._controller_prog['u_light_color'].value = (0.60, 0.60, 0.65)
-        self._controller_prog['u_ambient_color'].value = (0.22, 0.22, 0.24)
+        self._controller_prog['u_use_env_tex'].value = 0
+        self._controller_prog['u_env_intensity'].value = 0.0
+        self._controller_prog['u_screen_light_enabled'].value = 0
+        self._controller_prog['u_screen_light_intensity'].value = 0.0
 
         # Environment model shader (no gl_FrontFacing discard, double-sided lighting)
         self._env_prog = self.ctx.program(
@@ -3206,7 +3213,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # the user is repositioning the keyboard with a grip press.
         self._grip_l_now = grip_l
         self._grip_r_now = grip_r
-        self._update_controller_press_animation_state(dt)
+        self._update_controller_press_animation_state(dt, lx, ly, rx, ry)
 
         # -- Left grip: record rotation for wrist-roll tracking on press --
         grip_l_was = self._grip_l_prev
@@ -3403,17 +3410,16 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                                 self.screen_pan_x    = float(hx + dx * R3)
                                 self.screen_pan_y    = float(hy + dy * R3)
                                 self.screen_distance = float(-(hz + dz * R3))
-                                if self._right_grip_screen_rotation_enabled:
-                                    base_yaw   = math.atan2(-dx, -dz)
-                                    base_pitch = math.asin(max(-1.0, min(1.0, dy)))
-                                    self.screen_yaw   = base_yaw   + self._yaw_offset
-                                    self.screen_pitch = base_pitch + self._pitch_offset
-                                    # Wrist roll ->screen_roll
-                                    if self._grip_r_ref_mat is not None:
-                                        R_cur = self._grip_mat_r[:3, :3].astype(np.float64)
-                                        Rd = R_cur @ self._grip_r_ref_mat.T
-                                        droll = math.atan2(Rd[1, 0], Rd[1, 1])
-                                        self.screen_roll = self._grip_r_base_roll + droll
+                                base_yaw   = math.atan2(-dx, -dz)
+                                base_pitch = math.asin(max(-1.0, min(1.0, dy)))
+                                self.screen_yaw   = base_yaw   + self._yaw_offset
+                                self.screen_pitch = base_pitch + self._pitch_offset
+                                # Wrist roll ->screen_roll
+                                if self._right_grip_screen_rotation_enabled and self._grip_r_ref_mat is not None:
+                                    R_cur = self._grip_mat_r[:3, :3].astype(np.float64)
+                                    Rd = R_cur @ self._grip_r_ref_mat.T
+                                    droll = math.atan2(Rd[1, 0], Rd[1, 1])
+                                    self.screen_roll = self._grip_r_base_roll + droll
 
             elif both_grips and not grip_now:
                 # One grip released while both were held -clear grab state

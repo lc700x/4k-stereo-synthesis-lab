@@ -28,6 +28,9 @@ def _settings():
         time_sleep=1 / 60,
         controller_model="controller",
         environment_model="none",
+        xr_headset_model="Test Headset",
+        openxr_screen_width=7.8,
+        openxr_screen_distance=9.5,
         xr_preview_window=False,
     )
 
@@ -96,6 +99,8 @@ def test_run_app_mode_dispatches_openxr_without_event_constructor_args(monkeypat
     assert result.window == "openxr-window"
     assert result.streamer is None
     assert calls[0][1].controller_model == "controller"
+    assert calls[0][1].screen_width == 7.8
+    assert calls[0][1].screen_distance == 9.5
     assert calls[0][2].update_runtime_config is not None
     assert not hasattr(calls[0][2], "render_active_event")
 
@@ -126,6 +131,9 @@ def test_build_app_mode_settings_maps_core_fields():
         time_sleep=1 / 60,
         controller_model="controller",
         environment_model="none",
+        xr_headset_model="Test Headset",
+        openxr_screen_width=7.8,
+        openxr_screen_distance=9.5,
         xr_preview_window=False,
     )
 
@@ -189,6 +197,9 @@ def test_build_current_app_mode_settings_reads_utils_lazily(monkeypatch):
         UPSCALER="none",
         UPSCALER_SHARPNESS=0.0,
         USE_3D_MONITOR=False,
+        XR_HEADSET_MODEL="Test Headset",
+        OPENXR_SCREEN_WIDTH=7.8,
+        OPENXR_SCREEN_DISTANCE=9.5,
         XR_PREVIEW_WINDOW=False,
     )
     monkeypatch.setitem(sys.modules, "utils", fake_utils)
@@ -198,3 +209,6 @@ def test_build_current_app_mode_settings_reads_utils_lazily(monkeypatch):
     assert settings.use_cudart is True
     assert settings.stream_port == 8000
     assert settings.environment_model == "none"
+    assert settings.xr_headset_model == "Test Headset"
+    assert settings.openxr_screen_width == 7.8
+    assert settings.openxr_screen_distance == 9.5

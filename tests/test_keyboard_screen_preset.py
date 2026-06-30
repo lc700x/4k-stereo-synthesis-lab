@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import numpy as np
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
@@ -45,6 +47,7 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     viewer._border_idle_t = 0.0
     viewer._last_overlay_update = 0.0
     viewer._preset_name_overlay = None
+    viewer._preset_osd_last_key = (0, "Small  2.00 x 1.12 m")
     viewer._reset_orientation_offsets = lambda: None
     viewer._clear_screen_grab_anchors = lambda: None
     viewer._build_keyboard_texture_called = False
@@ -69,37 +72,127 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     assert viewer._anim_target_roll is None
     assert "4.00 x 2.25 m" in viewer._preset_name_overlay
     assert "@ 3.00 m" in viewer._preset_name_overlay
+    assert viewer._preset_osd_last_key is None
     assert viewer._keyboard_width == 2.0
     assert viewer._keyboard_height > 0.0
     assert viewer._build_keyboard_texture_called
     assert viewer._anchor_keyboard_below_screen_called
+
+    viewer._head_pos_w = np.array([0.0, 1.0, -2.0], dtype=np.float32)
+    viewer._head_fwd_w = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+    viewer._initial_head_y = 1.8
+    assert viewer._apply_preset(0)
+    assert "@ 2.15 m" in viewer._preset_name_overlay
+
+
+def test_keyboard_gap_is_15_percent_of_screen_height(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.implementation import OpenXRViewerCore
+
+    class _Viewer(OpenXRViewerCore):
+        def __init__(self):
+            pass
+
+    viewer = _Viewer()
+    viewer.screen_width = 3.0
+    viewer.screen_height = 2.0
+    viewer.screen_pan_x = 0.25
+    viewer.screen_pan_y = 1.8
+    viewer.screen_distance = 3.0
+    viewer.screen_yaw = 0.1
+    viewer.frame_size = (3840, 2160)
+    viewer._keyboard_height = 0.4
+    viewer._kb_yaw_offset = 0.0
+    viewer._kb_pitch_offset = 0.0
+    viewer._head_pos_w = None
+
+    viewer._anchor_keyboard_below_screen()
+
+    screen_bottom_y = viewer.screen_pan_y - viewer.screen_height / 2.0
+    keyboard_top_y = viewer._keyboard_pan_y + viewer._keyboard_height / 2.0
+    assert abs(screen_bottom_y - keyboard_top_y - viewer.screen_height * 0.15) < 1e-6
+    assert viewer._keyboard_pan_x == viewer.screen_pan_x
+    assert viewer._keyboard_distance == viewer.screen_distance - 0.001
 
 
 def test_cinema_giant_is_default_y_screen_preset():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
     assert "self.screen_distance = _float_option(kwargs, 'openxr_screen_distance', 'D2S_OPENXR_SCREEN_DISTANCE', 16.0, 0.25, 40.0)" in impl_text
-    assert "self.screen_width    = _float_option(kwargs, 'openxr_screen_width', 'D2S_OPENXR_SCREEN_WIDTH', 16.0, 0.25, 20.0)" in impl_text
+    assert "self.screen_width    = _float_option(kwargs, 'openxr_screen_width', 'D2S_OPENXR_SCREEN_WIDTH', 16.0, 0.25, 30.0)" in impl_text
     assert "('Cinema Giant', 16.0, 16.0)" in impl_text
     assert "self._default_screen_preset_index = 5" in impl_text
     assert "self._preset_index = self._default_screen_preset_index" in impl_text
     assert "self.screen_width = float(_default_preset[1])" in impl_text
     assert "self.screen_distance = float(_default_preset[2])" in impl_text
+    assert "self._initial_screen_preset = ('Headset Recommended', self.screen_width, self.screen_distance)" in impl_text
+    assert "self._screen_presets[self._default_screen_preset_index] = self._initial_screen_preset" in impl_text
     assert "self._screen_ref_size = self.screen_width" in impl_text
     assert "self._apply_preset(getattr(self, '_default_screen_preset_index', 5))" in impl_text
     assert "self._apply_preset(3)" not in impl_text
 
 
-def test_right_grip_screen_rotation_is_disabled_by_default_but_kept():
+def test_right_grip_orbit_faces_head_while_wrist_roll_is_disabled_by_default():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
     assert "os.environ.get('D2S_OPENXR_RIGHT_GRIP_SCREEN_ROTATION', '0')" in impl_text
     assert "self._right_grip_screen_rotation_enabled" in impl_text
-    guarded = impl_text.split("if self._right_grip_screen_rotation_enabled:", 1)[1]
-    guarded = guarded.split("elif both_grips and not grip_now:", 1)[0]
-    assert "self.screen_yaw" in guarded
-    assert "self.screen_pitch" in guarded
-    assert "self.screen_roll" in guarded
+    orbit_block = impl_text.split("# -- Right grip: sphere-orbit drag --", 1)[1]
+    orbit_block = orbit_block.split("elif both_grips and not grip_now:", 1)[0]
+    roll_guard = orbit_block.split("if self._right_grip_screen_rotation_enabled", 1)[1]
+    assert "self.screen_yaw" in orbit_block.split("if self._right_grip_screen_rotation_enabled", 1)[0]
+    assert "self.screen_pitch" in orbit_block.split("if self._right_grip_screen_rotation_enabled", 1)[0]
+    assert "self.screen_roll" in roll_guard
+
+
+def test_laser_hit_circle_radius_uses_eye_to_hit_distance(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_laser_render import CoreLaserRenderMixin
+
+    class _Viewer(CoreLaserRenderMixin):
+        pass
+
+    viewer = _Viewer()
+    viewer._current_view_mat = np.eye(4, dtype=np.float32)
+
+    assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -4.0]), 1.0) == 4.0
+    assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -0.5]), 4.0) == 0.5
+    assert viewer._cursor_ring_specs(0.5)[0][0] < viewer._cursor_ring_specs(4.0)[0][0]
+
+
+def test_laser_hit_circle_model_is_shared_by_screen_and_keyboard(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_laser_render import CoreLaserRenderMixin
+
+    class _Viewer(CoreLaserRenderMixin):
+        def _screen_basis(self):
+            return (
+                1.0,
+                np.zeros(3, dtype=np.float32),
+                np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                np.array([0.0, 1.0, 0.0], dtype=np.float32),
+                np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            )
+
+    viewer = _Viewer()
+    viewer._keyboard_pitch = 0.0
+    viewer._keyboard_yaw = 0.0
+    hit_pos = np.array([0.25, 0.5, -2.0], dtype=np.float32)
+
+    screen_model = viewer._cursor_ring_model('screen', hit_pos, 0.02)
+    keyboard_model = viewer._cursor_ring_model('keyboard', hit_pos, 0.02)
+
+    assert np.allclose(screen_model[:3, 3], hit_pos)
+    assert np.allclose(keyboard_model[:3, 3], hit_pos)
+    assert np.isclose(np.linalg.norm(screen_model[:3, 0]), 0.02)
+    assert np.isclose(np.linalg.norm(keyboard_model[:3, 0]), 0.02)
+
+    laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    render_block = laser_text.split("def _render_laser_hit_circles", 1)[1]
+    render_block = render_block.split("def _controller_anim_delta", 1)[0]
+    assert "model = self._cursor_ring_model(hit_target, hit_pos, radius)" in render_block
+    assert "if hit_target == 'screen':" not in render_block
+    assert "elif hit_target == 'keyboard':" not in render_block
 
 
 def test_laser_hit_circles_render_without_depth_test_like_keyboard_cursor():
@@ -139,34 +232,87 @@ def test_openxr_keyboard_hover_pulses_controller_haptics_on_key_changes():
     assert "self._pulse_haptic(hand_path, amplitude=0.18, duration_s=0.018, min_interval_s=0.045)" in helpers_text
 
 
-def test_openxr_controller_button_press_animates_controller_model():
+def test_openxr_controller_button_press_animates_individual_button_nodes(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.gltf_loader import load_glb_model
+
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    models_text = (SRC / "xr_viewer" / "controller_models.py").read_text(encoding="utf-8")
+    actions_text = (SRC / "xr_viewer" / "core_controller_actions.py").read_text(encoding="utf-8")
     input_text = (SRC / "xr_viewer" / "core_openxr_input.py").read_text(encoding="utf-8")
     laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    cleanup_text = (SRC / "xr_viewer" / "core_cleanup.py").read_text(encoding="utf-8")
 
-    assert "self._ctrl_press_l        = 0.0" in impl_text
-    assert "self._ctrl_press_r        = 0.0" in impl_text
-    assert "self._update_controller_press_animation_state(dt)" in impl_text
+    assert "self._ctrl_press_l        = {}" in impl_text
+    assert "self._ctrl_press_r        = {}" in impl_text
+    assert "self._update_controller_press_animation_state(dt, lx, ly, rx, ry)" in impl_text
+    assert "'node_name': pd.get('node_name', '')" in models_text
+    assert "'press_anim': pd.get('press_anim')" in models_text
+    assert "'axis_anim': pd.get('axis_anim')" in models_text
+    assert "'anim_key': pd.get('anim_key', '')" in models_text
+    assert "'visible_key': pd.get('visible_key', '')" in models_text
+    assert "left_stick_touch" in actions_text
+    assert "right_stick_touch" in actions_text
+    assert "/input/thumbstick/touch" in actions_text
+    assert "/input/trackpad/touch" in actions_text
+    assert "self._act_left_stick_touch = None" in cleanup_text
+    assert "self._act_right_stick_touch = None" in cleanup_text
     assert "def _update_controller_press_animation_state" in input_text
-    for action_name in (
-        "_act_left_trigger",
-        "_act_right_trigger",
-        "_act_left_grip",
-        "_act_right_grip",
-        "_act_x_btn",
-        "_act_y_btn",
-        "_act_a_btn",
-        "_act_b_btn",
-        "_act_left_stick_click",
-        "_act_right_stick_click",
-        "_act_menu_btn",
+    for anim_key in (
+        "trigger",
+        "grip",
+        "a_button",
+        "b_button",
+        "x_button",
+        "y_button",
+        "joystick",
+        "joystick_x",
+        "joystick_y",
+        "joystick_touched",
+        "touchpad",
+        "touchpad_x",
+        "touchpad_y",
+        "touchpad_touched",
+        "menu_button",
+        "left_trigger",
+        "right_trigger",
+        "left_joystick",
+        "right_joystick",
     ):
-        assert action_name in input_text
-    assert "_ctrl_press_l" in laser_text
-    assert "_ctrl_press_r" in laser_text
-    assert "press_mat" in laser_text
-    assert "press_glow" in laser_text
-    assert "r_mat @ t_mat @ press_mat" in laser_text
+        assert anim_key in input_text
+    assert "left_stick_touched = (" in input_text
+    assert '"left_joystick_y": -ly' in input_text
+    assert '"right_joystick_y": -ry' in input_text
+    assert "visible_key = prim.get('visible_key', '')" in laser_text
+    assert "press_map.get(visible_key, 0.0)" in laser_text
+    assert "anim_key = prim.get('anim_key', '') or prim.get('node_name', '')" in laser_text
+    assert "press_map.get(anim_key, press_map.get(prim.get('node_name', ''), 0.0))" in laser_text
+    assert 'press_map.get(f"{anim_key}_x"' in laser_text
+    assert 'press_map.get(f"{anim_key}_y"' in laser_text
+    assert "_controller_anim_delta" in laser_text
+    assert "axis_x_delta" in laser_text
+    assert "axis_y_delta" in laser_text
+    assert "def _quat_to_mat3" in laser_text
+    assert "value_local[:3, :3] = self._quat_to_mat3(self._slerp_quat(q0, q1, t))" in laser_text
+    assert "value_world = (anim['value_parent_world'] @ value_local).astype(np.float32)" in laser_text
+    assert "r_mat @ t_mat @ press_mat" not in laser_text
+
+    for glb_path in (SRC / "xr_viewer" / "controllers").glob("*/*.glb"):
+        prims, _, _ = load_glb_model(glb_path)
+        by_key = {prim.get("anim_key"): prim for prim in prims if prim.get("anim_key")}
+        assert "trigger" in by_key, glb_path
+        assert "joystick" in by_key, glb_path
+        assert by_key["trigger"].get("press_anim"), glb_path
+        assert by_key["joystick"].get("press_anim"), glb_path
+        for anim_key in ("trigger", "joystick"):
+            anim = by_key[anim_key]["press_anim"]
+            for matrix_key in ("value_parent_world", "value_local", "min_local", "max_local"):
+                assert matrix_key in anim, glb_path
+        assert by_key["joystick"].get("axis_anim", {}).get("x"), glb_path
+        assert by_key["joystick"].get("axis_anim", {}).get("y"), glb_path
+        if glb_path.parent.name == "INDEX":
+            assert "touchpad" in by_key, glb_path
+            assert by_key["touchpad"].get("press_anim"), glb_path
 
 
 def test_reset_screen_to_default_uses_cinema_giant(monkeypatch):
@@ -208,6 +354,48 @@ def test_reset_screen_to_default_uses_cinema_giant(monkeypatch):
     assert viewer._screen_ref_size == 16.0
     assert viewer.screen_distance == 16.0
     assert viewer._preset_index == 1
+
+    viewer._head_pos_w = np.array([0.0, 1.25, -2.0], dtype=np.float32)
+    viewer._head_fwd_w = np.array([0.0, 0.0, -1.0], dtype=np.float32)
+    viewer._screen_presets[1] = ('Headset Recommended', 23.09, 20.0)
+    viewer._reset_screen_to_default(show_border=False)
+
+    assert viewer.screen_width == 23.09
+    assert viewer.screen_distance == 22.0
+    assert viewer._screen_view_distance() == 20.0
+
+
+def test_overlay_distance_labels_use_head_to_screen_distance():
+    overlay_text = (SRC / "xr_viewer" / "overlay.py").read_text(encoding="utf-8")
+
+    assert "self._cached_screen_dist   = self._screen_view_distance()" in overlay_text
+    assert "base_label = preset_label.rsplit(\"  @ \", 1)[0]" in overlay_text
+    assert "preset_label = base_label + f\"  @ {self._screen_view_distance():.2f} m\"" in overlay_text
+    assert "cur_key = (self._preset_index, base_label)" in overlay_text
+    assert "cur_key = (round(self.screen_width, 2), round(self._screen_view_distance(), 2))" in overlay_text
+    assert "dist_val = f\"{self._screen_view_distance():.2f} m\"" in overlay_text
+    preset_osd_block = overlay_text.split("def _render_preset_osd", 1)[1].split("def _render_screen_osd", 1)[0]
+    assert "HOLD  = 5.0" in preset_osd_block
+    assert "dist_val = f\"{self.screen_distance:.2f} m\"" not in overlay_text
+
+
+def test_screen_view_distance_uses_head_to_screen_distance(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_screen_state import CoreScreenStateMixin
+
+    class _Viewer(CoreScreenStateMixin):
+        pass
+
+    viewer = _Viewer()
+    viewer.screen_pan_x = 3.0
+    viewer.screen_pan_y = 4.0
+    viewer.screen_distance = 12.0
+    viewer._head_pos_w = None
+
+    assert viewer._screen_view_distance() == 12.0
+
+    viewer._head_pos_w = np.array([3.0, 4.0, -2.0], dtype=np.float32)
+    assert viewer._screen_view_distance() == 10.0
 
 
 def test_screen_back_offset_scales_for_cinema_giant(monkeypatch):
@@ -329,6 +517,12 @@ def test_viewer_shader_uses_beta_subpixel_screen_edge_clip():
     assert "smoothstep(-0.001, 0.001, shifted_uv)" in shader_text
     assert "smoothstep(1.001, 0.999, shifted_uv)" in shader_text
     assert "smoothstep(0.0, 0.015, shifted_uv)" not in shader_text
+
+
+def test_screen_edge_snap_angle_is_6_degrees():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+
+    assert "self._ray_edge_deadzone_rad = math.radians(6.0)" in impl_text
 
 
 def test_curved_screen_grip_drag_uses_curved_uv_hit_point_not_flat_plane():

@@ -97,8 +97,11 @@ def test_default_profile_starts_with_surround_glow():
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
     assert profile["glow_mode"] == "surround"
+    assert profile["controller_hdr_lighting"] is False
     assert profile["glow_intensity_multiplier"] == 0.0
     assert profile["glow_shell_intensity_multiplier"] == 1.85
+    assert profile["frosted_glow_blend"] == 2.40
+    assert profile["frosted_glow_thickness"] == 2.40
     assert profile["lighting_preset_index"] == 0
     assert profile["lighting_presets"][0]["glow_mode"] == "surround"
 
@@ -136,6 +139,68 @@ def test_environment_discovery_includes_panorama_image_folder(monkeypatch, tmp_p
     assert "Pano" in viewer._discover_environment_models()
 
 
+def test_environment_discovery_includes_hdr_panorama_folder(monkeypatch, tmp_path):
+    viewer = _make_default_viewer(monkeypatch)
+    root = tmp_path / "environments"
+    pano = root / "HDR Pano"
+    pano.mkdir(parents=True)
+    (pano / "background.hdr").write_bytes(b"not-a-real-hdr")
+    viewer._environment_root = str(root)
+    viewer._environment_model = "Default"
+
+    assert "HDR Pano" in viewer._discover_environment_models()
+
+
+def test_radiance_hdr_loader_decodes_flat_rgbe(tmp_path):
+    from xr_viewer.environment_renderer import _hdr_to_ldr_u8, _read_radiance_hdr
+
+    hdr = tmp_path / "tiny.hdr"
+    hdr.write_bytes(
+        b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n"
+        + bytes([128, 64, 32, 129, 0, 0, 0, 0])
+    )
+
+    arr, size = _read_radiance_hdr(str(hdr))
+
+    assert size == (2, 1)
+    assert arr.shape == (1, 2, 3)
+    assert arr[0, 0, 0] > arr[0, 0, 1] > arr[0, 0, 2]
+    assert arr[0, 1].sum() == 0.0
+    ldr = _hdr_to_ldr_u8(arr)
+    assert ldr.dtype.name == "uint8"
+    assert ldr.shape == arr.shape
+
+
+def test_official_webxr_hdr_environments_are_packaged():
+    names = {
+        "WebXR Autumn Forest": "autumn_forest_01_2k.hdr",
+        "WebXR Cave Wall": "cave_wall_2k.hdr",
+        "WebXR Fireplace": "fireplace_2k.hdr",
+        "WebXR Georgentor": "georgentor_2k.hdr",
+        "WebXR Snowy Park": "snowy_park_01_2k.hdr",
+        "WebXR Studio": "studio_small_03_2k.hdr",
+    }
+    for env_name, hdr_name in names.items():
+        env_dir = SRC / "xr_viewer" / "environments" / env_name
+        profile = (env_dir / "profile.json").read_text(encoding="utf-8")
+        assert (env_dir / hdr_name).is_file()
+        assert '"environment_type": "panorama"' in profile
+        assert f'"image": "{hdr_name}"' in profile
+        assert '"controller_hdr_lighting": true' in profile
+
+
+def test_panorama_profile_survives_viewer_initialization(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.environment import OpenXRViewer
+
+    viewer = OpenXRViewer(environment_model="WebXR Autumn Forest", show_preview_window=False)
+
+    assert viewer._env_model_path is None
+    assert viewer._panorama_background_path.endswith("autumn_forest_01_2k.hdr")
+    assert viewer._panorama_background_settings["image"] == "autumn_forest_01_2k.hdr"
+    assert viewer._controller_hdr_lighting is True
+
+
 def test_panorama_environment_skips_glb_initialization(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._environment_enabled = True
@@ -148,7 +213,7 @@ def test_panorama_environment_skips_glb_initialization(monkeypatch):
 
     assert not viewer._env_model_visible
     assert viewer._env_model_prims == []
-    assert viewer._active_environment is None
+    assert viewer._active_environment == "Pano"
 
 
 def test_default_glow_on_keeps_background_effect_path(monkeypatch):
@@ -520,43 +585,60 @@ def test_default_dark_room_does_not_trigger_cpu_color_sampling(monkeypatch):
     assert viewer._glow_color_counter == 0
 
 
-def test_frosted_glow_keyboard_adjusts_realtime_params(monkeypatch):
+def test_frosted_glow_keyboard_adjustment_is_disabled(monkeypatch):
     import glfw
 
     viewer = _make_default_viewer(monkeypatch)
-    viewer._frosted_glow_blend = 1.0
-    viewer._frosted_glow_thickness = 1.5
+    viewer._frosted_glow_blend = 2.40
+    viewer._frosted_glow_thickness = 2.40
     viewer._preset_name_overlay = ""
     viewer._preset_osd_show_t = 0.0
 
-    assert viewer._adjust_frosted_glow_keyboard(glfw.KEY_RIGHT)
-    assert viewer._frosted_glow_blend == 1.05
-    assert viewer._frosted_glow_thickness == 1.5
-
-    assert viewer._adjust_frosted_glow_keyboard(glfw.KEY_UP, glfw.MOD_SHIFT)
-    assert viewer._frosted_glow_blend == 1.05
-    assert viewer._frosted_glow_thickness == 1.65
-    assert "Frosted blend 1.05 / thickness 1.65" == viewer._preset_name_overlay
-
-    viewer._frosted_glow_blend = 0.01
-    viewer._frosted_glow_thickness = 2.99
-    assert viewer._adjust_frosted_glow_keyboard(glfw.KEY_LEFT)
-    assert viewer._frosted_glow_blend == 0.0
-    assert viewer._adjust_frosted_glow_keyboard(glfw.KEY_UP)
-    assert viewer._frosted_glow_thickness == 3.0
+    assert not viewer._adjust_frosted_glow_keyboard(glfw.KEY_RIGHT)
+    assert not viewer._adjust_frosted_glow_keyboard(glfw.KEY_UP, glfw.MOD_SHIFT)
+    assert viewer._frosted_glow_blend == 2.40
+    assert viewer._frosted_glow_thickness == 2.40
+    assert viewer._preset_name_overlay == ""
 
 
-def test_frosted_glow_virtual_keyboard_arrows_adjust_params(monkeypatch):
+def test_frosted_glow_virtual_keyboard_adjustment_is_disabled(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
-    viewer._frosted_glow_blend = 1.0
-    viewer._frosted_glow_thickness = 1.5
+    viewer._frosted_glow_blend = 2.40
+    viewer._frosted_glow_thickness = 2.40
     viewer._preset_name_overlay = ""
     viewer._preset_osd_show_t = 0.0
 
-    assert viewer._adjust_frosted_glow_vk(0x27)
-    assert viewer._frosted_glow_blend == 1.05
-    assert viewer._frosted_glow_thickness == 1.5
+    assert not viewer._adjust_frosted_glow_vk(0x27)
+    assert not viewer._adjust_frosted_glow_vk(0x28)
+    assert viewer._frosted_glow_blend == 2.40
+    assert viewer._frosted_glow_thickness == 2.40
+    assert viewer._preset_name_overlay == ""
 
-    assert viewer._adjust_frosted_glow_vk(0x28)
-    assert viewer._frosted_glow_blend == 1.05
-    assert viewer._frosted_glow_thickness == 1.45
+
+def test_controller_shader_uses_panorama_ibl_reflection():
+    glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
+    render_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    profile_text = (SRC / "xr_viewer" / "environment_profiles.py").read_text(encoding="utf-8")
+    ctrl_frag = glsl_text.split("_CTRL_FRAG", 1)[1].split("_ENV_VERT", 1)[0]
+
+    assert "uniform sampler2D u_env_tex" in ctrl_frag
+    assert "uniform sampler2D u_screen_light_tex" in ctrl_frag
+    assert "textureLod(u_env_tex, env_uv(R), 3.0)" in ctrl_frag
+    assert "textureLod(u_screen_light_tex" in ctrl_frag
+    assert "u_light_color" not in ctrl_frag
+    assert "u_ambient_color" not in ctrl_frag
+    assert "_get_panorama_texture" in render_text
+    assert "_controller_hdr_lighting" in render_text
+    assert "u_use_env_tex" in render_text
+    assert "u_screen_light_enabled" in render_text
+    assert "controller_hdr_lighting" in profile_text
+    assert "controller_hdr_reflection" in profile_text
+    assert "== '.hdr'" in profile_text
+
+
+def test_controller_touch_bindings_share_profile_suggestion_call():
+    source = (SRC / "xr_viewer" / "core_controller_actions.py").read_text(encoding="utf-8")
+
+    assert source.count("xr.suggest_interaction_profile_bindings") == 1
+    assert '"/user/hand/left/input/thumbstick/touch"' in source
+    assert '"/user/hand/left/input/grip/pose"' in source

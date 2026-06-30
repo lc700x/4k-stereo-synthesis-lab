@@ -2,6 +2,7 @@
 import os
 import asyncio
 from utils import OS_NAME, ALL_MODELS, DEFAULT_PORT, read_yaml
+from utils.xr_headset_presets import display_to_xr_headset, xr_headset_to_display
 from .config import (
     DEFAULTS, DEFAULT_FAMILIES, DEFAULT_MODEL_LIST, FAMILY_TO_SIZES,
     environment_display_label, parse_model_name, save_yaml,
@@ -61,6 +62,8 @@ class GUIConfigMixin:
         self.depth_quick_dd.value = self._depth_quick_to_display(
             cfg.get("Depth Quick", self._depth_quick_from_strength(depth_strength)))
         self.display_mode_dd.value = cfg.get("Display Mode", DEFAULTS["Display Mode"])
+        self.xr_headset_dd.value = xr_headset_to_display(
+            cfg.get("XR Headset Model", DEFAULTS["XR Headset Model"]), self.locale)
         self.xr_preview_cb.value = cfg.get("XR Preview Window", DEFAULTS["XR Preview Window"])
         self.local_vsync_cb.value = cfg.get("VSync", DEFAULTS["VSync"])
         self.advanced_device_cb.value = False
@@ -239,6 +242,7 @@ class GUIConfigMixin:
             "Computing Device": self.device_label_to_index.get(self.device_dd.value, DEFAULTS["Computing Device"]),
             "Language": self.locale,
             "Run Mode": self.run_mode_key,
+            "XR Headset Model": display_to_xr_headset(self.xr_headset_dd.value),
             "XR Preview Window": self.xr_preview_cb.value,
             "VSync": self.local_vsync_cb.value,
             "Target FPS": self._target_fps_from_display(self.target_fps_dd.value),

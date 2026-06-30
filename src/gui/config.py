@@ -4,13 +4,14 @@ import os
 import yaml
 
 from utils import ALL_MODELS, DEFAULT_PORT
+from utils.xr_headset_presets import DEFAULT_XR_HEADSET_MODEL
 
 from .paths import BASE_DIR
 
 
 _MODEL_SIZES = ["Small", "SmallPlus", "Base", "Large", "Giant"]
 _SIZE_ORDER = {s: i for i, s in enumerate(_MODEL_SIZES)}
-_ENV_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff")
+_ENV_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".hdr")
 _ENV_IMAGE_NAMES = ("background", "panorama", "equirectangular", "360", "sky", "skybox")
 
 
@@ -135,6 +136,7 @@ DEFAULTS = {
     "Computing Device": 0,
     "Language": "EN",
     "Run Mode": "OpenXR Link",
+    "XR Headset Model": DEFAULT_XR_HEADSET_MODEL,
     "XR Preview Window": True,
     "VSync": False,
     "Target FPS": 0,

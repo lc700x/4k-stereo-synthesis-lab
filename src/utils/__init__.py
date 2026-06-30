@@ -86,6 +86,9 @@ _RUNTIME_EXPORT_ATTRS = {
     "ENV_ROWS": "environment_help_rows",
     "CONTROLLER_MODEL": "controller_model",
     "ENVIRONMENT_MODEL": "environment_model",
+    "XR_HEADSET_MODEL": "xr_headset_model",
+    "OPENXR_SCREEN_WIDTH": "openxr_screen_width",
+    "OPENXR_SCREEN_DISTANCE": "openxr_screen_distance",
     "XR_PREVIEW_WINDOW": "xr_preview_window",
 }
 
@@ -186,6 +189,8 @@ __all__ = [
     "MODEL_MAPPING",
     "MONITOR_INDEX",
     "OS_NAME",
+    "OPENXR_SCREEN_DISTANCE",
+    "OPENXR_SCREEN_WIDTH",
     "OUTPUT_RESOLUTION",
     "RECOMPILE_COREML",
     "RECOMPILE_MIGRAPHX",
@@ -215,6 +220,7 @@ __all__ = [
     "USE_TORCH_COMPILE",
     "VERSION",
     "WINDOW_TITLE",
+    "XR_HEADSET_MODEL",
     "XR_PREVIEW_WINDOW",
     "_get_device_name_from_mss_monitor",
     "crop_icon",

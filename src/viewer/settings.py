@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from stereo_runtime.render_size import RenderSizeConfig, render_size_config_from_settings
 from utils.display import compute_output_resolution, get_fps
+from utils.xr_headset_presets import DEFAULT_XR_HEADSET_MODEL, resolve_xr_headset_preset
 from viewer.controller_help import get_controller_help_rows
 from viewer.upscaler import normalize_upscaler, normalize_upscaler_sharpness
 
@@ -32,6 +33,9 @@ class ViewerSettings:
     environment_help_rows: list
     controller_model: str
     environment_model: str
+    xr_headset_model: str
+    openxr_screen_width: float
+    openxr_screen_distance: float
     xr_preview_window: bool
 
 
@@ -60,6 +64,8 @@ def resolve_viewer_settings(settings: dict) -> ViewerSettings:
     fps = target_fps if 1 <= target_fps <= 240 else get_fps(window_title, monitor_index)
     language = settings["Language"]
     controller_help_rows, environment_help_rows = get_controller_help_rows(language)
+    xr_headset_model = settings.get("XR Headset Model", DEFAULT_XR_HEADSET_MODEL)
+    xr_headset_preset = resolve_xr_headset_preset(xr_headset_model)
 
     return ViewerSettings(
         monitor_index=monitor_index,
@@ -84,5 +90,8 @@ def resolve_viewer_settings(settings: dict) -> ViewerSettings:
         environment_help_rows=environment_help_rows,
         controller_model=settings["Controller Model"],
         environment_model=settings.get("Environment Model", "Default"),
+        xr_headset_model=xr_headset_preset.key,
+        openxr_screen_width=xr_headset_preset.width_m,
+        openxr_screen_distance=xr_headset_preset.distance_m,
         xr_preview_window=settings.get("XR Preview Window", True),
     )

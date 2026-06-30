@@ -27,13 +27,14 @@ class CoreScreenQualityMixin:
         return footprint_w, footprint_h
 
     def _log_screen_footprint_once(self, eye_index, mvp, swapchain_size):
+        view_distance = self._screen_view_distance()
         key = (
             int(eye_index),
             tuple(swapchain_size),
             tuple(self._texture_size or (0, 0)),
             round(float(self.screen_width), 3),
             round(float(self.screen_height or 0.0), 3),
-            round(float(self.screen_distance), 3),
+            round(float(view_distance), 3),
         )
         if key in self._screen_footprint_logged:
             return
@@ -51,7 +52,7 @@ class CoreScreenQualityMixin:
                 f"[OpenXRViewer] screen footprint eye={eye_index} approx={footprint} "
                 f"swapchain={sc_w}x{sc_h} texture={int(tex_w)}x{int(tex_h)} "
                 f"screen_m={self.screen_width:.3f}x{self.screen_height:.3f} "
-                f"distance_m={self.screen_distance:.3f}",
+                f"distance_m={view_distance:.3f}",
                 flush=True,
             )
         except Exception as exc:

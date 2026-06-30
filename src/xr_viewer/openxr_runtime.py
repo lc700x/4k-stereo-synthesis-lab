@@ -16,6 +16,8 @@ class OpenXRRuntimeConfig:
     show_fps: bool
     controller_model: str
     environment_model: str
+    screen_width: float
+    screen_distance: float
     show_preview_window: bool
     capture_mode: str
     monitor_index: int
@@ -100,6 +102,8 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
             controller_model=config.controller_model,
             environment_model=config.environment_model,
             breath_enabled=False,
+            openxr_screen_width=config.screen_width,
+            openxr_screen_distance=config.screen_distance,
             show_preview_window=config.show_preview_window,
             capture_mode=config.capture_mode,
             monitor_index=config.monitor_index,

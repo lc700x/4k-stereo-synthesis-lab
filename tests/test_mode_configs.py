@@ -48,6 +48,8 @@ def test_build_openxr_runtime_config_maps_expected_fields():
         show_fps=False,
         controller_model="controller",
         environment_model="none",
+        screen_width=7.8,
+        screen_distance=9.5,
         show_preview_window=True,
         capture_mode="window",
         monitor_index=0,
@@ -55,6 +57,8 @@ def test_build_openxr_runtime_config_maps_expected_fields():
 
     assert config.fps == 72
     assert config.environment_model == "none"
+    assert config.screen_width == 7.8
+    assert config.screen_distance == 9.5
     assert config.show_preview_window is True
 
 

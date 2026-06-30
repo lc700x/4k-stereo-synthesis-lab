@@ -167,7 +167,7 @@ src/settings.yaml
 | Stereo | `Stereo Preset`, `Stereo Quality`, `Synthetic View`, `Depth Strength`, `Convergence`, `Parallax Budget Preset`, `Max Disparity Px` | 当前规范立体参数；Depth Strength 是用户连续强度 gain，Parallax Budget 是档位预算，Convergence 是零视差平面 |
 | Synthesis postprocess | `Temporal Strength`, `Scene Reset Threshold`, `Edge Dilation`, `Mask Feather Radius`, `Hole Fill Mode`, `Edge Threshold`, `Foreground Scale`, `Anti-aliasing` | 稳定、mask、补洞、depth postprocess |
 | Output | `Display Mode`, `Anaglyph Method`, `Cross Eyed`, `Fill 16:9`, `Fix Viewer Aspect`, `VSync` | 本地/推流封装与显示 |
-| OpenXR | `XR Preview Window`, `Controller Model`, `Environment Model` | OpenXR viewer 行为 |
+| OpenXR | `XR Preview Window`, `XR Headset Model`, `Controller Model`, `Environment Model` | OpenXR viewer 行为；头显型号解析推荐观看距离并按 60° 水平视角自动计算屏幕尺寸 |
 | Streaming | `Stream Protocol`, `Streamer Port`, `Stream Quality`, `Stream Key`, `Stereo Mix`, `CRF`, `Audio Delay` | 网络推流配置 |
 
 规范要求：
@@ -764,6 +764,86 @@ Direct path 的 legacy uniforms 必须由 adapter 从规范参数转换。
 OpenXR `xr_wait` / `xr_poll` / `xr_submit` / present 时间属于设备运行时调度，不得混同为 StereoRuntime depth/synthesis/SBS 生成耗时。
 ```
 
+### OpenXR 虚拟屏幕、头显预设与 OSD 规范
+
+头显屏幕预设属于 OpenXR presentation 层，不改变 runtime 立体合成语义。GUI 只保存 `XR Headset Model`，运行时通过 `src/utils/xr_headset_presets.py` 解析设备推荐观看距离，并按统一水平视角计算屏幕尺寸。
+
+当前规则：
+
+```text
+XR_HEADSET_HORIZONTAL_FOV_DEG = 60.0
+screen_width_m = distance_m * 2 * tan(radians(60.0) / 2)
+screen_height_m = screen_width_m * 9 / 16
+diagonal_in = hypot(screen_width_m, screen_height_m) / 0.0254
+```
+
+规范要求：
+
+```text
+1. 头显预设只维护设备型号、分类和推荐观看距离；不得手工维护每个预设的宽度/高度/英寸派生值。
+2. 推荐距离为无穷远的设备在当前 viewer 中取 20.0 m 作为实用距离；例如 Pico 4 / 4 Ultra 和 HTC VIVE XR Elite。
+3. OpenXR screen width clamp 必须允许 20.0 m / 60° 预设生成的 23.09 m 宽屏幕；当前上限为 30.0 m。
+4. 距离显示必须使用头部位置到屏幕中心的真实欧氏距离 `_screen_view_distance()`，不得混用内部 `screen_distance` 投影值作为用户可见观看距离。
+5. Y 短按恢复默认屏幕预设，Y 长按切换预设；应用预设时必须重置 preset OSD key，使恢复同一 preset 也能重新显示 OSD。
+6. preset OSD 显示 5.0 s，live distance 只更新显示文本，不得进入触发 key 以免头部微动持续刷新倒计时。
+7. 虚拟键盘与屏幕下边缘的间距按屏幕高度 15% 计算。
+8. 屏幕边缘吸附释放角为 6°。
+9. 屏幕与键盘的激光命中光圈共用同一 cursor-ring model，并按 eye-to-hit distance 缩放。
+```
+
+手柄屏幕操作规则：
+
+```text
+Left grip: 平移屏幕，保持距离和朝向。
+Right grip: 保留 sphere-orbit drag，围绕头部移动屏幕中心；移动后自动更新 yaw/pitch 让屏幕朝向头部。
+D2S_OPENXR_RIGHT_GRIP_SCREEN_ROTATION: 默认关闭，只控制右手柄 wrist roll 是否映射到 screen_roll；不得用该开关阻止 right-grip orbit 后的自动 yaw/pitch 朝向头部。
+Both grips: 继续作为双手系统移动/调整路径，不由单手规则替代。
+```
+
+### OpenXR 手柄光照规范
+
+手柄光照属于 OpenXR viewer 的 presentation 层，不改变 runtime 立体合成语义。屏幕灯光是所有手柄模型共用的统一光源；Pico、Quest、Valve、YVR 等模型只提供 mesh、texture、profile offset 和按钮动画，不各自定义独立灯光模型。
+
+环境 profile 使用 `controller_hdr_lighting` 控制手柄 HDR 环境反射，`controller_hdr_reflection` 仅作为兼容别名：
+
+```text
+controller_hdr_lighting = true:
+    启用 HDR panorama 环境采样。
+    关闭手柄顶灯补光。
+    手柄主要由屏幕灯光 + HDR diffuse/specular + 屏幕镜面反射共同照亮。
+
+controller_hdr_lighting = false:
+    禁用 HDR 环境采样。
+    启用手柄顶灯补光。
+    手柄主要由屏幕灯光 + 基础环境光 + 顶灯补光 + 屏幕镜面反射共同照亮。
+```
+
+当前建议值：
+
+| 项 | 建议值 | 说明 |
+|---|---:|---|
+| 基础环境光 | `baseColor * 0.30` | 只保留最低可见度，避免背光面发白 |
+| 屏幕漫反射主光 | `1.00 * u_screen_light_intensity` | 主光源，使用屏幕采样颜色 `screen_tint` |
+| 屏幕方向项 | `pow(max(dot(N, screen_light_dir), 0.0), 0.75)` | 保留方向性，朝向屏幕的表面更亮 |
+| 顶灯位置 | `u_camera_pos + vec3(0.0, 0.45, -0.18)` | 近似头顶/面板上方补光，只在 HDR 关闭时启用 |
+| 顶灯亮度 | `0.40 * top_fill` | 辅助补光，不能盖过屏幕主光 |
+| 顶灯颜色 | `vec3(0.95, 0.97, 1.0)` | 轻微冷白，避免染色过重 |
+| HDR diffuse mix | `0.36` | HDR 开启时给材质低频环境色 |
+| HDR specular | `0.30 * u_env_intensity` | HDR 开启时给镜面反射强度 |
+| 屏幕镜面混合 | `mix(baseColor * screen_tint, screen_col, 0.72)` | 以真实屏幕颜色为主 |
+| 屏幕镜面强度 | `(0.38 + 0.95 * fresnel) * u_screen_light_intensity` | 斜视角更明显，正视角保留基础反射 |
+| 输出限制 | `clamp(color, 0.0, 1.0)` | 维持 LDR swapchain 输出稳定 |
+
+规范要求：
+
+```text
+1. 屏幕灯光和屏幕镜面反射必须对所有 controller model 共用。
+2. `max(dot(N, light_dir), 0.0)` 方向项必须保留，不能退回无方向全亮 ambient。
+3. HDR 开启时不得叠加顶灯，避免 HDR 反射和固定白光同时抬亮背光面。
+4. HDR 关闭时必须保留顶灯，补偿无 panorama IBL 时手柄表盘过暗的问题。
+5. 新环境 profile 必须显式写 `controller_hdr_lighting`；`.hdr` panorama 可自动开启，但 profile 显式值优先。
+```
+
 ## 网络推流设计
 
 当前实现主要是 MJPEG legacy stream：
@@ -1011,6 +1091,7 @@ scripts/tools/openxr_visual_regression.py
 | Capture metadata | 已有 `CapturedFrame` / `FrameCopyMode`，event/polling runner 会携带 source、device、dtype、copy_mode、capture_size 等 metadata，并进入 runtime debug | 真实硬件 CUDA/ROCm zero-copy 仍需设备验证后才能把路径标成 true zero-copy |
 | Capture preprocess device contract | 已显式处理 numpy / CPU tensor / CUDA tensor / ROCm tensor 形态，并记录 origin/output device 与 transfer metadata | 跨设备 fallback 和硬件路径仍需按目标机器补充验证矩阵 |
 | OpenXR direct uniforms | 已输出规范 `shader_uniforms`，字段以 `max_disparity_px`、`depth_strength`、`depth_response`、`convergence`、`render_size`、`screen_roll` 为主；OpenGL 与 D3D11 RGB+D direct 调用层均按 `max_disparity_px / render_width` 派生每眼 shader offset，并使用同一 `depth_strength` 放大实际视差位移，不再消费 IPD / Stereo Scale / Max Shift Ratio 旧强度链 | D3D11 native direct shader 仍需追平 OpenGL direct shader 的完整 DIBR 质量语义；这是独立 follow-up |
+| OpenXR headset screen presets / OSD | 已新增 `XR Headset Model` 设置和 `src/utils/xr_headset_presets.py`，按推荐距离 + 60° 水平视角自动计算屏幕尺寸；`_screen_view_distance()` 统一用户可见距离；preset OSD 显示 5 秒且不被 live distance 刷新；Y 恢复同一 preset 会重新显示 OSD；右手柄保留 sphere-orbit 并自动朝向头部 | 后续如增加水平视角 GUI slider，只应调整统一 FOV 参数或显式设置，不应回到每个预设手工维护宽高 |
 | GPU texture upload | 已抽出共享 `CudaGlTextureUploader`，OpenXR runtime eye 与本地 viewer runtime RGBA texture 复用同一 CUDA/GL upload 语义；image texture 优先、PBO fallback、CPU fallback 红色告警 | 继续真机验证 CUDA/GL image texture 失败根因和各显示模式 fallback 日志；RGB+depth direct texture path 可按同一 uploader 继续收敛 |
 | Depth provider GPU timing / zero-copy | TensorRT native 已记录真实 CUDA event timing；MIGraphX 构建已导入 ROCm7 FP8-first/FP16 fallback/force-FP32 skip 规则；TensorRT ORT CPU staging 已作为下一优化目标记录 | TensorRT ORT / ONNX Runtime realtime provider 仍需移除 CPU numpy input/output 往返，保持 iobinding output 在 GPU 并直接返回 CUDA tensor |
 | Render Size / 4K scale tier | 已收敛为固定 scale 档位 Render Scale：非 4K 保持 capture_size；4K 级输入按 4K/3K/2K/1K 稳定 scale 档位解析，并保持横屏、竖屏、16:10、DCI 4K、常见 4K 超宽比例；判断排除面积不足的窄高/1440p 超宽；旧 numeric / short alias Render Scale 输入已清理为默认回退 | 继续通过测试防止重新引入 `0.75`、`75%`、`2K` 等用户侧别名；无新的运行时语义待办 |

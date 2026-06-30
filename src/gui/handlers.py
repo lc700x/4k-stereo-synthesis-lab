@@ -9,6 +9,7 @@ from utils import (
     DISABLE_MIGRAPHX_KEYWORDS,
     get_local_ip,
 )
+from utils.xr_headset_presets import display_to_xr_headset, xr_headset_options, xr_headset_to_display
 from . import devices as devices_module
 from .capture_sources import (
     get_capture_tool_options, get_primary_monitor_index, list_windows,
@@ -426,6 +427,10 @@ class GUIHandlerMixin:
 
     # ── run mode / visibility handlers ──
 
+    def on_xr_headset_change(self, e):
+        value = e.control.value if e else self.xr_headset_dd.value
+        self._config["XR Headset Model"] = display_to_xr_headset(value)
+
     def on_env_change(self, e):
         label = e.control.value if e else self.env_model_dd.value
         self.env_key = environment_key_from_label(
@@ -486,6 +491,7 @@ class GUIHandlerMixin:
         self._update_render_size_control_visibility(show_render_size)
         self.target_fps_label.visible = show_timing
         self.target_fps_dd.visible = show_timing
+        self.xr_preview_cb.visible = advanced and mode == "OpenXR Link"
         self.local_vsync_cb.visible = advanced and mode in ["Local Viewer", "3D Monitor"]
         self.upscaler_label.visible = show_enhance
         self.upscaler_dd.visible = show_enhance
@@ -504,7 +510,8 @@ class GUIHandlerMixin:
         is_openxr = mode == "OpenXR Link"
         self.display_mode_label.visible = not is_openxr
         self.display_mode_dd.visible = not is_openxr
-        self.xr_preview_cb.visible = is_openxr
+        self.xr_headset_label.visible = is_openxr
+        self.xr_headset_dd.visible = is_openxr
         self._sync_device_advanced_visibility(mode)
         self.row7b.visible = is_openxr
         if is_openxr:
@@ -655,6 +662,10 @@ class GUIHandlerMixin:
         self.capture_tool_label.value = t["Capture Tool:"]
         self.run_mode_label.value = t["Run Mode:"]
         self.display_mode_label.value = t["Display Mode:"]
+        self.xr_headset_label.value = t.get("Headset Model:", "Headset Model:")
+        headset_key = display_to_xr_headset(self.xr_headset_dd.value)
+        self.xr_headset_dd.options = xr_headset_options(self.locale)
+        self.xr_headset_dd.value = xr_headset_to_display(headset_key, self.locale)
         self.xr_preview_cb.label = t.get("XR Preview Window", "XR画面预览窗口" if self.locale == "CN" else "XR Preview Window")
         self.local_vsync_cb.label = t.get("VSync", "VSync")
         self.target_fps_label.value = t.get("Capture FPS:", "Capture FPS:")
@@ -760,8 +771,10 @@ class GUIHandlerMixin:
             (self.capture_tool_dd, "tooltip_capture_tool"),
             (self.run_mode_dd, "tooltip_run_mode"),
             (self.display_mode_dd, "tooltip_display_mode"),
+            (self.xr_headset_dd, "tooltip_xr_headset"),
             (self.local_vsync_cb, "tooltip_vsync"),
             (self.target_fps_dd, "tooltip_target_fps"),
+            (self.xr_preview_cb, "tooltip_xr_preview"),
             (self.render_policy_dd, "tooltip_render_policy"),
             (self.render_scale_dd, "tooltip_render_scale"),
             (self.render_fixed_dd, "tooltip_render_fixed_size"),

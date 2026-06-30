@@ -43,6 +43,9 @@ class AppModeSettings:
     time_sleep: float
     controller_model: str
     environment_model: str
+    xr_headset_model: str
+    openxr_screen_width: float
+    openxr_screen_distance: float
     xr_preview_window: bool
 
 
@@ -94,6 +97,9 @@ def build_app_mode_settings(
     time_sleep,
     controller_model,
     environment_model,
+    xr_headset_model,
+    openxr_screen_width,
+    openxr_screen_distance,
     xr_preview_window,
 ):
     return AppModeSettings(
@@ -122,6 +128,9 @@ def build_app_mode_settings(
         time_sleep=time_sleep,
         controller_model=controller_model,
         environment_model=environment_model,
+        xr_headset_model=xr_headset_model,
+        openxr_screen_width=openxr_screen_width,
+        openxr_screen_distance=openxr_screen_distance,
         xr_preview_window=xr_preview_window,
     )
 
@@ -142,6 +151,8 @@ def build_current_app_mode_settings(*, use_cudart, time_sleep):
         LOSSLESS_SCALING_SUPPORT,
         MONITOR_INDEX,
         OS_NAME,
+        OPENXR_SCREEN_DISTANCE,
+        OPENXR_SCREEN_WIDTH,
         SHOW_FPS,
         STEREO_DISPLAY_INDEX,
         STEREO_DISPLAY_SELECTION,
@@ -151,6 +162,7 @@ def build_current_app_mode_settings(*, use_cudart, time_sleep):
         UPSCALER,
         UPSCALER_SHARPNESS,
         USE_3D_MONITOR,
+        XR_HEADSET_MODEL,
         XR_PREVIEW_WINDOW,
     )
 
@@ -180,6 +192,9 @@ def build_current_app_mode_settings(*, use_cudart, time_sleep):
         time_sleep=time_sleep,
         controller_model=CONTROLLER_MODEL,
         environment_model=ENVIRONMENT_MODEL,
+        xr_headset_model=XR_HEADSET_MODEL,
+        openxr_screen_width=OPENXR_SCREEN_WIDTH,
+        openxr_screen_distance=OPENXR_SCREEN_DISTANCE,
         xr_preview_window=XR_PREVIEW_WINDOW,
     )
 
@@ -297,6 +312,8 @@ def run_app_mode(mode, *, runtime_q, thread_latencies, settings: AppModeSettings
             show_fps=settings.show_fps,
             controller_model=settings.controller_model,
             environment_model=settings.environment_model,
+            screen_width=settings.openxr_screen_width,
+            screen_distance=settings.openxr_screen_distance,
             show_preview_window=settings.xr_preview_window,
             capture_mode=settings.capture_mode,
             monitor_index=settings.monitor_index,

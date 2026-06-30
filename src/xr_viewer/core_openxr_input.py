@@ -253,36 +253,90 @@ class CoreOpenXRInputMixin:
         except Exception:
             return 0.0
 
-    def _update_controller_press_animation_state(self, dt=0.0):
-        """Cache per-hand button pressure used by controller render feedback."""
-        def _hand_pressure(hand_path, trigger_action, grip_action, face_actions):
-            pressure = max(0.0, min(1.0, self._read_float_action(trigger_action, hand_path)))
-            if self._read_bool_action(grip_action, hand_path):
-                pressure = max(pressure, 1.0)
-            for action in face_actions:
-                if self._read_bool_action(action, hand_path):
-                    pressure = max(pressure, 1.0)
-                    break
-            return pressure
-
-        left_target = _hand_pressure(
-            "/user/hand/left",
-            self._act_left_trigger,
-            self._act_left_grip,
-            (self._act_x_btn, self._act_y_btn, self._act_left_stick_click, self._act_menu_btn),
+    def _update_controller_press_animation_state(self, dt=0.0, lx=0.0, ly=0.0, rx=0.0, ry=0.0):
+        """Cache controller button and axis animation amounts for render feedback."""
+        lx = max(-1.0, min(1.0, float(lx or 0.0)))
+        ly = max(-1.0, min(1.0, float(ly or 0.0)))
+        rx = max(-1.0, min(1.0, float(rx or 0.0)))
+        ry = max(-1.0, min(1.0, float(ry or 0.0)))
+        left_stick_touched = (
+            self._read_bool_action(getattr(self, '_act_left_stick_touch', None), "/user/hand/left")
+            or abs(lx) > 0.02
+            or abs(ly) > 0.02
+            or self._read_bool_action(self._act_left_stick_click, "/user/hand/left")
         )
-        right_target = _hand_pressure(
-            "/user/hand/right",
-            self._act_right_trigger,
-            self._act_right_grip,
-            (self._act_a_btn, self._act_b_btn, self._act_right_stick_click),
+        right_stick_touched = (
+            self._read_bool_action(getattr(self, '_act_right_stick_touch', None), "/user/hand/right")
+            or abs(rx) > 0.02
+            or abs(ry) > 0.02
+            or self._read_bool_action(self._act_right_stick_click, "/user/hand/right")
         )
+        left_target = {
+            "trigger": max(0.0, min(1.0, self._read_float_action(self._act_left_trigger, "/user/hand/left"))),
+            "grip": 1.0 if self._read_bool_action(self._act_left_grip, "/user/hand/left") else 0.0,
+            "x_button": 1.0 if self._read_bool_action(self._act_x_btn, "/user/hand/left") else 0.0,
+            "y_button": 1.0 if self._read_bool_action(self._act_y_btn, "/user/hand/left") else 0.0,
+            "joystick": 1.0 if self._read_bool_action(self._act_left_stick_click, "/user/hand/left") else 0.0,
+            "joystick_x": lx,
+            "joystick_y": -ly,
+            "joystick_touched": 1.0 if left_stick_touched else 0.0,
+            "touchpad": 1.0 if self._read_bool_action(self._act_left_stick_click, "/user/hand/left") else 0.0,
+            "touchpad_x": lx,
+            "touchpad_y": -ly,
+            "touchpad_touched": 1.0 if left_stick_touched else 0.0,
+            "menu_button": 1.0 if self._read_bool_action(self._act_menu_btn, "/user/hand/left") else 0.0,
+            "left_trigger": max(0.0, min(1.0, self._read_float_action(self._act_left_trigger, "/user/hand/left"))),
+            "left_grip": 1.0 if self._read_bool_action(self._act_left_grip, "/user/hand/left") else 0.0,
+            "left_x_button": 1.0 if self._read_bool_action(self._act_x_btn, "/user/hand/left") else 0.0,
+            "left_y_button": 1.0 if self._read_bool_action(self._act_y_btn, "/user/hand/left") else 0.0,
+            "left_joystick": 1.0 if self._read_bool_action(self._act_left_stick_click, "/user/hand/left") else 0.0,
+            "left_joystick_x": lx,
+            "left_joystick_y": -ly,
+            "left_joystick_touched": 1.0 if left_stick_touched else 0.0,
+            "left_touchpad": 1.0 if self._read_bool_action(self._act_left_stick_click, "/user/hand/left") else 0.0,
+            "left_touchpad_x": lx,
+            "left_touchpad_y": -ly,
+            "left_touchpad_touched": 1.0 if left_stick_touched else 0.0,
+            "left_app_button": 1.0 if self._read_bool_action(self._act_menu_btn, "/user/hand/left") else 0.0,
+        }
+        right_target = {
+            "trigger": max(0.0, min(1.0, self._read_float_action(self._act_right_trigger, "/user/hand/right"))),
+            "grip": 1.0 if self._read_bool_action(self._act_right_grip, "/user/hand/right") else 0.0,
+            "a_button": 1.0 if self._read_bool_action(self._act_a_btn, "/user/hand/right") else 0.0,
+            "b_button": 1.0 if self._read_bool_action(self._act_b_btn, "/user/hand/right") else 0.0,
+            "joystick": 1.0 if self._read_bool_action(self._act_right_stick_click, "/user/hand/right") else 0.0,
+            "joystick_x": rx,
+            "joystick_y": -ry,
+            "joystick_touched": 1.0 if right_stick_touched else 0.0,
+            "touchpad": 1.0 if self._read_bool_action(self._act_right_stick_click, "/user/hand/right") else 0.0,
+            "touchpad_x": rx,
+            "touchpad_y": -ry,
+            "touchpad_touched": 1.0 if right_stick_touched else 0.0,
+            "right_trigger": max(0.0, min(1.0, self._read_float_action(self._act_right_trigger, "/user/hand/right"))),
+            "right_grip": 1.0 if self._read_bool_action(self._act_right_grip, "/user/hand/right") else 0.0,
+            "right_a_button": 1.0 if self._read_bool_action(self._act_a_btn, "/user/hand/right") else 0.0,
+            "right_b_button": 1.0 if self._read_bool_action(self._act_b_btn, "/user/hand/right") else 0.0,
+            "right_joystick": 1.0 if self._read_bool_action(self._act_right_stick_click, "/user/hand/right") else 0.0,
+            "right_joystick_x": rx,
+            "right_joystick_y": -ry,
+            "right_joystick_touched": 1.0 if right_stick_touched else 0.0,
+            "right_touchpad": 1.0 if self._read_bool_action(self._act_right_stick_click, "/user/hand/right") else 0.0,
+            "right_touchpad_x": rx,
+            "right_touchpad_y": -ry,
+            "right_touchpad_touched": 1.0 if right_stick_touched else 0.0,
+        }
         dt = max(0.0, min(0.050, float(dt or 0.0)))
         alpha = 1.0 if dt <= 0.0 else min(1.0, dt * 24.0)
-        left_current = float(getattr(self, "_ctrl_press_l", 0.0) or 0.0)
-        right_current = float(getattr(self, "_ctrl_press_r", 0.0) or 0.0)
-        self._ctrl_press_l = left_current + (left_target - left_current) * alpha
-        self._ctrl_press_r = right_current + (right_target - right_current) * alpha
+
+        def _smooth(current, target):
+            out = {}
+            for key, target_value in target.items():
+                current_value = float(current.get(key, 0.0) or 0.0)
+                out[key] = current_value + (target_value - current_value) * alpha
+            return out
+
+        self._ctrl_press_l = _smooth(getattr(self, "_ctrl_press_l", {}) or {}, left_target)
+        self._ctrl_press_r = _smooth(getattr(self, "_ctrl_press_r", {}) or {}, right_target)
 
     def _pulse_haptic(
         self,

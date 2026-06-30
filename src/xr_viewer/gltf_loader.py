@@ -342,6 +342,23 @@ def _quat_to_mat4(q):
     ], dtype=np.float64)
 
 
+def _node_local_matrix(node):
+    matrix = node.get('matrix')
+    if isinstance(matrix, list) and len(matrix) == 16:
+        # glTF stores matrices in column-major order.
+        return np.array(matrix, dtype=np.float64).reshape((4, 4)).T
+
+    t = node.get('translation', [0, 0, 0])
+    r = node.get('rotation', [0, 0, 0, 1])  # [x, y, z, w]
+    s = node.get('scale', [1, 1, 1])
+
+    T = np.eye(4, dtype=np.float64)
+    T[:3, 3] = t
+    R = _quat_to_mat4(r)
+    S_mat = np.diag([s[0], s[1], s[2], 1.0]).astype(np.float64)
+    return T @ R @ S_mat
+
+
 def _build_node_matrices(gltf):
     """Compute world matrix for each node (top-down). Returns list of 4x4 float64 matrices.
     Parent world matrix = parent_matrix @ local_matrix.
@@ -354,23 +371,7 @@ def _build_node_matrices(gltf):
         return []
 
     # Build local matrices
-    local_mats = []
-    for node in nodes:
-        matrix = node.get('matrix')
-        if isinstance(matrix, list) and len(matrix) == 16:
-            # glTF stores matrices in column-major order.
-            local_mats.append(np.array(matrix, dtype=np.float64).reshape((4, 4)).T)
-            continue
-
-        t = node.get('translation', [0, 0, 0])
-        r = node.get('rotation', [0, 0, 0, 1])  # [x, y, z, w]
-        s = node.get('scale', [1, 1, 1])
-
-        T = np.eye(4, dtype=np.float64)
-        T[:3, 3] = t
-        R = _quat_to_mat4(r)
-        S_mat = np.diag([s[0], s[1], s[2], 1.0]).astype(np.float64)
-        local_mats.append(T @ R @ S_mat)
+    local_mats = [_node_local_matrix(node) for node in nodes]
 
     # Build child -> parent mapping
     parent = [-1] * n
@@ -405,7 +406,7 @@ def _build_node_matrices(gltf):
 
 
 def _iter_scene_mesh_nodes(gltf, world_mats):
-    """Yield (mesh_index, world_matrix) for nodes reachable from the active scene."""
+    """Yield mesh node records reachable from the active scene."""
     nodes = gltf.get('nodes', [])
     scenes = gltf.get('scenes', [])
     scene_idx = gltf.get('scene', 0)
@@ -424,7 +425,9 @@ def _iter_scene_mesh_nodes(gltf, world_mats):
         node = nodes[ni]
         mi = node.get('mesh')
         if isinstance(mi, int):
-            yield mi, world_mats[ni]
+            meshes = gltf.get('meshes', [])
+            mesh_name = str(meshes[mi].get('name') or '') if 0 <= mi < len(meshes) else ''
+            yield mi, world_mats[ni], ni, str(node.get('name') or ''), mesh_name
         children = node.get('children', [])
         stack.extend(reversed([ci for ci in children if isinstance(ci, int) and 0 <= ci < len(nodes)]))
 
@@ -476,6 +479,148 @@ def load_glb_model(path):
     # World matrices for all nodes
     world_mats = _build_node_matrices(gltf)
     nodes = gltf.get('nodes', [])
+    local_mats = [_node_local_matrix(node) for node in nodes]
+    parent = [-1] * len(nodes)
+    name_to_node = {}
+    for ni, node in enumerate(nodes):
+        name = node.get('name')
+        if name:
+            name_to_node[str(name)] = ni
+        for child in node.get('children', []):
+            if isinstance(child, int) and 0 <= child < len(nodes):
+                parent[child] = ni
+
+    def _semantic_from_value_name(value_name, node_name=''):
+        value_l = value_name.lower()
+        node_l = node_name.lower()
+        if 'thumbstick_xaxis' in value_l:
+            return 'joystick_x'
+        if 'thumbstick_yaxis' in value_l:
+            return 'joystick_y'
+        if 'thumbstick_pressed' in value_l:
+            return 'joystick'
+        if 'thumbstick' in value_l and 'touched' in value_l:
+            return 'joystick_touched'
+        if 'touchpad_xaxis' in value_l:
+            return 'touchpad_x'
+        if 'touchpad_yaxis' in value_l:
+            return 'touchpad_y'
+        if 'touchpad_pressed' in value_l:
+            return 'touchpad'
+        if 'touchpad' in value_l and 'touched' in value_l:
+            return 'touchpad_touched'
+        if 'trigger' in value_l:
+            return 'trigger'
+        if 'squeeze' in value_l or 'grasp' in value_l or 'grip' in node_l:
+            return 'grip'
+        if 'a_button' in value_l or node_l.endswith('abutton') or node_l in ('a_button', 'a_button_mesh'):
+            return 'a_button'
+        if 'b_button' in value_l or node_l.endswith('bbutton') or node_l in ('b_button', 'b_button_mesh'):
+            return 'b_button'
+        if 'x_button' in value_l or node_l.endswith('xbutton') or node_l in ('x_button', 'x_button_mesh'):
+            return 'x_button'
+        if 'y_button' in value_l or node_l.endswith('ybutton') or node_l in ('y_button', 'y_button_mesh'):
+            return 'y_button'
+        if 'menu' in value_l or 'menu' in node_l:
+            return 'menu_button'
+        if 'home' in value_l or 'pico' in value_l or 'home' in node_l:
+            return 'home_button'
+        return ''
+
+    def _anim_from_value_node(node_index, value_node_index):
+        value_name = str(nodes[value_node_index].get('name') or '')
+        if not value_name.endswith('_value'):
+            return None
+        prefix = value_name[:-len('_value')]
+        min_index = name_to_node.get(prefix + '_min')
+        max_index = name_to_node.get(prefix + '_max')
+        if min_index is None or max_index is None:
+            return None
+        mesh_world = world_mats[node_index].astype(np.float32)
+        value_world = world_mats[value_node_index].astype(np.float32)
+        try:
+            child_local = (np.linalg.inv(value_world.astype(np.float64)) @ mesh_world.astype(np.float64)).astype(np.float32)
+            inv_mesh_world = np.linalg.inv(mesh_world.astype(np.float64)).astype(np.float32)
+        except Exception:
+            return None
+        parent_index = parent[value_node_index] if value_node_index < len(parent) else -1
+        value_parent_world = world_mats[parent_index] if parent_index >= 0 else np.eye(4, dtype=np.float64)
+        return {
+            'value_name': value_name,
+            'semantic': _semantic_from_value_name(value_name, str(nodes[node_index].get('name') or '')),
+            'value_world': world_mats[value_node_index].astype(np.float32),
+            'min_world': world_mats[min_index].astype(np.float32),
+            'max_world': world_mats[max_index].astype(np.float32),
+            'value_parent_world': value_parent_world.astype(np.float32),
+            'value_local': local_mats[value_node_index].astype(np.float32),
+            'min_local': local_mats[min_index].astype(np.float32),
+            'max_local': local_mats[max_index].astype(np.float32),
+            'child_local': child_local,
+            'inv_mesh_world': inv_mesh_world,
+        }
+
+    def _press_anim_for_mesh_node(node_index):
+        node_name = str(nodes[node_index].get('name') or '') if 0 <= node_index < len(nodes) else ''
+        node_l = node_name.lower()
+        candidates = []
+        parent_index = parent[node_index] if 0 <= node_index < len(parent) else -1
+        while parent_index >= 0:
+            value_name = str(nodes[parent_index].get('name') or '')
+            if value_name.endswith('_value'):
+                prefix = value_name[:-len('_value')]
+                min_index = name_to_node.get(prefix + '_min')
+                max_index = name_to_node.get(prefix + '_max')
+                if min_index is not None and max_index is not None:
+                    candidates.append((parent_index, value_name, min_index, max_index))
+            parent_index = parent[parent_index] if parent_index < len(parent) else -1
+        if not candidates:
+            return None
+        is_stick = (
+            'joystick' in node_l
+            or 'thumbstick' in node_l
+            or 'touchpad' in node_l
+            or any(('thumbstick' in candidate[1].lower() or 'touchpad' in candidate[1].lower()) for candidate in candidates)
+        )
+        if is_stick:
+            for candidate in candidates:
+                if candidate[1].endswith('thumbstick_pressed_value') or candidate[1].endswith('touchpad_pressed_value'):
+                    return _anim_from_value_node(node_index, candidate[0])
+            return None
+        return _anim_from_value_node(node_index, candidates[0][0])
+
+    def _visible_key_for_mesh_node(node_index):
+        parent_index = parent[node_index] if 0 <= node_index < len(parent) else -1
+        while parent_index >= 0:
+            value_name = str(nodes[parent_index].get('name') or '')
+            if value_name.endswith('_value') and 'touched' in value_name.lower():
+                return _semantic_from_value_name(value_name, str(nodes[node_index].get('name') or ''))
+            parent_index = parent[parent_index] if parent_index < len(parent) else -1
+        return ''
+
+    def _axis_anim_for_mesh_node(node_index):
+        node_name = str(nodes[node_index].get('name') or '') if 0 <= node_index < len(nodes) else ''
+        node_l = node_name.lower()
+        if 'joystick' not in node_l and 'thumbstick' not in node_l and 'touchpad' not in node_l:
+            parent_index = parent[node_index] if 0 <= node_index < len(parent) else -1
+            has_stick_axis = False
+            while parent_index >= 0:
+                value_name = str(nodes[parent_index].get('name') or '').lower()
+                if 'thumbstick_' in value_name or 'touchpad_' in value_name:
+                    has_stick_axis = True
+                    break
+                parent_index = parent[parent_index] if parent_index < len(parent) else -1
+            if not has_stick_axis:
+                return None
+        parent_index = parent[node_index] if 0 <= node_index < len(parent) else -1
+        result = {}
+        while parent_index >= 0:
+            value_name = str(nodes[parent_index].get('name') or '')
+            if value_name.endswith('thumbstick_xaxis_pressed_value') or value_name.endswith('touchpad_xaxis_pressed_value'):
+                result['x'] = _anim_from_value_node(node_index, parent_index)
+            elif value_name.endswith('thumbstick_yaxis_pressed_value') or value_name.endswith('touchpad_yaxis_pressed_value'):
+                result['y'] = _anim_from_value_node(node_index, parent_index)
+            parent_index = parent[parent_index] if parent_index < len(parent) else -1
+        return result or None
 
     # Map mesh index to all node instances that reference it.  glTF allows
     # table legs, curtains, string lights, etc. to reuse one mesh from many
@@ -483,10 +628,15 @@ def load_glb_model(path):
     # rest.
     mesh_world_mat = {}
     mesh_world_mats = {}
-    for mi, world_mat_for_node in _iter_scene_mesh_nodes(gltf, world_mats):
-        mesh_world_mats.setdefault(mi, []).append(world_mat_for_node)
+    mesh_node_meta = {}
+    for mi, world_mat_for_node, node_index, node_name, mesh_name in _iter_scene_mesh_nodes(gltf, world_mats):
+        press_anim = _press_anim_for_mesh_node(node_index)
+        axis_anim = _axis_anim_for_mesh_node(node_index)
+        visible_key = _visible_key_for_mesh_node(node_index)
+        mesh_world_mats.setdefault(mi, []).append((world_mat_for_node, node_index, node_name, mesh_name, press_anim, axis_anim, visible_key))
         if mi not in mesh_world_mat:
             mesh_world_mat[mi] = world_mat_for_node
+            mesh_node_meta[mi] = (node_index, node_name, mesh_name, press_anim, axis_anim, visible_key)
 
     # Extract textures
     all_textures = []
@@ -543,6 +693,7 @@ def load_glb_model(path):
         if mi not in mesh_world_mats:
             continue
         world_mat = mesh_world_mat.get(mi, np.eye(4, dtype=np.float64))
+        node_index, node_name, mesh_name, press_anim, axis_anim, visible_key = mesh_node_meta.get(mi, (-1, '', str(mesh.get('name') or ''), None, None, ''))
         for prim in mesh.get('primitives', []):
             attrs = prim.get('attributes', {})
             if 'POSITION' not in attrs:
@@ -909,6 +1060,13 @@ def load_glb_model(path):
                             'foliage_mode': foliage_mode,
                             'has_uv1': has_uv1,
                             'tangent': tangent,
+                            'node_index': node_index,
+                            'node_name': node_name,
+                            'mesh_name': mesh_name,
+                            'press_anim': press_anim,
+                            'axis_anim': axis_anim,
+                            'anim_key': press_anim.get('semantic', '') if press_anim else '',
+                            'visible_key': visible_key,
                             '_mesh_index': mi,
                             '_world_matrix': world_mat})
 
@@ -938,7 +1096,7 @@ def load_glb_model(path):
         else:
             local_tangent = None
 
-        for inst_world in instances[1:]:
+        for inst_world, node_index, node_name, mesh_name, press_anim, axis_anim, visible_key in instances[1:]:
             inst_world = inst_world.astype(np.float64)
             clone = dict(primitive)
             clone_vertices = primitive['vertices'].copy()
@@ -952,6 +1110,13 @@ def load_glb_model(path):
                 inst_tangent[:, :3] = _orthogonalize_tangent(inst_tangent[:, :3], clone_vertices[:, 3:6])
                 clone['tangent'] = inst_tangent
             clone['_world_matrix'] = inst_world
+            clone['node_index'] = node_index
+            clone['node_name'] = node_name
+            clone['mesh_name'] = mesh_name
+            clone['press_anim'] = press_anim
+            clone['axis_anim'] = axis_anim
+            clone['anim_key'] = press_anim.get('semantic', '') if press_anim else ''
+            clone['visible_key'] = visible_key
             extra_instances.append(clone)
 
     if extra_instances:

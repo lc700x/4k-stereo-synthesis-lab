@@ -1,4 +1,5 @@
 import math
+import time
 
 import moderngl
 import numpy as np
@@ -7,11 +8,48 @@ from OpenGL.GL import GL_CCW, GL_CW, glFrontFace
 
 class CoreLaserRenderMixin:
     def _cursor_ring_specs(self, distance_m):
-        scale = float(np.clip(float(distance_m) / 2.0, 1.0, 50.0))
+        scale = float(np.clip(float(distance_m) / 2.0, 0.35, 50.0))
         return (
             (0.0096 * scale, (0.2, 0.6, 1.0, 0.75)),
             (0.0056 * scale, (1.0, 1.0, 1.0, 0.75)),
         )
+
+    def _cursor_ring_distance_from_eye(self, hit_pos, fallback_m):
+        view_mat = getattr(self, '_current_view_mat', None)
+        if view_mat is None:
+            return float(fallback_m)
+        try:
+            view_inv = np.linalg.inv(view_mat)
+            eye_pos = view_inv[:3, 3].astype(np.float64)
+            hit = np.asarray(hit_pos, dtype=np.float64)
+            dist = float(np.linalg.norm(hit - eye_pos))
+        except Exception:
+            return float(fallback_m)
+        return dist if dist > 1e-4 else float(fallback_m)
+
+    def _cursor_ring_model(self, hit_target, hit_pos, radius):
+        model = np.eye(4, dtype='f4')
+        if hit_target == 'screen':
+            _sh, _screen_pos, r_ax, u_ax, screen_n = self._screen_basis()
+            model[:3, 0] = (r_ax * radius).astype('f4')
+            model[:3, 1] = (u_ax * radius).astype('f4')
+            model[:3, 2] = screen_n.astype('f4')
+        elif hit_target == 'keyboard':
+            _cp = math.cos(self._keyboard_pitch)
+            _sp = math.sin(self._keyboard_pitch)
+            _cy = math.cos(self._keyboard_yaw)
+            _sy = math.sin(self._keyboard_yaw)
+            _kb_r = np.array([_cy, 0.0, -_sy], dtype='f4')
+            _kb_u = np.array([_sy * _sp, _cp, _cy * _sp], dtype='f4')
+            _kb_nv = np.array([_sy * _cp, -_sp, _cy * _cp], dtype='f4')
+            model[:3, 0] = _kb_r * radius
+            model[:3, 1] = _kb_u * radius
+            model[:3, 2] = _kb_nv
+        else:
+            model[0, 0] = radius
+            model[1, 1] = radius
+        model[:3, 3] = np.asarray(hit_pos, dtype='f4')
+        return model
 
     @staticmethod
     def _mat3_to_quat(m33):
@@ -60,6 +98,15 @@ class CoreLaserRenderMixin:
         s1 = math.cos(theta) - dot * sin_t / sin_t0
         s2 = sin_t / sin_t0
         return s1 * q1 + s2 * q2
+
+    @staticmethod
+    def _quat_to_mat3(q):
+        x, y, z, w = q
+        return np.array([
+            [1 - 2 * y * y - 2 * z * z, 2 * x * y - 2 * w * z, 2 * x * z + 2 * w * y],
+            [2 * x * y + 2 * w * z, 1 - 2 * x * x - 2 * z * z, 2 * y * z - 2 * w * x],
+            [2 * x * z - 2 * w * y, 2 * y * z + 2 * w * x, 1 - 2 * x * x - 2 * y * y],
+        ], dtype=np.float32)
 
     def _smooth_controller_poses(self):
         """Pre-smooth both controller poses once per frame.
@@ -277,35 +324,38 @@ class CoreLaserRenderMixin:
                     _kb_y = np.array([_sy * _sp, _cp, _cy * _sp], dtype='f8')
                     _kb_pos = np.array([self._keyboard_pan_x, self._keyboard_pan_y, -self._keyboard_distance], dtype='f8')
                     hit_pos = (_kb_pos + _kb_x * float(_smooth_pos[0]) + _kb_y * float(_smooth_pos[1])).astype('f4')
-            for radius, color in self._cursor_ring_specs(beam_len):
-                model = np.eye(4, dtype='f4')
-                if hit_target == 'screen':
-                    _sh, _screen_pos, r_ax, u_ax, screen_n = self._screen_basis()
-                    model[:3, 0] = (r_ax * radius).astype('f4')
-                    model[:3, 1] = (u_ax * radius).astype('f4')
-                    model[:3, 2] = screen_n.astype('f4')
-                elif hit_target == 'keyboard':
-                    _cp = math.cos(self._keyboard_pitch)
-                    _sp = math.sin(self._keyboard_pitch)
-                    _cy = math.cos(self._keyboard_yaw)
-                    _sy = math.sin(self._keyboard_yaw)
-                    _kb_r = np.array([_cy, 0.0, -_sy], dtype='f4')
-                    _kb_u = np.array([_sy * _sp, _cp, _cy * _sp], dtype='f4')
-                    _kb_nv = np.array([_sy * _cp, -_sp, _cy * _cp], dtype='f4')
-                    model[:3, 0] = _kb_r * radius
-                    model[:3, 1] = _kb_u * radius
-                    model[:3, 2] = _kb_nv
-                else:
-                    model[0, 0] = radius
-                    model[1, 1] = radius
-                model[:3, 3] = hit_pos.astype('f4')
+            ring_distance = self._cursor_ring_distance_from_eye(hit_pos, beam_len)
+            for radius, color in self._cursor_ring_specs(ring_distance):
+                model = self._cursor_ring_model(hit_target, hit_pos, radius)
                 circle_mvp = vp_mat @ model
                 self._border_prog['u_mvp'].write(circle_mvp.T.tobytes())
                 self._border_prog['u_color'].value = color
                 self._circle_vao.render(moderngl.TRIANGLE_FAN)
 
+    def _controller_anim_delta(self, anim, amount):
+        amount = max(-1.0, min(1.0, float(amount or 0.0)))
+        if abs(amount) <= 0.001 or not anim:
+            return None
+        t = abs(amount)
+        if all(k in anim for k in ('value_parent_world', 'value_local', 'min_local', 'max_local')):
+            target_local = anim['min_local'] if amount < 0.0 else anim['max_local']
+            value_local = np.array(anim['value_local'], dtype=np.float32, copy=True)
+            value_local[:3, 3] = anim['value_local'][:3, 3] + (target_local[:3, 3] - anim['value_local'][:3, 3]) * t
+            q0 = self._mat3_to_quat(anim['value_local'][:3, :3].astype(np.float64))
+            q1 = self._mat3_to_quat(target_local[:3, :3].astype(np.float64))
+            value_local[:3, :3] = self._quat_to_mat3(self._slerp_quat(q0, q1, t))
+            value_world = (anim['value_parent_world'] @ value_local).astype(np.float32)
+        else:
+            target_world = anim['min_world'] if amount < 0.0 else anim['max_world']
+            value_world = np.array(anim['value_world'], dtype=np.float32, copy=True)
+            value_world[:3, 3] = anim['value_world'][:3, 3] + (target_world[:3, 3] - anim['value_world'][:3, 3]) * t
+            q0 = self._mat3_to_quat(anim['value_world'][:3, :3].astype(np.float64))
+            q1 = self._mat3_to_quat(target_world[:3, :3].astype(np.float64))
+            value_world[:3, :3] = self._quat_to_mat3(self._slerp_quat(q0, q1, t))
+        return (value_world @ anim['child_local'] @ anim['inv_mesh_world']).astype(np.float32)
+
     def _render_controllers(self, mgl_fbo, vp_mat, view_mat):
-        """Render PICO 4 Ultra 3D controller models with Blinn-Phong lighting."""
+        """Render controller models with Blinn-Phong lighting."""
         now = self._frame_now
         controllers = []
         for grip_mat, prims, last_move_attr, press_attr in [
@@ -319,9 +369,26 @@ class CoreLaserRenderMixin:
             r_t = view_mat[:3, :3].T
             eye_pos = -r_t @ view_mat[:3, 3]
             dist = float(np.linalg.norm(grip_mat[:3, 3].astype(np.float64) - eye_pos.astype(np.float64)))
-            press_amount = max(0.0, min(1.0, float(getattr(self, press_attr, 0.0) or 0.0)))
-            controllers.append((dist, grip_mat, prims, press_amount))
+            press_map = getattr(self, press_attr, {}) or {}
+            controllers.append((dist, grip_mat, prims, press_map))
 
+        if getattr(self, '_openxr_debug', False):
+            now_log = time.perf_counter()
+            last_log = float(getattr(self, '_controller_render_debug_last', 0.0) or 0.0)
+            if now_log - last_log >= 2.0:
+                self._controller_render_debug_last = now_log
+                print(
+                    "[OpenXRViewer][debug] controller render: "
+                    f"l_grip={self._grip_mat_l is not None} r_grip={self._grip_mat_r is not None} "
+                    f"l_aim={self._aim_mat_l is not None} r_aim={self._aim_mat_r is not None} "
+                    f"l_prims={len(self._ctrl_prims_l or [])} r_prims={len(self._ctrl_prims_r or [])} "
+                    f"l_idle={self._frame_now - self._laser_last_move_l:.2f} "
+                    f"r_idle={self._frame_now - self._laser_last_move_r:.2f} "
+                    f"draw={len(controllers)} env={getattr(self, '_environment_model', None)} "
+                    f"active_env={getattr(self, '_active_environment', None)} "
+                    f"pano={bool(getattr(self, '_panorama_background_path', None))}",
+                    flush=True,
+                )
         if not controllers:
             return
 
@@ -329,8 +396,58 @@ class CoreLaserRenderMixin:
         mgl_fbo.use()
         view_inv = np.linalg.inv(view_mat)
         cam_pos = view_inv[:3, 3].astype(np.float32)
+        env_tex = None
+        if getattr(self, '_controller_hdr_lighting', True) and getattr(self, '_panorama_background_path', None) and hasattr(self, '_get_panorama_texture'):
+            try:
+                env_tex = self._get_panorama_texture()
+            except Exception:
+                env_tex = None
+        if env_tex is not None:
+            env_tex.use(location=9)
+            self._controller_prog['u_env_tex'].value = 9
+            self._controller_prog['u_use_env_tex'].value = 1
+            settings = getattr(self, '_panorama_background_settings', {}) or {}
+            try:
+                env_intensity = max(0.0, float(settings.get('exposure', 1.0) or 1.0))
+            except (TypeError, ValueError):
+                env_intensity = 1.0
+            self._controller_prog['u_env_intensity'].value = env_intensity
+        else:
+            self._controller_prog['u_use_env_tex'].value = 0
+            self._controller_prog['u_env_intensity'].value = 0.0
+        screen_tex = None
+        if hasattr(self, '_screen_light_source_texture'):
+            try:
+                screen_tex, _screen_size = self._screen_light_source_texture()
+            except Exception:
+                screen_tex = None
+        elif getattr(self, '_runtime_direct_source', False):
+            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
+            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
+            if 0 <= eye_index < len(runtime_textures):
+                screen_tex = runtime_textures[eye_index]
+        else:
+            screen_tex = getattr(self, 'color_tex', None)
+        if screen_tex is not None and getattr(self, 'screen_height', None) is not None:
+            try:
+                sh, screen_pos, r_ax, u_ax, screen_n = self._screen_basis()
+                screen_tex.use(location=10)
+                self._controller_prog['u_screen_light_tex'].value = 10
+                self._controller_prog['u_screen_light_enabled'].value = 1
+                self._controller_prog['u_screen_light_pos'].value = tuple(float(x) for x in screen_pos)
+                self._controller_prog['u_screen_light_normal'].value = tuple(float(x) for x in screen_n)
+                self._controller_prog['u_screen_light_right'].value = tuple(float(x) for x in r_ax)
+                self._controller_prog['u_screen_light_up'].value = tuple(float(x) for x in u_ax)
+                self._controller_prog['u_screen_light_half_size'].value = (float(self.screen_width) * 0.5, float(sh) * 0.5)
+                self._controller_prog['u_screen_light_intensity'].value = 0.32
+            except Exception:
+                self._controller_prog['u_screen_light_enabled'].value = 0
+                self._controller_prog['u_screen_light_intensity'].value = 0.0
+        else:
+            self._controller_prog['u_screen_light_enabled'].value = 0
+            self._controller_prog['u_screen_light_intensity'].value = 0.0
 
-        for _dist, grip_mat, prims, press_amount in controllers:
+        for _dist, grip_mat, prims, press_map in controllers:
             t_mat = np.eye(4, dtype=np.float32)
             _off = self._calibration_temp_offset if self._calibration_mode else self._ctrl_model_offset
             _rot = self._calibration_temp_rot if self._calibration_mode else self._ctrl_model_rot_deg
@@ -346,22 +463,10 @@ class CoreLaserRenderMixin:
             r_mat[2, 1] = _sa
             r_mat[2, 2] = _ca
 
-            press_mat = np.eye(4, dtype=np.float32)
-            if press_amount > 0.001:
-                press_mat[1, 3] = -0.0045 * press_amount
-                press_mat[2, 3] = -0.0020 * press_amount
-                press_mat[0, 0] = 1.0 + 0.0040 * press_amount
-                press_mat[1, 1] = 1.0 - 0.0075 * press_amount
-                press_mat[2, 2] = 1.0 + 0.0030 * press_amount
+            base_corr = (r_mat @ t_mat).astype(np.float32)
+            base_model_mat = (grip_mat @ base_corr).astype(np.float32)
 
-            _corr = (r_mat @ t_mat @ press_mat).astype(np.float32)
-            model_mat = (grip_mat @ _corr).astype(np.float32)
-
-            press_glow = 0.14 * press_amount
             self._controller_prog['u_mvp'].write(vp_mat.astype(np.float32).T.tobytes())
-            self._controller_prog['u_model'].write(model_mat.T.tobytes())
-            self._controller_prog['u_light_color'].value = (0.60 + press_glow, 0.60 + press_glow, 0.65 + press_glow)
-            self._controller_prog['u_ambient_color'].value = (0.22 + press_glow * 0.35, 0.22 + press_glow * 0.35, 0.24 + press_glow * 0.35)
             self._controller_prog['u_camera_pos'].write(cam_pos.tobytes())
 
             sorted_prims = sorted(prims, key=lambda p: p['tri_count'], reverse=True)
@@ -370,6 +475,26 @@ class CoreLaserRenderMixin:
                 glFrontFace(GL_CW)
 
             for prim in sorted_prims:
+                visible_key = prim.get('visible_key', '')
+                if visible_key and float(press_map.get(visible_key, 0.0) or 0.0) <= 0.001:
+                    continue
+                anim_key = prim.get('anim_key', '') or prim.get('node_name', '')
+                press_amount = max(0.0, min(1.0, float(press_map.get(anim_key, press_map.get(prim.get('node_name', ''), 0.0)) or 0.0)))
+                press_anim = prim.get('press_anim')
+                model_mat = base_model_mat
+                press_delta = self._controller_anim_delta(press_anim, press_amount)
+                if press_delta is not None:
+                    model_mat = (model_mat @ press_delta).astype(np.float32)
+                axis_anim = prim.get('axis_anim') or {}
+                axis_x = press_map.get(f"{anim_key}_x", press_map.get(f"{prim.get('node_name', '')}_x", 0.0))
+                axis_y = press_map.get(f"{anim_key}_y", press_map.get(f"{prim.get('node_name', '')}_y", 0.0))
+                axis_x_delta = self._controller_anim_delta(axis_anim.get('x'), axis_x)
+                axis_y_delta = self._controller_anim_delta(axis_anim.get('y'), axis_y)
+                if axis_x_delta is not None:
+                    model_mat = (model_mat @ axis_x_delta).astype(np.float32)
+                if axis_y_delta is not None:
+                    model_mat = (model_mat @ axis_y_delta).astype(np.float32)
+                self._controller_prog['u_model'].write(model_mat.T.tobytes())
                 tex = self._ctrl_tex_cache.get(prim['tex_key'])
                 if tex is not None:
                     tex.use(location=3)

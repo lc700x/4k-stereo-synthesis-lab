@@ -183,9 +183,8 @@ class CoreKeyboardMixin:
     def _anchor_keyboard_below_screen(self):
         """Snap the keyboard below the screen's bottom edge, facing the same direction.
 
-        The keyboard sits below the FPS overlay panel so it doesn't overlap.
+        The keyboard's top edge stays 15% of the screen height below the screen.
         """
-        KB_GAP = 0.10
         if self.screen_height is None:
             fw, fh = self.frame_size
             if fh > fw:
@@ -194,10 +193,11 @@ class CoreKeyboardMixin:
                 sh = self.screen_width * 9.0 / 16.0
         else:
             sh = self.screen_height
+        kb_gap = sh * 0.15
         eff_height = self._keyboard_height
         self._keyboard_pan_x    = self.screen_pan_x
         self._keyboard_pan_y    = (self.screen_pan_y - sh / 2.0
-                                - KB_GAP
+                                - kb_gap
                                 - eff_height / 2.0)
         self._keyboard_distance = self.screen_distance - 0.001  # slightly closer than screen  # tiny Z offset to avoid depth fighting
         # Auto-orient keyboard toward the head (sphere center), same logic as screen.

@@ -14,5 +14,6 @@
   "glow_intensity": 0.175,
   "glow_width": 0.5,
   "glow_intensity_multiplier": 1.5,
+  "controller_hdr_lighting": false,
   "screen_light_intensity": 3.5
 }

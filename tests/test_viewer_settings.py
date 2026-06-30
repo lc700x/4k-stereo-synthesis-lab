@@ -48,6 +48,16 @@ def test_resolve_viewer_settings_requires_vsync_key():
         raise AssertionError("resolve_viewer_settings should require VSync")
 
 
+def test_resolve_viewer_settings_resolves_xr_headset_screen_preset():
+    settings = dict(BASE_SETTINGS, VSync=False, **{"XR Headset Model": "XREAL Air / Air 2 / Pro"})
+
+    resolved = resolve_viewer_settings(settings)
+
+    assert resolved.xr_headset_model == "XREAL Air / Air 2 / Pro"
+    assert resolved.openxr_screen_distance == 4.0
+    assert resolved.openxr_screen_width == 4.62
+
+
 def test_resolve_viewer_settings_reads_render_size_config():
     settings = dict(
         BASE_SETTINGS,

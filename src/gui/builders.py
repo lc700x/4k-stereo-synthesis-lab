@@ -2,6 +2,7 @@
 import os
 import flet as ft
 from utils import OS_NAME, ALL_MODELS, DEFAULT_PORT
+from utils.xr_headset_presets import xr_headset_options, xr_headset_to_display
 from .config import (
     DEFAULTS, DEFAULT_FAMILIES, DEFAULT_MODEL_LIST,
     FAMILY_SIZE_TO_MODEL, FAMILY_TO_SIZES,
@@ -198,7 +199,7 @@ class GUIBuilderMixin:
             self.temporal_strength_label,
             self.edge_threshold_label, self.anaglyph_label,
             self.render_scale_label, self.render_max_pixels_label, self.render_align_label,
-            self.display_mode_label, self.environment_label,
+            self.display_mode_label, self.xr_headset_label, self.environment_label,
             self.theme_label, self.stream_quality_label, self.stream_key_label,
             self.audio_delay_label,
         ]
@@ -391,6 +392,8 @@ class GUIBuilderMixin:
         self.target_fps_label = ft.Text("Capture FPS:", size=FONT_SIZE, width=S(130))
         self.target_fps_dd = CompactDropdown(options=["Auto", "60", "72", "80", "90", "120"],
             value="Auto", width=S(74))
+        self.xr_preview_cb = ft.Checkbox(label="XR Preview Window",
+            value=DEFAULTS.get("XR Preview Window", True))
         self.advanced_device_cb = ft.Checkbox(scale=SCALE, visual_density=ft.VisualDensity.COMPACT,
             label="Advanced Options", value=False, on_change=self.on_advanced_device_change)
         row5 = ft.Row([self.computing_device_label, self.device_dd,
@@ -404,7 +407,7 @@ class GUIBuilderMixin:
         row6 = ft.Row([self.capture_tool_label, self.capture_tool_dd,
             ft.Container(width=S(15)), self.showfps_cb], spacing=1)
         self.row6b = ft.Row([self.target_fps_label, self.target_fps_dd,
-            ft.Container(width=S(20)), self.local_vsync_cb], spacing=1)
+            ft.Container(width=S(20)), self.xr_preview_cb, ft.Container(width=S(20)), self.local_vsync_cb], spacing=1)
         self.render_policy_label = ft.Text("Render Policy:", size=FONT_SIZE, width=S(130), visible=False)
         self.render_policy_dd = CompactDropdown(
             options=["Scaled"], value="Scaled", width=S(130),
@@ -447,12 +450,16 @@ class GUIBuilderMixin:
         # Row 8: Run mode + Display mode / Controller
         self.run_mode_label = ft.Text("Run Mode:", size=FONT_SIZE, width=S(130))
         self.run_mode_dd = CompactDropdown(on_select=self.on_run_mode_change, width=S(130))
+        self.xr_headset_label = ft.Text("Headset Model:", size=FONT_SIZE, width=S(130))
+        self.xr_headset_dd = CompactDropdown(
+            options=xr_headset_options(self.locale),
+            value=xr_headset_to_display(DEFAULTS.get("XR Headset Model"), self.locale),
+            on_select=self.on_xr_headset_change,
+            width=S(130))
         self.display_mode_label = ft.Text("Display Mode:", size=FONT_SIZE, width=S(130))
         self.display_mode_dd = CompactDropdown(
             options=["Half-SBS", "Full-SBS", "Half-TAB", "Full-TAB", "Depth Map", "Anaglyph", "Interleaved", "Mono", "Leia"],
             value="Half-SBS", width=S(130))
-        self.xr_preview_cb = ft.Checkbox(label="XR Preview Window",
-            value=DEFAULTS.get("XR Preview Window", True))
         self.controller_label = ft.Text("Controller:", size=FONT_SIZE, width=S(130))
         try:
             ctrl_base = os.path.join(BASE_DIR, "controllers")
@@ -477,7 +484,8 @@ class GUIBuilderMixin:
             on_select=self.on_env_change,
             width=S(130))
         self.row7a = ft.Row([self.run_mode_label, self.run_mode_dd, ft.Container(width=S(40)),
-            self.display_mode_label, self.display_mode_dd, self.xr_preview_cb], spacing=1)
+            self.xr_headset_label, self.xr_headset_dd,
+            self.display_mode_label, self.display_mode_dd], spacing=1)
         self.row7b = ft.Row([self.controller_label, self.ctrl_model_dd, ft.Container(width=S(40)),
             self.environment_label, self.env_model_dd], spacing=1)
 

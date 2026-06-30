@@ -382,21 +382,34 @@ in vec3 v_position;
 out vec4 fragColor;
 
 uniform sampler2D u_tex;
-uniform vec3 u_light_color;    // Light source color
-uniform vec3 u_ambient_color;  // Ambient light color
+uniform sampler2D u_env_tex;
+uniform sampler2D u_screen_light_tex;
 uniform vec3 u_base_color_factor; // Base color factor
 uniform int u_use_texture;     // 0: use solid color, 1: sample texture
+uniform int u_use_env_tex;
+uniform int u_screen_light_enabled;
+uniform float u_env_intensity;
+uniform float u_screen_light_intensity;
 uniform vec3 u_camera_pos;     // Camera world coordinates (= headset position)
+uniform vec3 u_screen_light_pos;
+uniform vec3 u_screen_light_normal;
+uniform vec3 u_screen_light_right;
+uniform vec3 u_screen_light_up;
+uniform vec2 u_screen_light_half_size;
+
+vec2 env_uv(vec3 dir) {
+    dir = normalize(dir);
+    float u = atan(dir.x, dir.z) / 6.28318530718 + 0.5;
+    float v = asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265359 + 0.5;
+    return vec2(u, 1.0 - v);
+}
 
 void main() {
     vec2 t_uv = v_uv;  // alias (no transform for controllers)
     // Discard back faces (inner walls), keep only front faces (outer shell)
     if (!gl_FrontFacing) discard;
     vec3 N = normalize(v_normal);
-    vec3 light_pos = u_camera_pos + vec3(0.0, 0.05, 0.0);
-    vec3 L = normalize(light_pos - v_position);
     vec3 V = normalize(u_camera_pos - v_position);
-    vec3 H = normalize(L + V);
 
     vec3 baseColor;
     if (u_use_texture == 1) {
@@ -405,13 +418,54 @@ void main() {
         baseColor = u_base_color_factor;
     }
 
-    float diff = max(dot(N, L), 0.0);
-    vec3 diffuse = u_light_color * diff;
-    vec3 ambient = u_ambient_color;
-    float spec = pow(max(dot(N, H), 0.0), 32.0);
-    vec3 specular = u_light_color * spec;
+    vec3 color = baseColor * 0.30;
+    vec3 R = reflect(-V, N);
+    if (u_use_env_tex == 1) {
+        vec3 env_spec = textureLod(u_env_tex, env_uv(R), 3.0).rgb;
+        vec3 env_diff = textureLod(u_env_tex, env_uv(N), 5.0).rgb;
+        float view_facing = smoothstep(-0.25, 0.65, dot(N, V));
+        color = baseColor * mix(vec3(0.32), env_diff, 0.36) * u_env_intensity + env_spec * (0.30 * u_env_intensity * view_facing);
+    }
+    vec3 top_light_pos = u_camera_pos + vec3(0.0, 0.45, -0.18);
+    vec3 top_light_dir = normalize(top_light_pos - v_position);
+    float top_facing = max(dot(N, top_light_dir), 0.0);
+    float top_fill = pow(top_facing, 1.25) * smoothstep(-0.20, 0.65, dot(N, V));
+    color += baseColor * vec3(0.95, 0.97, 1.0) * (0.40 * top_fill);
 
-    fragColor = vec4((ambient + diffuse + specular) * baseColor, 1.0);
+    if (u_screen_light_enabled == 1) {
+        vec3 screen_tint = (
+            textureLod(u_screen_light_tex, vec2(0.50, 0.50), 0.0).rgb +
+            textureLod(u_screen_light_tex, vec2(0.25, 0.30), 0.0).rgb +
+            textureLod(u_screen_light_tex, vec2(0.75, 0.30), 0.0).rgb +
+            textureLod(u_screen_light_tex, vec2(0.25, 0.70), 0.0).rgb +
+            textureLod(u_screen_light_tex, vec2(0.75, 0.70), 0.0).rgb
+        ) * 0.20;
+        vec3 screen_light_dir = normalize(u_screen_light_pos - v_position);
+        float screen_facing = max(dot(N, screen_light_dir), 0.0);
+        float screen_key = pow(screen_facing, 0.75);
+        color += baseColor * screen_tint * (1.00 * u_screen_light_intensity * screen_key);
+
+        float denom = dot(R, u_screen_light_normal);
+        if (abs(denom) > 0.001) {
+            float t = dot(u_screen_light_pos - v_position, u_screen_light_normal) / denom;
+            if (t > 0.0) {
+                vec3 hit = v_position + R * t;
+                vec3 local = hit - u_screen_light_pos;
+                vec2 screen_p = vec2(
+                    dot(local, u_screen_light_right) / max(u_screen_light_half_size.x, 0.001),
+                    dot(local, u_screen_light_up) / max(u_screen_light_half_size.y, 0.001)
+                );
+                if (abs(screen_p.x) <= 1.0 && abs(screen_p.y) <= 1.0) {
+                    vec2 screen_uv = screen_p * 0.5 + 0.5;
+                    vec3 screen_col = textureLod(u_screen_light_tex, vec2(1.0 - screen_uv.x, 1.0 - screen_uv.y), 0.0).rgb;
+                    float fresnel = pow(clamp(1.0 - max(dot(N, V), 0.0), 0.0, 1.0), 2.0);
+                    color += mix(baseColor * screen_tint, screen_col, 0.72) * (0.38 + 0.95 * fresnel) * u_screen_light_intensity * screen_facing;
+                }
+            }
+        }
+    }
+
+    fragColor = vec4(clamp(color, 0.0, 1.0), 1.0);
 }
 """
 

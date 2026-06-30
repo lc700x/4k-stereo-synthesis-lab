@@ -140,10 +140,12 @@ class CoreScreenControlMixin:
             self.screen_yaw = 0.0
 
         display_height_m = float(width_m) * 9.0 / 16.0
+        view_distance = self._screen_view_distance()
         self._preset_name_overlay = (
             f"{name}  {float(width_m):.2f} x {display_height_m:.2f} m"
-            f"  @ {float(distance_m):.2f} m"
+            f"  @ {view_distance:.2f} m"
         )
+        self._preset_osd_last_key = None
         self._last_overlay_update = 0.0
         self._screen_footprint_logged.clear()
         self._border_alpha = 1.0
@@ -153,7 +155,7 @@ class CoreScreenControlMixin:
             self._anchor_keyboard_below_screen()
         print(
             f"[OpenXRViewer] Screen preset: {name} "
-            f"width={self.screen_width:.3f}m distance={float(distance_m):.3f}m",
+            f"width={self.screen_width:.3f}m distance={view_distance:.3f}m",
             flush=True,
         )
         return True
@@ -392,8 +394,8 @@ class CoreScreenControlMixin:
                 fz /= horiz
             else:
                 fx, fz = 0.0, -1.0
-            self.screen_distance = hx * fx + hz * fz + reset_dist
-            self.screen_pan_x = hz * fx - hx * fz
+            self.screen_distance = -(hz + fz * reset_dist)
+            self.screen_pan_x = hx + fx * reset_dist
             self.screen_pan_y = float(self._initial_head_y)
             self.screen_yaw = math.atan2(-fx, -fz)
         else:

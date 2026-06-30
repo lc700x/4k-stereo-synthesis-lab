@@ -68,6 +68,9 @@ class RuntimeExports:
     environment_help_rows: list
     controller_model: str
     environment_model: str
+    xr_headset_model: str
+    openxr_screen_width: float
+    openxr_screen_distance: float
     xr_preview_window: bool
 
 
@@ -138,5 +141,8 @@ def resolve_runtime_exports(settings: dict, *, os_name: str) -> RuntimeExports:
         environment_help_rows=viewer_settings.environment_help_rows,
         controller_model=viewer_settings.controller_model,
         environment_model=viewer_settings.environment_model,
+        xr_headset_model=viewer_settings.xr_headset_model,
+        openxr_screen_width=viewer_settings.openxr_screen_width,
+        openxr_screen_distance=viewer_settings.openxr_screen_distance,
         xr_preview_window=viewer_settings.xr_preview_window,
     )

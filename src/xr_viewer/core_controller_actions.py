@@ -112,6 +112,8 @@ class CoreControllerActionsMixin:
         self._act_y_btn     = make_bool("y_btn",      "Y Button")
         self._act_left_stick_click  = make_bool("left_stick_click",  "Left Stick Click")
         self._act_right_stick_click = make_bool("right_stick_click", "Right Stick Click")
+        self._act_left_stick_touch  = make_bool("left_stick_touch",  "Left Stick Touch")
+        self._act_right_stick_touch = make_bool("right_stick_touch", "Right Stick Touch")
 
         def make_float(name, label):
             return xr.create_action(
@@ -192,6 +194,8 @@ class CoreControllerActionsMixin:
                 ("/user/hand/right/input/thumbstick",        self._act_right_stick),
                 ("/user/hand/left/input/thumbstick/click",   self._act_left_stick_click),
                 ("/user/hand/right/input/thumbstick/click",  self._act_right_stick_click),
+                ("/user/hand/left/input/thumbstick/touch",   self._act_left_stick_touch),
+                ("/user/hand/right/input/thumbstick/touch",  self._act_right_stick_touch),
                 ("/user/hand/left/input/menu/click",         self._act_menu_btn),
                 ("/user/hand/left/input/squeeze/value",      self._act_left_grip),
                 ("/user/hand/right/input/squeeze/value",     self._act_right_grip),
@@ -213,6 +217,10 @@ class CoreControllerActionsMixin:
                 ("/user/hand/right/input/thumbstick",        self._act_right_stick),
                 ("/user/hand/left/input/thumbstick/click",   self._act_left_stick_click),
                 ("/user/hand/right/input/thumbstick/click",  self._act_right_stick_click),
+                ("/user/hand/left/input/thumbstick/touch",   self._act_left_stick_touch),
+                ("/user/hand/right/input/thumbstick/touch",  self._act_right_stick_touch),
+                ("/user/hand/left/input/trackpad/touch",     self._act_left_stick_touch),
+                ("/user/hand/right/input/trackpad/touch",    self._act_right_stick_touch),
                 ("/user/hand/left/input/trackpad/click",     self._act_menu_btn),
                 ("/user/hand/left/input/squeeze/value",      self._act_left_grip),
                 ("/user/hand/right/input/squeeze/value",     self._act_right_grip),
@@ -237,6 +245,8 @@ class CoreControllerActionsMixin:
                 ("/user/hand/right/input/trackpad",          self._act_right_stick),
                 ("/user/hand/left/input/trackpad/click",     self._act_left_stick_click),
                 ("/user/hand/right/input/trackpad/click",    self._act_right_stick_click),
+                ("/user/hand/left/input/trackpad/touch",     self._act_left_stick_touch),
+                ("/user/hand/right/input/trackpad/touch",    self._act_right_stick_touch),
                 ("/user/hand/left/input/menu/click",         self._act_menu_btn),
                 ("/user/hand/left/input/squeeze/click",      self._act_left_grip),
                 ("/user/hand/right/input/squeeze/click",     self._act_right_grip),
@@ -255,6 +265,8 @@ class CoreControllerActionsMixin:
                 ("/user/hand/right/input/trackpad",          self._act_right_stick),
                 ("/user/hand/left/input/trackpad/click",     self._act_left_stick_click),
                 ("/user/hand/right/input/trackpad/click",    self._act_right_stick_click),
+                ("/user/hand/left/input/trackpad/touch",     self._act_left_stick_touch),
+                ("/user/hand/right/input/trackpad/touch",    self._act_right_stick_touch),
                 ("/user/hand/left/input/menu/click",         self._act_menu_btn),
                 ("/user/hand/left/input/squeeze/click",      self._act_left_grip),
                 ("/user/hand/right/input/squeeze/click",     self._act_right_grip),
@@ -283,6 +295,8 @@ class CoreControllerActionsMixin:
                 ("/user/hand/right/input/thumbstick",        self._act_right_stick),
                 ("/user/hand/left/input/thumbstick/click",   self._act_left_stick_click),
                 ("/user/hand/right/input/thumbstick/click",  self._act_right_stick_click),
+                ("/user/hand/left/input/thumbstick/touch",   self._act_left_stick_touch),
+                ("/user/hand/right/input/thumbstick/touch",  self._act_right_stick_touch),
                 ("/user/hand/left/input/menu/click",         self._act_menu_btn),
                 ("/user/hand/left/input/squeeze/value",      self._act_left_grip),
                 ("/user/hand/right/input/squeeze/value",     self._act_right_grip),

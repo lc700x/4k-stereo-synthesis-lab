@@ -4,6 +4,83 @@ from .implementation import *
 from .render import _view_mat_inv
 
 
+def _read_radiance_hdr(path):
+    with open(path, 'rb') as f:
+        header = []
+        while True:
+            line = f.readline()
+            if line == b'':
+                raise ValueError('HDR header is missing resolution')
+            text = line.decode('ascii', errors='replace').strip()
+            if not text:
+                break
+            header.append(text)
+        resolution = f.readline().decode('ascii', errors='replace').strip()
+        parts = resolution.split()
+        if len(parts) != 4 or parts[0] not in ('-Y', '+Y') or parts[2] not in ('+X', '-X'):
+            raise ValueError(f'Unsupported HDR resolution: {resolution}')
+        height = int(parts[1])
+        width = int(parts[3])
+        if width <= 0 or height <= 0:
+            raise ValueError(f'Invalid HDR size: {width}x{height}')
+        rgbe = np.empty((height, width, 4), dtype=np.uint8)
+        use_rle = 8 <= width <= 0x7fff
+        for y in range(height):
+            if not use_rle:
+                row = f.read(width * 4)
+                if len(row) != width * 4:
+                    raise ValueError('Unexpected EOF in HDR data')
+                rgbe[y] = np.frombuffer(row, dtype=np.uint8).reshape(width, 4)
+                continue
+            scanline = f.read(4)
+            if len(scanline) != 4:
+                raise ValueError('Unexpected EOF in HDR scanline')
+            if scanline[0] != 2 or scanline[1] != 2 or (scanline[2] & 0x80):
+                rest = f.read(width * 4 - 4)
+                if len(rest) != width * 4 - 4:
+                    raise ValueError('Unexpected EOF in HDR data')
+                rgbe[y] = np.frombuffer(scanline + rest, dtype=np.uint8).reshape(width, 4)
+                use_rle = False
+                continue
+            row_width = (int(scanline[2]) << 8) | int(scanline[3])
+            if row_width != width:
+                raise ValueError(f'HDR scanline width mismatch: {row_width} != {width}')
+            row = np.empty((4, width), dtype=np.uint8)
+            for channel in range(4):
+                x = 0
+                while x < width:
+                    count_b = f.read(1)
+                    if not count_b:
+                        raise ValueError('Unexpected EOF in HDR RLE data')
+                    count = count_b[0]
+                    if count > 128:
+                        repeat = count - 128
+                        value = f.read(1)
+                        if not value or x + repeat > width:
+                            raise ValueError('Invalid HDR RLE repeat')
+                        row[channel, x:x + repeat] = value[0]
+                        x += repeat
+                    else:
+                        values = f.read(count)
+                        if len(values) != count or x + count > width:
+                            raise ValueError('Invalid HDR RLE literal')
+                        row[channel, x:x + count] = np.frombuffer(values, dtype=np.uint8)
+                        x += count
+            rgbe[y] = row.T
+    rgb = rgbe[:, :, :3].astype(np.float32)
+    exp = rgbe[:, :, 3].astype(np.int32)
+    scale = np.zeros_like(exp, dtype=np.float32)
+    mask = exp > 0
+    scale[mask] = np.ldexp(np.ones(np.count_nonzero(mask), dtype=np.float32), exp[mask] - 136)
+    return (rgb * scale[:, :, None]).astype(np.float32), (width, height)
+
+
+def _hdr_to_ldr_u8(rgb):
+    mapped = rgb / (1.0 + rgb)
+    mapped = np.power(np.clip(mapped, 0.0, 1.0), 1.0 / 2.2)
+    return np.rint(mapped * 255.0).astype(np.uint8)
+
+
 class EnvironmentRendererMixin:
     """Environment shader uniforms and GL primitive rendering."""
 
@@ -95,18 +172,26 @@ class EnvironmentRendererMixin:
             self._panorama_tex = None
             self._panorama_tex_path = None
         try:
-            img = Image.open(path).convert('RGB')
             max_tex = int(getattr(self.ctx, 'info', {}).get('GL_MAX_TEXTURE_SIZE', 8192) or 8192)
-            if max(img.size) > max_tex:
-                scale = float(max_tex) / float(max(img.size))
-                new_size = (
-                    max(1, int(round(img.size[0] * scale))),
-                    max(1, int(round(img.size[1] * scale))),
-                )
-                resample = getattr(getattr(Image, 'Resampling', Image), 'LANCZOS', Image.BICUBIC)
-                img = img.resize(new_size, resample)
-            arr = np.asarray(img, dtype=np.uint8)
-            tex = self.ctx.texture(img.size, 3, arr.tobytes())
+            if os.path.splitext(path)[1].lower() == '.hdr':
+                arr, size = _read_radiance_hdr(path)
+                if max(size) > max_tex:
+                    raise ValueError(f'HDR texture exceeds GL_MAX_TEXTURE_SIZE: {size[0]}x{size[1]} > {max_tex}')
+                arr = _hdr_to_ldr_u8(arr)
+                tex = self.ctx.texture(size, 3, arr.tobytes())
+            else:
+                img = Image.open(path).convert('RGB')
+                if max(img.size) > max_tex:
+                    scale = float(max_tex) / float(max(img.size))
+                    new_size = (
+                        max(1, int(round(img.size[0] * scale))),
+                        max(1, int(round(img.size[1] * scale))),
+                    )
+                    resample = getattr(getattr(Image, 'Resampling', Image), 'LANCZOS', Image.BICUBIC)
+                    img = img.resize(new_size, resample)
+                arr = np.asarray(img, dtype=np.uint8)
+                size = img.size
+                tex = self.ctx.texture(size, 3, arr.tobytes())
             tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
             try:
                 tex.repeat_x = True
@@ -119,7 +204,7 @@ class EnvironmentRendererMixin:
                 tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
             self._panorama_tex = tex
             self._panorama_tex_path = path
-            print(f"[OpenXRViewer] Panorama background loaded: {path} ({img.size[0]}x{img.size[1]})")
+            print(f"[OpenXRViewer] Panorama background loaded: {path} ({size[0]}x{size[1]})")
             return tex
         except Exception as exc:
             print(f"[OpenXRViewer] Panorama background load failed: {exc}")
@@ -155,6 +240,8 @@ class EnvironmentRendererMixin:
         self.ctx.disable(moderngl.DEPTH_TEST)
         self.ctx.depth_mask = False
         self.ctx.disable(moderngl.BLEND)
+        self.ctx.disable(moderngl.CULL_FACE)
+        glFrontFace(GL_CCW)
         tex.use(location=8)
         self._panorama_prog['u_inv_proj'].write(inv_proj.T.astype('f4').tobytes())
         self._panorama_prog['u_inv_view_rot'].write(inv_view_rot.T.astype('f4').tobytes())
@@ -162,8 +249,11 @@ class EnvironmentRendererMixin:
         self._panorama_prog['u_exposure'].value = max(0.0, float(exposure))
         self._panorama_prog['u_flip_y'].value = flip_y
         self._panorama_vao.render(moderngl.TRIANGLE_STRIP)
+        self.ctx.disable(moderngl.BLEND)
+        self.ctx.disable(moderngl.CULL_FACE)
         self.ctx.depth_mask = True
         self.ctx.enable(moderngl.DEPTH_TEST)
+        glFrontFace(GL_CCW)
 
 
     def _render_env_model(self, mgl_fbo, vp_mat, view_mat):

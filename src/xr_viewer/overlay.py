@@ -90,7 +90,7 @@ class OverlayMixin:
             self._cached_latency       = self.total_latency
             self._cached_screen_width  = self.screen_width
             self._cached_screen_height = self.screen_width * 9.0 / 16.0
-            self._cached_screen_dist   = self.screen_distance
+            self._cached_screen_dist   = self._screen_view_distance()
             self._cached_screen_curved = self._screen_curved
             self._cached_depth_strength = float(getattr(self, 'depth_strength', 0.0) or 0.0)
             self._cached_help_visible  = self._help_panel_visible
@@ -393,13 +393,17 @@ class OverlayMixin:
         now = self._frame_now
 
         if eye_index == 0:
-            cur_key = self._preset_index
+            preset_label = self._preset_name_overlay
+            base_label = preset_label.rsplit("  @ ", 1)[0] if preset_label and "  @ " in preset_label else preset_label
+            if preset_label and "  @ " in preset_label:
+                preset_label = base_label + f"  @ {self._screen_view_distance():.2f} m"
+            cur_key = (self._preset_index, base_label)
             if cur_key != self._preset_osd_last_key:
                 self._preset_osd_last_key = cur_key
                 self._preset_osd_show_t   = now
                 self._preset_osd_alpha    = 1.0
 
-                if self.font is not None and self._preset_name_overlay:
+                if self.font is not None and preset_label:
                     dw, dh = self._preset_osd_tex_size
                     img  = Image.new('RGBA', (dw, dh), (0, 0, 0, 0))
                     draw = ImageDraw.Draw(img)
@@ -418,13 +422,13 @@ class OverlayMixin:
                         lw = int(draw.textlength("Preset", font=bfont))
                     except AttributeError:
                         lw = int(bfont.getsize("Preset")[0]) if hasattr(bfont, 'getsize') else 60
-                    draw.text((PAD + lw + 8, cy), self._preset_name_overlay,
+                    draw.text((PAD + lw + 8, cy), preset_label,
                             font=self.font, fill=C_VALUE)
                     data = np.flipud(np.array(img, dtype=np.uint8))
                     self._preset_osd_tex.write(data.tobytes())
 
-        # Fade: hold 1.5 s then decay over 0.8 s
-        HOLD  = 1.5
+        # Fade: keep preset hints readable after model/preset loading.
+        HOLD  = 5.0
         DECAY = 0.8
         elapsed = now - self._preset_osd_show_t
         if elapsed < HOLD:
@@ -484,7 +488,7 @@ class OverlayMixin:
 
         # Rebuild texture on left eye whenever values change
         if eye_index == 0 and self.font is not None:
-            cur_key = (round(self.screen_width, 2), round(self.screen_distance, 2))
+            cur_key = (round(self.screen_width, 2), round(self._screen_view_distance(), 2))
             if cur_key != self._screen_osd_last_key:
                 self._screen_osd_last_key = cur_key
                 sw, sh = self._screen_osd_tex_size
@@ -520,7 +524,7 @@ class OverlayMixin:
 
                 # "Dist" label (same grey as "Size") + value
                 dist_lbl = "Dist"
-                dist_val = f"{self.screen_distance:.2f} m"
+                dist_val = f"{self._screen_view_distance():.2f} m"
                 draw.text((x, cy), dist_lbl, font=bfont, fill=C_LABEL)
                 x += _tw(dist_lbl, bfont) + GAP
                 draw.text((x, cy), dist_val, font=self.font, fill=C_VALUE)

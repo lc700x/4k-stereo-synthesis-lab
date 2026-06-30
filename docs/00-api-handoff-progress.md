@@ -68,6 +68,45 @@ Current task queue:
 
 ## Current Status
 
+### 2026-06-30 OpenXR Screen Presets, Controller Interaction, and OSD Pass
+
+Implemented locally in the current worktree:
+
+- Added the OpenXR **Headset Model** settings path. GUI/settings resolve the selected model through `src/utils/xr_headset_presets.py`; presets now store recommended viewing distance only, while screen width, height, and diagonal are derived from `XR_HEADSET_HORIZONTAL_FOV_DEG = 60.0` and 16:9 geometry.
+- Updated the VR/AR focal-distance reference table to 60 degree horizontal FOV. Infinite-focus devices such as Pico 4 / 4 Ultra and HTC VIVE XR Elite use 20.0 m as the practical recommended distance, producing a 23.09 m wide virtual screen.
+- OpenXR startup can replace the default Y-button screen preset with the selected headset recommendation, and the viewer width clamp was raised to 30.0 m so the 20 m / 60 degree preset is not clipped.
+- Screen distance labels now use actual head-to-screen center distance via `_screen_view_distance()`, so the FPS/status panel, preset OSD, screen footprint logs, and reset behavior report the same physical distance.
+- Right-grip screen movement keeps the existing sphere-orbit behavior, but after orbiting the screen center, yaw/pitch automatically face the headset. `D2S_OPENXR_RIGHT_GRIP_SCREEN_ROTATION` remains disabled by default and now only controls right-grip wrist-roll mapping to `screen_roll`.
+- Preset OSD above the screen now holds for 5.0 s. Its trigger key ignores the live distance suffix so head jitter does not keep it alive forever, while `_apply_preset()` clears `_preset_osd_last_key` so pressing Y to restore the same default preset still shows the OSD again.
+- Keyboard placement now keeps a gap equal to 15% of screen height below the display. Screen edge laser snap release is 6 degrees. Screen and keyboard laser hit circles share the same cursor-ring model and scale by eye-to-hit distance.
+
+Verification run during this pass:
+
+```powershell
+src\python3\python.exe -m py_compile src\utils\xr_headset_presets.py src\viewer\settings.py src\xr_viewer\implementation.py
+src\python3\python.exe -m pytest tests\test_xr_headset_presets.py tests\test_viewer_settings.py tests\test_keyboard_screen_preset.py -q
+src\python3\python.exe -m py_compile src\xr_viewer\implementation.py
+src\python3\python.exe -m py_compile src\xr_viewer\overlay.py
+src\python3\python.exe -m py_compile src\xr_viewer\core_screen_control.py src\xr_viewer\overlay.py
+src\python3\python.exe -m pytest tests\test_keyboard_screen_preset.py -q
+git diff --check
+```
+
+Result:
+
+```text
+py_compile passed
+33 passed for headset/viewer/keyboard preset tests before the final focused OSD fixes
+26 passed for focused keyboard/screen preset tests after the final OSD fixes
+git diff --check passed with CRLF warnings only
+```
+
+Handoff notes:
+
+- Do not hand-maintain screen width/height for headset presets. The source of truth is recommended viewing distance plus `XR_HEADSET_HORIZONTAL_FOV_DEG`.
+- Do not reintroduce live distance into the preset OSD trigger key; it should only affect displayed text, not reset the fade timer.
+- Do not change right-grip screen movement to flat translation. Left grip translates; right grip orbits around the head and then faces the screen back toward the head.
+
 ### 2026-06-30 OpenXR GPU Upload and Provider Timing Pass
 
 Implemented and pushed:

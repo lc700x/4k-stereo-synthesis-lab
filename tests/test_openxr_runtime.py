@@ -134,6 +134,8 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
         show_fps=True,
         controller_model="pico",
         environment_model="none",
+        screen_width=7.8,
+        screen_distance=9.5,
         show_preview_window=False,
         capture_mode="Monitor",
         monitor_index=1,
@@ -154,6 +156,8 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
     assert "depth_ratio" not in calls[0]
     assert "ipd" not in calls[0]
     assert calls[0]["frame_size"] == (3840, 2160)
+    assert calls[0]["openxr_screen_width"] == 7.8
+    assert calls[0]["openxr_screen_distance"] == 9.5
 
 
 def test_runtime_eye_tensor_hwc_u8_scales_near_normalized_float_range(monkeypatch):

@@ -569,7 +569,7 @@ class GUIBuilderMixin:
             weight=ft.FontWeight.BOLD,
         )
         self.log_level_dd = CompactDropdown(
-            options=["ALL", "DEBUG", "INFO", "WARNING", "ERROR"],
+            options=["ALL", "STATUS", "DEBUG", "INFO", "WARNING", "ERROR"],
             value="ALL",
             width=S(110),
             on_select=self.on_log_level_filter,

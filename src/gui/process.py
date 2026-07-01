@@ -588,6 +588,8 @@ class GUIProcessMixin:
         return "✅ "
     def _selected_log_level(self):
         value = getattr(getattr(self, "log_level_dd", None), "value", "ALL")
+        if value == "STATUS":
+            return -1
         return {"ALL": 0, "DEBUG": logging.DEBUG, "INFO": logging.INFO,
                 "WARNING": logging.WARNING, "ERROR": logging.ERROR}.get(value, 0)
 
@@ -602,7 +604,11 @@ class GUIProcessMixin:
         )
 
     def _append_log_item(self, item):
-        if item[0] < self._selected_log_level():
+        min_level = self._selected_log_level()
+        if min_level == -1:
+            if item[1] != "status":
+                return
+        elif item[0] < min_level:
             return
         self.log_listview.controls.append(self._make_log_text(item))
         if len(self.log_listview.controls) > 1000:

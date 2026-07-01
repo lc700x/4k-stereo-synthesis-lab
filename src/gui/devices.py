@@ -1,4 +1,8 @@
+import logging
+
 from utils import OS_NAME
+
+logger = logging.getLogger(__name__)
 
 
 def get_devices():
@@ -59,7 +63,7 @@ class _LazyDevices(dict):
                 global IS_ROCM
                 IS_ROCM = is_rocm
             except Exception as e:
-                print(f"[Warning] Hardware detection failed, fallback to CPU: {e}")
+                logger.warning("Hardware detection failed, fallback to CPU: %s", e)
                 self.update({0: {"name": "CPU", "Computing Device": None}})
 
     def __getitem__(self, k):

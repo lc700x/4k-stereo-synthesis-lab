@@ -1,6 +1,7 @@
 """GUI Handler Mixin — event handlers, visibility sync, i18n, audio, refresh."""
 import os
 import asyncio
+import logging
 import subprocess
 import flet as ft
 from utils import (
@@ -22,6 +23,8 @@ from .config import (
 from .controls import FONT_SIZE
 from .localization import UI_MESSAGES, is_supported_locale
 from .devices import DEVICES
+
+logger = logging.getLogger(__name__)
 
 
 class GUIHandlerMixin:
@@ -806,7 +809,7 @@ class GUIHandlerMixin:
             except RuntimeError:
                 pass
             except Exception as e:
-                print(f"[Warning] _safe_update failed: {e}")
+                logger.warning("_safe_update failed: %s", e)
 
     # ── stream URL ──
 
@@ -900,10 +903,10 @@ class GUIHandlerMixin:
                     if "virtual-audio-capturer" in name:
                         found.add(dev.get("name"))
             if not found and OS_NAME == "Darwin":
-                print("[Info] No audio capture devices found on MacOS.\nRecommended tools:\n- BlackHole: https://existential.audio/blackhole/\n- Virtual Desktop Streamer: https://www.vrdesktop.net/\n- Loopback: https://rogueamoeba.com/loopback/")
+                logger.info("No audio capture devices found on MacOS. Recommended tools: BlackHole, Virtual Desktop Streamer, Loopback")
                 self.audio_devices = ["No audio capture devices found"]
             elif not found and OS_NAME == "Windows":
-                print("[Warning] No Stereo Mix devices found, please enable it in audio settings.\nIf no Stereo Mix, install 'Screen Capture Recorder':\nhttps://github.com/rdp/screen-capture-recorder-to-video-windows-free/releases")
+                logger.warning("No Stereo Mix devices found; enable it in audio settings or install Screen Capture Recorder")
                 self.audio_devices = ["virtual-audio-capturer"]
             else:
                 self.audio_devices = list(found) or ["No Stereo Mix device found"]

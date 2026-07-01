@@ -5,15 +5,24 @@ import sys
 import time
 import asyncio
 import ctypes
+import datetime
+import json
+import logging
+import platform
+import queue
 import subprocess
 import traceback
 import flet as ft
+from rich.console import Console
+from rich.logging import RichHandler
 from utils import OS_NAME, DEFAULT_PORT, shutdown_event, read_yaml
 from . import devices as devices_module
 from .config import DEFAULTS, default_base_depth_model, save_yaml
 from .paths import BASE_DIR, DIAG_LOG, LOG_DIR, LOG_FILE, STOP_REQUEST_FILE
 from .capture_sources import get_primary_monitor_index, list_windows
 from .localization import UI_MESSAGES
+from .log_handler import GuiLogHandler
+from utils.logging_setup import _NoisyThirdPartyDebugFilter
 
 # ── module-level console helpers ──
 
@@ -36,6 +45,10 @@ _ASYNCIO_SHUTDOWN_UNRAISABLE_MESSAGES = (
 )
 _asyncio_shutdown_noise_filter_installed = False
 _console_logging_installed = False
+_gui_log_handler = None
+logger = logging.getLogger(__name__)
+status_logger = logging.getLogger("status")
+child_logger = logging.getLogger("child")
 
 
 def _is_asyncio_shutdown_unraisable(unraisable):
@@ -79,15 +92,11 @@ def _is_key_console_output(data):
 
 
 def _setup_console_logging():
-    """Write full stdout/stderr to the rolling log and keep console concise."""
-    global _console_logging_installed
+    """Configure Rich console logging, file logging, and GUI log queue."""
+    global _console_logging_installed, _gui_log_handler
     if _console_logging_installed:
         _install_asyncio_shutdown_noise_filter()
-        return
-
-    import datetime
-    import threading
-    from utils.logging_setup import configure_debug_file_logging
+        return _gui_log_handler
 
     os.makedirs(LOG_DIR, exist_ok=True)
 
@@ -102,46 +111,58 @@ def _setup_console_logging():
     except Exception:
         pass
 
-    try:
-        with open(LOG_FILE, "w", encoding="utf-8") as f:
-            f.write(f"=== Desktop2Stereo log started {datetime.datetime.now().isoformat(timespec='seconds')} ===\n")
-    except Exception:
-        pass
+    root = logging.getLogger()
+    root.setLevel(logging.DEBUG)
 
-    configure_debug_file_logging(LOG_FILE)
-    _install_asyncio_shutdown_noise_filter()
+    console_handler = RichHandler(
+        console=Console(file=sys.__stderr__),
+        rich_tracebacks=True,
+        markup=False,
+        show_path=False,
+        omit_repeated_times=False,
+    )
+    console_handler.setLevel(logging.DEBUG)
+    console_handler.setFormatter(logging.Formatter("%(message)s"))
 
-    lock = threading.Lock()
+    file_handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.addFilter(_NoisyThirdPartyDebugFilter())
+    file_handler.setFormatter(logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%H:%M:%S"
+    ))
 
-    class _TeeStream:
-        def __init__(self, original, label):
-            self.original = original
-            self.label = label
+    gui_handler = GuiLogHandler(maxlen=2000)
+    gui_handler.setLevel(logging.DEBUG)
+    gui_handler.addFilter(_NoisyThirdPartyDebugFilter())
+    gui_handler.setFormatter(logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%H:%M:%S"
+    ))
+
+    root.addHandler(console_handler)
+    root.addHandler(file_handler)
+    root.addHandler(gui_handler)
+    _gui_log_handler = gui_handler
+
+    class _StreamToLogger:
+        def __init__(self, stream_logger, level):
+            self.stream_logger = stream_logger
+            self.level = level
+            self.original = sys.__stdout__ if level < logging.ERROR else sys.__stderr__
+            self._buffer = ""
 
         def write(self, data):
-            if data:
-                try:
-                    ts = datetime.datetime.now().strftime("%H:%M:%S")
-                    with lock:
-                        with open(LOG_FILE, "a", encoding="utf-8") as f:
-                            for line in str(data).splitlines():
-                                stripped = line.rstrip()
-                                if stripped:
-                                    f.write(f"[{ts}] [{self.label}] {stripped}\n")
-                except Exception:
-                    pass
-            if _is_key_console_output(data):
-                try:
-                    self.original.write(data)
-                except Exception:
-                    pass
-            return len(data or "")
+            if not data:
+                return 0
+            self._buffer += str(data)
+            while "\n" in self._buffer:
+                line, self._buffer = self._buffer.split("\n", 1)
+                self._log(line.rstrip("\r"))
+            return len(data)
 
         def flush(self):
-            try:
-                self.original.flush()
-            except Exception:
-                pass
+            if self._buffer.strip():
+                self._log(self._buffer.strip())
+            self._buffer = ""
 
         def isatty(self):
             try:
@@ -152,9 +173,16 @@ def _setup_console_logging():
         def fileno(self):
             return self.original.fileno()
 
-    sys.stdout = _TeeStream(sys.stdout, "out")
-    sys.stderr = _TeeStream(sys.stderr, "err")
+        def _log(self, line):
+            if line and _is_key_console_output(line):
+                self.stream_logger.log(self.level, line)
+
+    _install_asyncio_shutdown_noise_filter()
+    sys.stdout = _StreamToLogger(logging.getLogger("stdout"), logging.INFO)
+    sys.stderr = _StreamToLogger(logging.getLogger("stderr"), logging.ERROR)
+    logger.info("Desktop2Stereo log started %s", datetime.datetime.now().isoformat(timespec="seconds"))
     _console_logging_installed = True
+    return gui_handler
 
 
 def _set_console_quick_edit(enabled: bool):
@@ -190,6 +218,8 @@ class GUIProcessMixin:
         self.status_text.value = msg
         if key is not None:
             self._status_key = key
+        if msg:
+            status_logger.info(msg)
         self._safe_update(self.status_text)
 
     def _set_running_ui(self, running: bool):
@@ -263,6 +293,7 @@ class GUIProcessMixin:
         self._esc_stopped = False
         self._stopping = False
         _set_console_quick_edit(False)
+        self._show_log_panel()
         self._set_running_ui(True)
         self._collect_config()
         ok, err = save_yaml(os.path.join(BASE_DIR, "settings.yaml"), self._config)
@@ -288,7 +319,7 @@ class GUIProcessMixin:
                 self._cancel_starting = False
                 self._diag("cancelled, return")
                 return
-            print(f"[Main] Initializing Desktop2Stereo {self.run_mode_key}...")
+            status_logger.info(UI_MESSAGES[self.locale].get("Starting Desktop2Stereo...", "Starting Desktop2Stereo...").format(self.run_mode_key))
             shutdown_event.clear()
             try:
                 if os.path.exists(STOP_REQUEST_FILE):
@@ -350,20 +381,40 @@ class GUIProcessMixin:
             stream = proc.stdout
             if stream is None:
                 return
+            pending = ""
             while True:
                 raw = await stream.read(4096)
                 if not raw:
                     break
                 try:
-                    text = raw.decode("utf-8", errors="replace")
+                    pending += raw.decode("utf-8", errors="replace")
                 except Exception:
-                    text = repr(raw)
-                if text:
-                    sys.stdout.write(text)
-                    sys.stdout.flush()
+                    pending += repr(raw)
+                lines = pending.splitlines(keepends=True)
+                if lines and not lines[-1].endswith(("\n", "\r")):
+                    pending = lines[-1]
+                    lines = lines[:-1]
+                else:
+                    pending = ""
+                for line in lines:
+                    self._log_child_line(line.rstrip("\r\n"))
+            if pending.strip():
+                self._log_child_line(pending.strip())
         except Exception as e:
+            logger.exception("_pump_child_output exception: %s", e)
             self._diag(f"_pump_child_output exception: {e}\n{traceback.format_exc()}", error=True)
 
+    def _log_child_line(self, line):
+        text = str(line or "").strip()
+        if not text:
+            return
+        lower = text.lower()
+        if any(token in lower for token in ("traceback", "exception", "error", "failed", "exited with code")):
+            child_logger.error(text)
+        elif any(token in lower for token in ("warning", "warn")):
+            child_logger.warning(text)
+        else:
+            child_logger.info(text)
 
     async def _monitor_process_task(self):
         proc = self.process
@@ -401,6 +452,8 @@ class GUIProcessMixin:
         self._closed = True
         if hasattr(self, '_esc_task') and self._esc_task and not self._esc_task.done():
             self._esc_task.cancel()
+        if hasattr(self, '_log_poll_task') and self._log_poll_task and not self._log_poll_task.done():
+            self._log_poll_task.cancel()
         await self._async_stop()
 
     async def _async_stop(self):
@@ -464,13 +517,169 @@ class GUIProcessMixin:
                                 pass
                     except Exception:
                         pass
-        print("[Main] Stopped")
+        status_logger.info(UI_MESSAGES[self.locale].get("Runtime stopped", "Stopped"))
         self._starting = False
         self.set_status(UI_MESSAGES[self.locale]["Stopped"], key="Stopped")
         _set_console_quick_edit(True)
         if not self._closed:
             self._set_running_ui(False)
 
+    def _show_log_panel(self):
+        panel = getattr(self, "log_panel", None)
+        if panel is None:
+            return
+        panel.visible = True
+        if getattr(self, "log_body", None) is not None:
+            self.log_body.visible = True
+        if getattr(self, "log_toggle_btn", None) is not None:
+            self.log_toggle_btn.content.value = "▼"
+        if getattr(self, "log_title", None) is not None:
+            self.log_title.value = UI_MESSAGES[self.locale].get("Log panel running title", "Running - live log")
+            self.log_title.color = None
+        self._fit_window_to_content(update=False)
+        self._safe_update(panel, getattr(self, "log_toggle_btn", None), getattr(self, "log_title", None))
+        try:
+            self.page.update()
+        except RuntimeError:
+            pass
+
+    def _log_color(self, levelno):
+        if levelno >= logging.ERROR:
+            return ft.Colors.RED
+        if levelno >= logging.WARNING:
+            return ft.Colors.ORANGE
+        if levelno < logging.INFO:
+            return ft.Colors.GREY
+        return None
+
+    def _format_gui_log_line(self, item):
+        levelno, name, asctime, formatted = item
+        prefix = f"[{asctime}] "
+        marker = "] "
+        message = formatted.split(marker, 2)[-1] if marker in formatted else formatted
+        if name == "status":
+            return f"{prefix}{message}"
+        emoji = self._log_emoji(name, levelno)
+        if name == "status":
+            return f"{prefix}{emoji}{message}"
+        return f"{prefix}{name}: {message}" if name not in ("root", "stdout", "child") else f"{prefix}{message}"
+
+    def _log_emoji(self, logger_name, levelno):
+        if logger_name != "status":
+            return ""
+        if levelno >= logging.ERROR:
+            return "❌ "
+        if levelno >= logging.WARNING:
+            return "⚠️ "
+        return "✅ "
+    def _selected_log_level(self):
+        value = getattr(getattr(self, "log_level_dd", None), "value", "ALL")
+        return {"ALL": 0, "DEBUG": logging.DEBUG, "INFO": logging.INFO,
+                "WARNING": logging.WARNING, "ERROR": logging.ERROR}.get(value, 0)
+
+    def _make_log_text(self, item):
+        levelno, name, _, _ = item
+        return ft.Text(
+            self._format_gui_log_line(item),
+            color=self._log_color(levelno),
+            size=12,
+            weight=ft.FontWeight.BOLD if name == "status" else ft.FontWeight.NORMAL,
+            selectable=True,
+        )
+
+    def _append_log_item(self, item):
+        if item[0] < self._selected_log_level():
+            return
+        self.log_listview.controls.append(self._make_log_text(item))
+        if len(self.log_listview.controls) > 1000:
+            self.log_listview.controls = self.log_listview.controls[-500:]
+
+    async def _poll_log_queue(self):
+        while not self._closed:
+            handler = getattr(self, "gui_log_handler", None)
+            listview = getattr(self, "log_listview", None)
+            if handler is None or listview is None:
+                await asyncio.sleep(0.1)
+                continue
+            changed = False
+            try:
+                for _ in range(100):
+                    item = handler.queue.get_nowait()
+                    self._append_log_item(item)
+                    if item[0] >= logging.ERROR:
+                        self._set_log_problem_state()
+                    changed = True
+            except queue.Empty:
+                pass
+            if changed:
+                self._safe_update(listview, getattr(self, "log_title", None), getattr(self, "report_issue_btn", None))
+            await asyncio.sleep(0.1)
+
+    def _set_log_problem_state(self):
+        if getattr(self, "log_title", None) is None:
+            return
+        self.log_title.value = UI_MESSAGES[self.locale].get("Log panel error title", "Issue detected - check logs")
+        self.log_title.color = ft.Colors.RED
+        if getattr(self, "report_issue_btn", None) is not None:
+            self.report_issue_btn.visible = True
+
+    def on_log_toggle(self, e=None):
+        self.log_body.visible = not self.log_body.visible
+        self.log_toggle_btn.content.value = "▼" if self.log_body.visible else "▶"
+        self._fit_window_to_content()
+        self._safe_update(self.log_toggle_btn, self.log_body)
+
+    def on_log_level_filter(self, e=None):
+        self.log_listview.controls.clear()
+        handler = getattr(self, "gui_log_handler", None)
+        if handler is not None:
+            for item in handler.cache:
+                self._append_log_item(item)
+        self._safe_update(self.log_listview)
+
+    def on_log_clear(self, e=None):
+        self.log_listview.controls.clear()
+        handler = getattr(self, "gui_log_handler", None)
+        if handler is not None:
+            handler.cache.clear()
+            while True:
+                try:
+                    handler.queue.get_nowait()
+                except queue.Empty:
+                    break
+        if getattr(self, "log_title", None) is not None:
+            self.log_title.value = UI_MESSAGES[self.locale].get("Log panel title", "Run Log")
+            self.log_title.color = None
+        self._safe_update(self.log_listview, getattr(self, "log_title", None))
+
+    def on_report_issue(self, e=None):
+        handler = getattr(self, "gui_log_handler", None)
+        try:
+            lines = [
+                "=== Desktop2Stereo Bug Report ===",
+                f"Time: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+                f"OS: {platform.platform()}",
+                f"Device: {getattr(getattr(self, 'device_dd', None), 'value', '')}",
+                f"Run Mode: {getattr(self, 'run_mode_key', '')}",
+                f"Depth Model: {getattr(self, 'current_model_name', '')}",
+                "",
+                "=== Last log lines ===",
+            ]
+            if handler is not None:
+                for item in list(handler.cache)[-200:]:
+                    lines.append(self._format_gui_log_line(item))
+            lines.extend(["", "=== Config ===", json.dumps(getattr(self, "_config", {}), indent=2, ensure_ascii=False)])
+            text = "\n".join(lines)
+            try:
+                import pyperclip
+                pyperclip.copy(text)
+            except ImportError:
+                if OS_NAME == "Windows":
+                    subprocess.run("clip", input=text, text=True, shell=True)
+            self.set_status(UI_MESSAGES[self.locale].get("Bug report copied to clipboard!", "Bug report copied to clipboard!"))
+        except Exception as exc:
+            logger.exception("Failed to build bug report")
+            self.set_status(str(exc))
     # ── reset ──
 
     def reset_defaults(self, e):

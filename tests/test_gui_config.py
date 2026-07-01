@@ -190,7 +190,7 @@ def test_xr_preview_window_is_advanced_next_to_capture_fps():
     assert '"tooltip_xr_preview"' in localization_text
 
 
-def test_console_output_is_filtered_after_full_log_write():
+def test_console_output_uses_rich_logging_with_filtered_stream_redirect():
     text = _file_text("process.py")
     assert "def _is_key_console_output" in text
     assert "[NativeUtil] sogou_native_util_pc loaded successfully" in text
@@ -199,10 +199,14 @@ def test_console_output_is_filtered_after_full_log_write():
     assert "_DEBUG_CONSOLE_PREFIXES" in text
     assert "_console_logging_installed = False" in text
     assert "if _console_logging_installed:" in text
-    log_write_index = text.index("with open(LOG_FILE")
-    filter_index = text.index("if _is_key_console_output(data):", log_write_index)
-    console_write_index = text.index("self.original.write(data)", filter_index)
-    assert log_write_index < filter_index < console_write_index
+    assert "from rich.console import Console" in text
+    assert "from rich.logging import RichHandler" in text
+    assert "console=Console(file=sys.__stderr__)" in text
+    assert "class _StreamToLogger" in text
+    stream_index = text.index("class _StreamToLogger")
+    filter_index = text.index("if line and _is_key_console_output(line):", stream_index)
+    logger_index = text.index("self.stream_logger.log(self.level, line)", filter_index)
+    assert stream_index < filter_index < logger_index
 
 
 def test_console_filter_suppresses_flet_startup_noise_lines():
@@ -256,17 +260,26 @@ def test_debug_mode_gui_control_removed():
 def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     paths_text = _file_text("paths.py")
     process_text = _file_text("process.py")
+    gui_text = _file_text("gui.py")
+    builders_text = _file_text("builders.py")
     assert 'LOG_FILE = os.path.join(LOG_DIR, "desktop2stereo.log")' in paths_text
     assert "DIAG_LOG = LOG_FILE" in paths_text
-    assert "from utils.logging_setup import configure_debug_file_logging" in process_text
-    assert "configure_debug_file_logging(LOG_FILE)" in process_text
+    assert "logging.FileHandler(LOG_FILE, mode=\"w\", encoding=\"utf-8\")" in process_text
+    assert "GuiLogHandler(maxlen=2000)" in process_text
+    assert "self.gui_log_handler = _setup_console_logging()" in gui_text
+    assert "self._log_poll_task = asyncio.create_task(self._poll_log_queue())" in gui_text
+    assert "self.log_panel = ft.Container" in builders_text
+    assert "visible=False" in builders_text
+    assert "page.add(ft.Row([self._main_panel, self.log_panel]" in builders_text
+    assert "self._show_log_panel()" in process_text
     assert 'stdout=asyncio.subprocess.PIPE' in process_text
     assert 'stderr=asyncio.subprocess.STDOUT' in process_text
     assert 'child_env["PYTHONIOENCODING"] = "utf-8"' in process_text
     assert "async def _pump_child_output" in process_text
     assert "raw = await stream.read(4096)" in process_text
     assert "raw = await stream.readline()" not in process_text
-    assert "sys.stdout.write(text)" in process_text
+    assert "child_logger.info(text)" in process_text
+    assert "sys.stdout.write(text)" not in process_text
     assert "print(text)" not in process_text
     assert "asyncio.create_task(self._pump_child_output(self.process))" in process_text
 

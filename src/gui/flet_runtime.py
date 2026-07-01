@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import logging
 import shutil
 import tarfile
 import zipfile
@@ -14,6 +15,7 @@ from .paths import GUI_DIR
 
 CLIENTS_DIR = Path(GUI_DIR) / "flet_clients"
 PACKAGES_DIR = Path(GUI_DIR) / "flet_packages"
+logger = logging.getLogger(__name__)
 
 _LINUX_FALLBACK_ARTIFACTS = (
     "flet-linux-ubuntu22.04-light-amd64.tar.gz",
@@ -74,16 +76,16 @@ def _system_label() -> str:
 
 
 def _print_prepare_message(artifact: str) -> None:
-    print(f"[Flet GUI] Detected system: {_system_label()}")
-    print(f"[Flet GUI] Preparing Flet GUI package: {artifact}")
+    logger.info("[Flet GUI] Detected system: %s", _system_label())
+    logger.info("[Flet GUI] Preparing Flet GUI package: %s", artifact)
 
 
 def _print_missing_package_message() -> None:
     candidates = ", ".join(_artifact_candidates()) or "unknown"
-    print(f"[Flet GUI] Detected system: {_system_label()}")
-    print(f"[Flet GUI] Missing matching Flet GUI package in: {PACKAGES_DIR}")
-    print(f"[Flet GUI] Expected package candidate(s): {candidates}")
-    print("[Flet GUI] Please turn on VPN and run the program again.")
+    logger.error("[Flet GUI] Detected system: %s", _system_label())
+    logger.error("[Flet GUI] Missing matching Flet GUI package in: %s", PACKAGES_DIR)
+    logger.error("[Flet GUI] Expected package candidate(s): %s", candidates)
+    logger.error("[Flet GUI] Please turn on VPN and run the program again.")
 
 
 def _archive_stem(file_name: str) -> str:

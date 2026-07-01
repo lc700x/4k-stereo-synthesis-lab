@@ -120,11 +120,13 @@ class GUIBuilderMixin:
         if getattr(self, "stream_container", None) and self.stream_container.visible:
             widths.append(self._estimate_group_width(self.stream_container))
         content_width = max(widths + [0])
+        if getattr(self, "log_panel", None) and self.log_panel.visible:
+            content_width += S(430)
         page_padding = (getattr(self.page, "padding", 0) or 0) * 2
         window_chrome = S(0)
         safety_margin = S(12)
         min_width = S(520)
-        max_width = S(1100)
+        max_width = S(1540)
         return max(min_width, min(max_width, content_width + page_padding + window_chrome + safety_margin))
 
     def _control_has_effective_content(self, ctrl):
@@ -560,6 +562,49 @@ class GUIBuilderMixin:
         scroll_area = ft.Column([
             self.lang_group, self.depth_group, self.device_group, self.stream_container,
         ], scroll=ft.ScrollMode.AUTO, expand=False, tight=True, spacing=S(8))
+        self.log_toggle_btn = ft.Button(content=ft.Text("▼", size=FONT_SIZE), width=S(36), on_click=self.on_log_toggle)
+        self.log_title = ft.Text(
+            UI_MESSAGES[self.locale].get("Log panel title", "Run Log"),
+            size=FONT_SIZE,
+            weight=ft.FontWeight.BOLD,
+        )
+        self.log_level_dd = CompactDropdown(
+            options=["ALL", "DEBUG", "INFO", "WARNING", "ERROR"],
+            value="ALL",
+            width=S(110),
+            on_select=self.on_log_level_filter,
+        )
+        self.log_clear_btn = ft.Button(
+            content=ft.Text(UI_MESSAGES[self.locale].get("Clear logs", "Clear"), size=FONT_SIZE),
+            width=S(74),
+            on_click=self.on_log_clear,
+        )
+        self.report_issue_btn = ft.Button(
+            content=ft.Text(UI_MESSAGES[self.locale].get("Report issue", "Report"), size=FONT_SIZE),
+            width=S(86),
+            on_click=self.on_report_issue,
+            visible=False,
+        )
+        self.log_listview = ft.ListView(expand=True, auto_scroll=True, spacing=2)
+        self.log_body = ft.Container(content=self.log_listview, expand=True, visible=True)
+        self.log_panel = ft.Container(
+            content=ft.Column([
+                ft.Row([
+                    self.log_toggle_btn, self.log_title, ft.Container(expand=True),
+                    self.report_issue_btn, self.log_clear_btn, self.log_level_dd,
+                ], spacing=S(6), vertical_alignment=ft.CrossAxisAlignment.CENTER),
+                self.log_body,
+            ], spacing=S(6), expand=True),
+            width=S(420),
+            visible=False,
+            expand=False,
+            padding=ft.Padding(S(10), S(10), S(10), S(10)),
+            bgcolor=ft.Colors.SURFACE_CONTAINER,
+            border=ft.Border(ft.BorderSide(1, ft.Colors.OUTLINE), ft.BorderSide(1, ft.Colors.OUTLINE),
+                             ft.BorderSide(1, ft.Colors.OUTLINE), ft.BorderSide(1, ft.Colors.OUTLINE)),
+            border_radius=6,
+        )
+
 
         btn_row = ft.Row([self.reset_btn, ft.Container(expand=True),
             ft.Container(content=ft.Row([self.stop_btn, self.run_btn], spacing=S(20)),
@@ -573,7 +618,8 @@ class GUIBuilderMixin:
             padding=ft.Padding(0, S(6), 0, 0))
         self._scroll_area = scroll_area
         self._footer = footer
-        page.add(ft.Column([scroll_area, footer], expand=False, tight=True, spacing=0))
+        self._main_panel = ft.Column([scroll_area, footer], expand=True, tight=True, spacing=0)
+        page.add(ft.Row([self._main_panel, self.log_panel], expand=True, spacing=S(10)))
 
     # ── streamer rows ──
 

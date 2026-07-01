@@ -835,6 +835,105 @@ right_shift_px = -disparity_px / 2
 - 任何 CUDA/GL image texture 上传失败都必须保留根因日志，不能直接静默禁用 image texture 后长期走 PBO 或 CPU fallback。允许 PBO 作为 GPU fallback，但要标记为 fallback，不得把它当成 image texture 成功。
 
 
+### 5.8 运行日志与用户可见状态规范（新增）
+
+实时 GUI、子进程 runtime、模型准备、OpenXR / viewer / upload 诊断必须统一进入 Python `logging` 管线，不得依赖散落的 `print()` 作为长期状态输出机制。日志系统同时服务三个目标：开发者可读的控制台诊断、可回溯的文件日志、普通用户可理解的 GUI 运行状态窗口。
+
+#### 5.8.1 日志输出通道
+
+运行时日志必须按以下三路输出：
+
+| 通道 | 实现 | 级别 | 规则 |
+|------|------|------|------|
+| CMD 控制台 | `RichHandler` | DEBUG+ | 用于彩色分级输出和 traceback 展示；不得解析 Rich markup，避免日志内容误触发样式 |
+| 文件日志 | `desktop2stereo.log` / `FileHandler` | DEBUG+ | 每次 GUI 启动使用 `w` 模式刷新；记录完整技术细节、logger name、级别和时间 |
+| GUI 日志窗口 | `GuiLogHandler` + Flet queue polling | DEBUG+，默认显示 ALL | 点击 Run 后在 GUI 右侧打开，展示实时运行状态、子进程输出、警告和错误 |
+
+`RichHandler` 必须绑定到原始 `sys.__stderr__` 或等效未重定向 stream，避免 stdout/stderr fallback 转 logging 后形成递归。GUI 日志窗口只能由 GUI 主线程轮询队列并更新控件；子线程、子进程 pump、logging handler 不得直接操作 Flet 控件。
+
+#### 5.8.2 Logger 分层
+
+| Logger | 用途 | 语言 | GUI 样式 |
+|--------|------|------|---------|
+| `status` | 用户可见关键阶段，例如启动、下载模型、导出 ONNX、编译 TensorRT、运行中、停止、异常 | 必须使用当前 GUI locale 的 i18n 文案 | 粗体；INFO/WARNING/ERROR 可带状态 emoji 或图标 |
+| `child` | 子进程 stdout/stderr 原始输出 | 保留英文原文或子进程原始文本 | 普通日志；按内容自动映射 WARNING/ERROR |
+| `stdout` / `stderr` | 捕获漏网 `print()` / stream write | 原文 | 兜底通道，不应成为新代码主路径 |
+| `gui.*` / 模块 logger | GUI 操作、设备枚举、Flet client 准备、技术诊断 | 技术细节默认英文；必要用户提示可 i18n | 按级别着色 |
+
+新增 GUI 进程代码不得新增裸 `print()`。需要用户理解的阶段性状态必须走 `status_logger`；需要开发者排查的细节必须走模块级 `logger = logging.getLogger(__name__)`。子进程无法直接接入 GUI logging handler 时，必须由父进程 `_pump_child_output()` 按行捕获 stdout/stderr 后转发到 `child` logger。
+
+#### 5.8.3 子进程输出分级
+
+父进程读取子进程输出时必须保持行缓冲，不能因为 `read(4096)` 切断半行而生成残缺日志。分级规则如下：
+
+```text
+包含 traceback / exception / error / failed / exited with code -> ERROR
+包含 warning / warn -> WARNING
+其余 -> INFO
+```
+
+子进程的模型下载、ONNX 导出、TensorRT 编译、runtime preparation、capture start、shutdown 等关键阶段可以继续输出原始技术文本，但 GUI 面板必须能实时看到这些行。父进程不得再把子进程输出直接写回 stdout 作为唯一显示路径。
+
+#### 5.8.4 GUI 运行状态窗口
+
+点击 Run 后，GUI 必须在主窗口右侧显示日志子窗口。该窗口至少包含：
+
+- 动态标题：启动中、运行中、异常、已停止等状态。
+- 日志列表：自动滚动，保留最近日志，超过上限时裁剪旧行。
+- 级别过滤：ALL / DEBUG / INFO / WARNING / ERROR。
+- 清除功能：同时清空 ListView、handler cache 和 queue 中残留项。
+- 异常反馈按钮：出现 ERROR 后显示或高亮，点击后复制 bug report。
+
+颜色规则：DEBUG 灰色，INFO 默认色，WARNING 橙色，ERROR 红色。`status` logger 的消息应比普通技术日志更醒目；但技术细节不得为了用户界面美化而丢失原文。
+
+#### 5.8.5 关键阶段 i18n
+
+以下关键阶段属于用户可见状态，必须提供 EN / CN 文案，并通过 `status` logger 或等效用户状态通道显示：
+
+| 阶段 | 规范 key 示例 | 说明 |
+|------|---------------|------|
+| 首次运行环境准备 | `Preparing Flet package...` | 解压或准备 Flet desktop client |
+| 模型下载 | `Downloading model...` | 首次下载模型权重可能耗时较长 |
+| ONNX 导出 | `Exporting ONNX...` | 构建 ONNX artifact |
+| TensorRT 编译 | `Building TensorRT engine...` | 可能持续 5-30 分钟，必须持续显示进度或阶段 |
+| 启动采集 / runtime | `Starting Desktop2Stereo...` / `Starting capture...` | Run 后进入实际 runtime |
+| 运行中 | `Running` | 运行状态稳定后显示 |
+| 停止 | `Runtime stopped` / `Stopped` | 用户停止或进程退出 |
+| 异常 | `Error occurred` | 触发 GUI 错误标题和反馈按钮 |
+
+技术细节（provider 名称、CUDA/GL fallback 原因、TensorRT builder 输出、Python traceback、OpenXR runtime 诊断）应保留英文原文或底层原文，不强制翻译，避免丢失搜索和排障价值。
+
+#### 5.8.6 异常反馈内容
+
+GUI 日志窗口的“反馈异常”必须收集并复制以下内容：
+
+```text
+Desktop2Stereo version / report time
+OS / platform
+Computing device
+Run mode
+Depth model
+最近 200 条日志
+当前 GUI 配置 JSON
+```
+
+反馈内容不得包含硬编码 token、密码、用户私钥等敏感信息。若未来集成 GitHub Issue 或远程上传，必须在用户确认后执行；默认路径为复制到剪贴板，由用户自行粘贴到 QQ 群、GitHub Issues 或其它反馈渠道。
+
+#### 5.8.7 测试要求
+
+日志规范至少需要以下测试覆盖：
+
+| 测试项 | 验证方法 |
+|--------|----------|
+| Rich 控制台接入 | 静态检查 `_setup_console_logging()` 使用 `RichHandler` 且不依赖 `_TeeStream` |
+| 文件日志 | 检查 `FileHandler(LOG_FILE, mode="w", encoding="utf-8")` |
+| GUI 日志队列 | 检查 `GuiLogHandler`、queue polling、ListView 更新和自动裁剪 |
+| 右侧日志窗口 | 检查日志 panel 默认隐藏，Run 后显示 |
+| 子进程日志 | 检查 stdout/stderr pipe、行缓冲和 ERROR/WARNING 自动分级 |
+| GUI print 清理 | `src/gui` 新代码不得残留裸 `print()` |
+| Flet client 准备日志 | 使用 logging / caplog 验证缺包和准备包信息 |
+| i18n 状态文案 | EN / CN 均存在关键阶段文案 |
+
 ## 6. 测试与验证建议
 
 ### 6.1 单元测试

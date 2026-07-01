@@ -1,3 +1,4 @@
+import logging
 import subprocess
 
 from utils import OS_NAME
@@ -6,6 +7,7 @@ from . import devices as devices_module
 
 
 PRIMARY_MONITOR_SUFFIX = " [Main]"
+logger = logging.getLogger(__name__)
 
 
 def get_default_windows_capture_tool():
@@ -198,7 +200,7 @@ def _list_windows_linux():
                 except ValueError:
                     continue
     except Exception as e:
-        print(f"[Warning] Linux window enumeration failed (install wmctrl): {e}")
+        logger.warning("Linux window enumeration failed (install wmctrl): %s", e)
     return windows
 
 

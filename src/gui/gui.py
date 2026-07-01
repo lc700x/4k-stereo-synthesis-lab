@@ -54,9 +54,11 @@ class Desktop2StereoGUI(
         self._status_key = ""
         self._local_ip_cache = "127.0.0.1"
         self._local_ip_task = None
+        self.gui_log_handler = None
+        self._log_poll_task = None
 
     async def setup(self):
-        _setup_console_logging()
+        self.gui_log_handler = _setup_console_logging()
         self._loop = asyncio.get_running_loop()
         self._proc_lock = asyncio.Lock()
         self._hot_save_task = None
@@ -79,6 +81,7 @@ class Desktop2StereoGUI(
 
         # Build UI
         self.build_ui()
+        self._log_poll_task = asyncio.create_task(self._poll_log_queue())
         self._auto_align_labels()
         self.page.on_close = self._on_page_close
 

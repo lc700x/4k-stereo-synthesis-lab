@@ -270,7 +270,44 @@ class CoreRuntimeEyeMixin:
             except Exception:
                 pass
             self._runtime_depth_texture = None
+        self._release_runtime_effect_source_texture()
         self._runtime_eye_texture_size = None
+
+    def _release_runtime_effect_source_texture(self):
+        tex = getattr(self, '_runtime_effect_source_tex', None)
+        if tex is not None:
+            try:
+                tex.release()
+            except Exception:
+                pass
+        self._runtime_effect_source_tex = None
+        self._runtime_effect_source_size = None
+
+    def _runtime_effects_need_source_texture(self):
+        mode = str(getattr(self, '_glow_mode', '') or '').strip().lower()
+        if mode not in ('veil', 'frosted'):
+            return False
+        return (
+            float(getattr(self, '_glow_intensity_multiplier', 0.0)) > 0.0
+            or float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)) > 0.0
+        )
+
+    def _update_runtime_effect_source_texture(self, frame):
+        if frame is None or not self._runtime_effects_need_source_texture():
+            self._release_runtime_effect_source_texture()
+            return
+        h, w = self._runtime_eye_shape_hw(frame)
+        if getattr(self, '_runtime_effect_source_size', None) != (w, h):
+            self._release_runtime_effect_source_texture()
+            tex = self.ctx.texture((w, h), 3, dtype='f1')
+            tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+            self._runtime_effect_source_tex = tex
+            self._runtime_effect_source_size = (w, h)
+        rgb = np.ascontiguousarray(self._runtime_eye_to_numpy(frame)[..., :3])
+        self._runtime_effect_source_tex.write(rgb.tobytes())
+        glBindTexture(GL_TEXTURE_2D, self._runtime_effect_source_tex.glo)
+        glGenerateMipmap(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, 0)
 
     def _release_runtime_eye_texture_resources(self):
         uploader = getattr(self, "_runtime_eye_texture_uploader", None)
@@ -582,6 +619,7 @@ class CoreRuntimeEyeMixin:
         debug_info = getattr(runtime_result, 'debug_info', {}) or {}
         output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')
         if output_format == 'openxr_rgb_depth':
+            self._release_runtime_effect_source_texture()
             self._apply_runtime_rgb_depth_config(
                 debug_info,
                 shader_uniforms=getattr(runtime_result, 'shader_uniforms', None),
@@ -594,8 +632,10 @@ class CoreRuntimeEyeMixin:
             self._runtime_direct_source = False
             self._update_frame(source_rgb, source_depth)
             return
+        effect_source_rgb = getattr(runtime_result, 'source_rgb', None)
         if not self._runtime_direct_enabled:
             self._runtime_direct_source = False
+            self._release_runtime_effect_source_texture()
             return
         left_hw = self._runtime_eye_shape_hw(runtime_result.left_eye)
         right_hw = self._runtime_eye_shape_hw(runtime_result.right_eye)
@@ -614,6 +654,7 @@ class CoreRuntimeEyeMixin:
                     self._texture_size = (w, h)
                     self.frame_size = (w, h)
                     self.screen_height = None
+                    self._update_runtime_effect_source_texture(effect_source_rgb)
                     self._maybe_sample_glow_target_color(runtime_result.left_eye, hasattr(runtime_result.left_eye, 'detach'))
                     return
             except Exception as e:
@@ -659,6 +700,7 @@ class CoreRuntimeEyeMixin:
         self._texture_size = (w, h)
         self.frame_size = (w, h)
         self.screen_height = None
+        self._update_runtime_effect_source_texture(effect_source_rgb)
         self._maybe_sample_glow_target_color(runtime_result.left_eye, hasattr(runtime_result.left_eye, 'detach'))
         if self._d3d11_native_renderer is not None:
             self._d3d11_native_renderer.has_frame = False

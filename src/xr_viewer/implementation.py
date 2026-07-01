@@ -70,7 +70,8 @@ from .glsl import (
     _GLOW_DOWNSAMPLE_FRAG,
     _GLOW_FRAG,
     _FROSTED_GLOW_FRAG,
-    _FROSTED_GLOW_VERT,
+    _FROSTED_VEIL_FRAG,
+    _FROSTED_VEIL_VERT,
     _GLOW_SHELL_FRAG,
     _GLOW_SHELL_VERT,
     _GROUND_FRAG,
@@ -215,6 +216,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._runtime_eye_textures = [None, None]
         self._runtime_depth_texture = None
         self._runtime_eye_texture_size = None
+        self._runtime_effect_source_tex = None
+        self._runtime_effect_source_size = None
         self._runtime_direct_enabled = str(
             kwargs.get('openxr_runtime_direct', os.environ.get('D2S_OPENXR_RUNTIME_DIRECT', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')
@@ -1159,36 +1162,24 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         )
 
         self._frosted_glow_prog = self.ctx.program(
-            vertex_shader=_FROSTED_GLOW_VERT,
+            vertex_shader=_FROSTED_VEIL_VERT,
             fragment_shader=_FROSTED_GLOW_FRAG,
         )
         self._frosted_glow_prog['u_screen_tex'].value = 0
-        frosted_vertices = np.array([
-            # top edge, local y=+1, beam extends toward viewer in +z
-            -1.0, 1.0, 0.00, 0.0, 0.0, 0.0,
-             1.0, 1.0, 0.00, 0.0, 1.0, 0.0,
-            -1.0, 1.0, 1.00, 1.0, 0.0, 0.0,
-             1.0, 1.0, 1.00, 1.0, 1.0, 0.0,
-            # bottom edge
-            -1.0, -1.0, 0.00, 0.0, 0.0, 1.0,
-             1.0, -1.0, 0.00, 0.0, 1.0, 1.0,
-            -1.0, -1.0, 1.00, 1.0, 0.0, 1.0,
-             1.0, -1.0, 1.00, 1.0, 1.0, 1.0,
-            # left edge
-            -1.0, -1.0, 0.00, 0.0, 0.0, 2.0,
-            -1.0,  1.0, 0.00, 0.0, 1.0, 2.0,
-            -1.0, -1.0, 1.00, 1.0, 0.0, 2.0,
-            -1.0,  1.0, 1.00, 1.0, 1.0, 2.0,
-            # right edge
-             1.0, -1.0, 0.00, 0.0, 0.0, 3.0,
-             1.0,  1.0, 0.00, 0.0, 1.0, 3.0,
-             1.0, -1.0, 1.00, 1.0, 0.0, 3.0,
-             1.0,  1.0, 1.00, 1.0, 1.0, 3.0,
-        ], dtype='f4')
-        vbo_frosted = self.ctx.buffer(frosted_vertices.tobytes())
-        self._frosted_glow_vao = self.ctx.vertex_array(
-            self._frosted_glow_prog, [(vbo_frosted, '3f 3f', 'in_position', 'in_attr')]
+        self._frosted_veil_prog = self.ctx.program(
+            vertex_shader=_FROSTED_VEIL_VERT,
+            fragment_shader=_FROSTED_VEIL_FRAG,
         )
+        self._frosted_veil_prog['u_screen_tex'].value = 0
+        self._frosted_veil_vbo = self.ctx.buffer(reserve=4 * 158 * 5 * 4, dynamic=True)
+        self._frosted_glow_vao = self.ctx.vertex_array(
+            self._frosted_glow_prog, [(self._frosted_veil_vbo, '3f 2f', 'in_position', 'in_uv')]
+        )
+        self._frosted_veil_vao = self.ctx.vertex_array(
+            self._frosted_veil_prog, [(self._frosted_veil_vbo, '3f 2f', 'in_position', 'in_uv')]
+        )
+        self._frosted_glow_verts_params = None
+        self._frosted_veil_verts_params = None
 
         self._glow_shell_prog = self.ctx.program(
             vertex_shader=_GLOW_SHELL_VERT,

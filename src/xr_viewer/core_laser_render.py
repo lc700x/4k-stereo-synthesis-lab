@@ -416,18 +416,19 @@ class CoreLaserRenderMixin:
             self._controller_prog['u_use_env_tex'].value = 0
             self._controller_prog['u_env_intensity'].value = 0.0
         screen_tex = None
-        if hasattr(self, '_screen_light_source_texture'):
-            try:
-                screen_tex, _screen_size = self._screen_light_source_texture()
-            except Exception:
-                screen_tex = None
-        elif getattr(self, '_runtime_direct_source', False):
-            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-            if 0 <= eye_index < len(runtime_textures):
-                screen_tex = runtime_textures[eye_index]
-        else:
-            screen_tex = getattr(self, 'color_tex', None)
+        if getattr(self, '_controller_hdr_lighting', True):
+            if hasattr(self, '_screen_light_source_texture'):
+                try:
+                    screen_tex, _screen_size = self._screen_light_source_texture()
+                except Exception:
+                    screen_tex = None
+            elif getattr(self, '_runtime_direct_source', False):
+                eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
+                runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
+                if 0 <= eye_index < len(runtime_textures):
+                    screen_tex = runtime_textures[eye_index]
+            else:
+                screen_tex = getattr(self, 'color_tex', None)
         if screen_tex is not None and getattr(self, 'screen_height', None) is not None:
             try:
                 sh, screen_pos, r_ax, u_ax, screen_n = self._screen_basis()

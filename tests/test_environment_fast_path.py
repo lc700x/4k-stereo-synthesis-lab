@@ -509,13 +509,16 @@ def test_default_glow_mode_cycle_from_y(monkeypatch):
     assert viewer._glow_shell_intensity_multiplier == 1.85
 
 
-def test_frosted_glow_shader_uses_screen_texture_bright_blur():
+def test_frosted_glow_shader_uses_flat_grid_source_crop():
     glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
-    assert "_FROSTED_GLOW_VERT" in glsl_text
+    assert "_FROSTED_VEIL_VERT" in glsl_text
     assert "_FROSTED_GLOW_FRAG" in glsl_text
-    assert "in vec3 in_attr" in glsl_text
+    assert "in vec2 v_uv" in glsl_text
+    assert "in vec3 v_local" in glsl_text
     assert "uniform mat4 u_model" in glsl_text
     assert "uniform sampler2D u_screen_tex" in glsl_text
+    assert "uniform vec4 u_source_crop" in glsl_text
+    assert "u_source_crop.xy + v_uv * u_source_crop.zw" in glsl_text
     assert "textureLod(u_screen_tex" in glsl_text
     assert "smoothstep(u_threshold, 1.0, luma)" in glsl_text
     assert "u_beam_softness" in glsl_text
@@ -523,14 +526,15 @@ def test_frosted_glow_shader_uses_screen_texture_bright_blur():
     assert "u_beam_thickness" in glsl_text
     assert "u_edge_inset" in glsl_text
     assert "u_diffuse_scatter" in glsl_text
-    assert "edge_blur" in glsl_text
-    assert "root_smear" in glsl_text
-    assert "sample_edge_area" in glsl_text
-    assert "color_keep" in glsl_text
+    assert "float depth = clamp(v_local.z, 0.0, 1.0)" in glsl_text
+    assert "wall_endpoint_fade(v_uv, v_local)" in glsl_text
+    assert "u_debug_wall" not in glsl_text
+    assert "hash12" in glsl_text
 
 
 def test_screen_glow_shader_uses_region_color_grid():
     glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
+    effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
 
     assert "_GLOW_DOWNSAMPLE_FRAG" in glsl_text
     assert "uniform sampler2D u_glow_tex" in glsl_text
@@ -538,6 +542,8 @@ def test_screen_glow_shader_uses_region_color_grid():
     assert "textureLod(u_glow_tex" in glsl_text
     assert "textureLod(u_screen_light_tex" in glsl_text
     assert "glow_grid_color" in glsl_text
+    assert "def _screen_effect_source_texture" in effects_text
+    assert "_runtime_effect_source_tex" in effects_text
 
 
 def test_surround_glow_shell_uses_screen_border_color():
@@ -687,6 +693,7 @@ def test_controller_shader_uses_panorama_ibl_reflection():
     assert "u_ambient_color" not in ctrl_frag
     assert "_get_panorama_texture" in render_text
     assert "_controller_hdr_lighting" in render_text
+    assert "if getattr(self, '_controller_hdr_lighting', True):" in render_text
     assert "u_use_env_tex" in render_text
     assert "u_screen_light_enabled" in render_text
     assert "controller_hdr_lighting" in profile_text

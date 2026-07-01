@@ -6,24 +6,110 @@ from .implementation import *
 class EnvironmentEffectsMixin:
     """Screen-space room effects such as glow and background lighting."""
 
-    def _screen_effect_model(self, width, height, z_offset=0.0, y_offset=0.0):
-        sx = width / 2.0
-        sy = height / 2.0
+    _FLAT_FROST_N = 8
+    _FLAT_FROST_M = 8
+    _FLAT_FROST_STRIDE = 8 * 2 * (8 + 1) + (8 - 1) * 2
+
+    def _screen_effect_basis(self):
         cy = math.cos(self.screen_yaw)
         sy_ = math.sin(self.screen_yaw)
         cp = math.cos(self.screen_pitch)
         sp = math.sin(self.screen_pitch)
         cr = math.cos(self.screen_roll)
         sr = math.sin(self.screen_roll)
-        rot_y = np.array([[cy, 0, sy_, 0], [0, 1, 0, 0], [-sy_, 0, cy, 0], [0, 0, 0, 1]], dtype='f4')
-        rot_x = np.array([[1, 0, 0, 0], [0, cp, -sp, 0], [0, sp, cp, 0], [0, 0, 0, 1]], dtype='f4')
-        rot_z = np.array([[cr, -sr, 0, 0], [sr, cr, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype='f4')
-        scale = np.diag([sx, sy, 1.0, 1.0]).astype('f4')
-        trans = np.eye(4, dtype='f4')
-        trans[0, 3] = self.screen_pan_x
-        trans[1, 3] = self.screen_pan_y + y_offset
-        trans[2, 3] = -self.screen_distance + z_offset
-        return trans @ rot_y @ rot_x @ rot_z @ scale
+        rot = np.array([
+            [ cy * cr + sy_ * sp * sr, -cy * sr + sy_ * sp * cr,  sy_ * cp, 0],
+            [ cp * sr,                  cp * cr,                 -sp,      0],
+            [-sy_ * cr + cy * sp * sr,  sy_ * sr + cy * sp * cr,  cy * cp, 0],
+            [ 0,                        0,                        0,       1],
+        ], dtype=np.float32)
+        center = np.array([self.screen_pan_x, self.screen_pan_y, -self.screen_distance], dtype=np.float32)
+        return rot, center
+
+    def _screen_effect_model(self, width, height, z_offset=0.0, y_offset=0.0, z_scale=1.0):
+        sx = width / 2.0
+        sy = height / 2.0
+        rot, center = self._screen_effect_basis()
+        scale = np.diag([sx, sy, z_scale, 1.0]).astype(np.float32)
+        trans = np.eye(4, dtype=np.float32)
+        trans[:3, 3] = center
+        trans[1, 3] += y_offset
+        if z_offset:
+            normal = rot[:3, 2]
+            trans[0, 3] += float(normal[0]) * z_offset
+            trans[1, 3] += float(normal[1]) * z_offset
+            trans[2, 3] += float(normal[2]) * z_offset
+        return trans @ rot @ scale
+
+    def _frost_front_layout(self):
+        head = getattr(self, '_head_pos_w', None)
+        if head is None:
+            head_key = None
+        else:
+            head_key = (round(float(head[0]), 2), round(float(head[1]), 2), round(float(head[2]), 2))
+        key = (
+            round(float(self.screen_width), 6),
+            round(float(self.screen_height), 6),
+            round(float(self.screen_distance), 6),
+            round(float(self.screen_pan_x), 6),
+            round(float(self.screen_pan_y), 6),
+            round(float(self.screen_yaw), 6),
+            round(float(self.screen_pitch), 6),
+            round(float(self.screen_roll), 6),
+            head_key,
+        )
+        if key == getattr(self, '_frost_layout_cache_key', None):
+            return self._frost_layout_cache_val
+
+        R, center = self._screen_effect_basis()
+        head_w = np.array([0.0, 0.0, 0.0], dtype=np.float32) if head is None else np.asarray(head, dtype=np.float32)
+        head_local = R[:3, :3].T @ (head_w - center)
+        front_depth = max(float(head_local[2]) + 0.55, float(self.screen_distance) + 0.35, 0.75)
+        front_half_w = max(float(self.screen_width) * 0.5, abs(float(head_local[0])) + 0.65, 0.65)
+        front_half_h = max(float(self.screen_height) * 0.5, abs(float(head_local[1])) + 0.65, 0.65)
+        self._frost_layout_cache_key = key
+        self._frost_layout_cache_val = (front_depth, front_half_w, front_half_h)
+        return self._frost_layout_cache_val
+
+    def _build_flat_frost_verts(self, front_half_w, front_half_h, N=8, M=8):
+        sx = max(float(self.screen_width) * 0.5, 1e-6)
+        sy = max(float(self.screen_height) * 0.5, 1e-6)
+        fx = front_half_w / sx
+        fy = front_half_h / sy
+        verts = []
+
+        def wall(ax, ay, uva, bx, by, uvb):
+            def vtx(s, t):
+                px = ax + s * (bx - ax)
+                py = ay + s * (by - ay)
+                return [
+                    px + t * (px * fx - px),
+                    py + t * (py * fy - py),
+                    t,
+                    uva[0] + s * (uvb[0] - uva[0]),
+                    uva[1] + s * (uvb[1] - uva[1]),
+                ]
+
+            prev_last = None
+            for i in range(N):
+                t0, t1 = i / N, (i + 1) / N
+                row = []
+                for j in range(M + 1):
+                    s = j / M
+                    row.append(vtx(s, t0))
+                    row.append(vtx(s, t1))
+                if prev_last is not None:
+                    verts.extend(prev_last)
+                    verts.extend(row[0])
+                for vv in row:
+                    verts.extend(vv)
+                prev_last = row[-1]
+
+        wall(-1, 1, (0, 0), 1, 1, (1, 0))
+        wall(-1, -1, (0, 1), 1, -1, (1, 1))
+        wall(-1, 1, (0, 0), -1, -1, (0, 1))
+        wall(1, 1, (1, 0), 1, -1, (1, 1))
+        return np.array(verts, dtype='f4')
 
 
     def _default_blank_fast_path(self):
@@ -48,6 +134,20 @@ class EnvironmentEffectsMixin:
             return True
         return should_show_source_border()
 
+    def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
+        source_tex = getattr(self, '_runtime_effect_source_tex', None) or getattr(self, 'color_tex', None)
+        source_size = getattr(self, '_runtime_effect_source_size', None) or getattr(self, '_texture_size', None)
+        if source_tex is None and allow_runtime_eye and getattr(self, '_runtime_direct_source', False):
+            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
+            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
+            if 0 <= eye_index < len(runtime_textures) and runtime_textures[eye_index] is not None:
+                source_tex = runtime_textures[eye_index]
+                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
+            elif runtime_textures and runtime_textures[0] is not None:
+                source_tex = runtime_textures[0]
+                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
+        return source_tex, source_size
+
 
     def _render_glow(self, mgl_fbo, vp_mat):
         intensity = float(getattr(self, '_glow_intensity', 0.0)) * float(getattr(self, '_glow_intensity_multiplier', 0.0))
@@ -57,17 +157,7 @@ class EnvironmentEffectsMixin:
             return
 
         self._advance_glow_color()
-        source_tex = getattr(self, 'color_tex', None)
-        source_size = getattr(self, '_texture_size', None)
-        if getattr(self, '_runtime_direct_source', False):
-            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-            if 0 <= eye_index < len(runtime_textures) and runtime_textures[eye_index] is not None:
-                source_tex = runtime_textures[eye_index]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
-            elif runtime_textures and runtime_textures[0] is not None:
-                source_tex = runtime_textures[0]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
+        source_tex, source_size = self._screen_effect_source_texture()
         screen_long = max(self.screen_width, self.screen_height)
         glow_scale = screen_long / max(float(getattr(self, '_glow_ref_screen', 2.4)), 1e-6)
         glow_width = float(getattr(self, '_glow_width_m', 0.50)) * glow_scale
@@ -124,44 +214,26 @@ class EnvironmentEffectsMixin:
             return
         if getattr(self, '_frosted_glow_prog', None) is None or getattr(self, '_frosted_glow_vao', None) is None:
             return
-        source_tex = getattr(self, 'color_tex', None)
-        if getattr(self, '_runtime_direct_source', False):
-            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-            if 0 <= eye_index < len(runtime_textures) and runtime_textures[eye_index] is not None:
-                source_tex = runtime_textures[eye_index]
-            elif runtime_textures and runtime_textures[0] is not None:
-                source_tex = runtime_textures[0]
+        source_tex, _source_size = self._screen_effect_source_texture()
         if source_tex is None:
             return
 
-        beam_len = max(
-            float(getattr(self, '_frosted_glow_margin_m', 3.6)),
-            float(getattr(self, 'screen_distance', 0.0)) + max(4.0, max(self.screen_width, self.screen_height) * 0.25),
-            max(self.screen_width, self.screen_height) * 0.16,
+        front_depth, front_half_w, front_half_h = self._frost_front_layout()
+        params = (
+            round(float(self.screen_width), 6),
+            round(float(self.screen_height), 6),
+            round(float(front_half_w), 2),
+            round(float(front_half_h), 2),
         )
+        if params != getattr(self, '_frosted_glow_verts_params', None):
+            self._frosted_veil_vbo.write(self._build_flat_frost_verts(front_half_w, front_half_h).tobytes())
+            self._frosted_glow_verts_params = params
 
         self.ctx.depth_mask = False
         self.ctx.disable(moderngl.DEPTH_TEST)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
-        sx = self.screen_width / 2.0
-        sy = self.screen_height / 2.0
-        cy = math.cos(self.screen_yaw)
-        sy_ = math.sin(self.screen_yaw)
-        cp = math.cos(self.screen_pitch)
-        sp = math.sin(self.screen_pitch)
-        cr = math.cos(self.screen_roll)
-        sr = math.sin(self.screen_roll)
-        rot_y = np.array([[cy, 0, sy_, 0], [0, 1, 0, 0], [-sy_, 0, cy, 0], [0, 0, 0, 1]], dtype='f4')
-        rot_x = np.array([[1, 0, 0, 0], [0, cp, -sp, 0], [0, sp, cp, 0], [0, 0, 0, 1]], dtype='f4')
-        rot_z = np.array([[cr, -sr, 0, 0], [sr, cr, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]], dtype='f4')
-        scale = np.diag([sx, sy, beam_len, 1.0]).astype('f4')
-        trans = np.eye(4, dtype='f4')
-        trans[0, 3] = self.screen_pan_x
-        trans[1, 3] = self.screen_pan_y
-        trans[2, 3] = -self.screen_distance
-        model = trans @ rot_y @ rot_x @ rot_z @ scale
+        model = self._screen_effect_model(self.screen_width, self.screen_height, z_scale=front_depth)
         source_tex.use(location=0)
         self._frosted_glow_prog['u_model'].write(model.T.astype('f4').tobytes())
         self._frosted_glow_prog['u_vp'].write(vp_mat.T.astype('f4').tobytes())
@@ -176,44 +248,67 @@ class EnvironmentEffectsMixin:
         self._frosted_glow_prog['u_beam_thickness'].value = float(getattr(self, '_frosted_glow_thickness', 1.6))
         self._frosted_glow_prog['u_diffuse_scatter'].value = float(getattr(self, '_frosted_glow_diffuse', 0.85))
         self._frosted_glow_prog['u_time'].value = float(time.time())
-        self._frosted_glow_vao.render(moderngl.TRIANGLE_STRIP, vertices=4)
-        self._frosted_glow_vao.render(moderngl.TRIANGLE_STRIP, vertices=4, first=4)
-        self._frosted_glow_vao.render(moderngl.TRIANGLE_STRIP, vertices=4, first=8)
-        self._frosted_glow_vao.render(moderngl.TRIANGLE_STRIP, vertices=4, first=12)
+        self._frosted_glow_prog['u_source_crop'].value = (0.0, 0.0, 1.0, 1.0)
+        stride = int(getattr(self, '_FLAT_FROST_STRIDE', 158))
+        for wall_idx in range(4):
+            self._frosted_glow_vao.render(moderngl.TRIANGLE_STRIP, vertices=stride, first=wall_idx * stride)
         self.ctx.disable(moderngl.BLEND)
         self.ctx.depth_mask = True
         self.ctx.enable(moderngl.DEPTH_TEST)
 
 
     def _render_frosted_veil(self, mgl_fbo, vp_mat):
-        old_values = (
-            float(getattr(self, '_frosted_glow_intensity', 0.0)),
-            float(getattr(self, '_frosted_glow_alpha', 0.0)),
-            float(getattr(self, '_frosted_glow_threshold', 0.0)),
-            float(getattr(self, '_frosted_glow_lod', 0.0)),
-            float(getattr(self, '_frosted_glow_blend', 0.0)),
-            float(getattr(self, '_frosted_glow_thickness', 0.0)),
-            float(getattr(self, '_frosted_glow_diffuse', 0.0)),
+        intensity = float(getattr(self, '_frosted_veil_intensity', 1.0))
+        intensity *= max(
+            float(getattr(self, '_glow_intensity_multiplier', 0.0)),
+            float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)),
         )
-        try:
-            self._frosted_glow_intensity = float(getattr(self, '_frosted_veil_intensity', 1.0))
-            self._frosted_glow_alpha = float(getattr(self, '_frosted_veil_alpha', 0.34))
-            self._frosted_glow_threshold = float(getattr(self, '_frosted_veil_threshold', 0.28))
-            self._frosted_glow_lod = float(getattr(self, '_frosted_veil_lod', 6.6))
-            self._frosted_glow_blend = 2.5
-            self._frosted_glow_thickness = 3.0
-            self._frosted_glow_diffuse = float(getattr(self, '_frosted_glow_diffuse', 1.2))
-            self._render_frosted_glow(mgl_fbo, vp_mat)
-        finally:
-            (
-                self._frosted_glow_intensity,
-                self._frosted_glow_alpha,
-                self._frosted_glow_threshold,
-                self._frosted_glow_lod,
-                self._frosted_glow_blend,
-                self._frosted_glow_thickness,
-                self._frosted_glow_diffuse,
-            ) = old_values
+        if intensity <= 0.0 or self.screen_height is None:
+            return
+        if (
+            getattr(self, '_frosted_veil_prog', None) is None
+            or getattr(self, '_frosted_veil_vao', None) is None
+            or getattr(self, '_frosted_veil_vbo', None) is None
+        ):
+            return
+
+        source_tex, _source_size = self._screen_effect_source_texture()
+        if source_tex is None:
+            return
+        if mgl_fbo is not None:
+            mgl_fbo.use()
+
+        front_depth, front_half_w, front_half_h = self._frost_front_layout()
+        params = (
+            round(float(self.screen_width), 6),
+            round(float(self.screen_height), 6),
+            round(float(front_half_w), 2),
+            round(float(front_half_h), 2),
+        )
+        if params != getattr(self, '_frosted_veil_verts_params', None):
+            self._frosted_veil_vbo.write(self._build_flat_frost_verts(front_half_w, front_half_h).tobytes())
+            self._frosted_veil_verts_params = params
+
+        self.ctx.depth_mask = False
+        self.ctx.disable(moderngl.DEPTH_TEST)
+        self.ctx.enable(moderngl.BLEND)
+        self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
+        model = self._screen_effect_model(self.screen_width, self.screen_height, z_scale=front_depth)
+        source_tex.use(location=0)
+        self._frosted_veil_prog['u_model'].write(model.T.astype('f4').tobytes())
+        self._frosted_veil_prog['u_vp'].write(vp_mat.T.astype('f4').tobytes())
+        self._frosted_veil_prog['u_edge_inset'].value = 0.02
+        self._frosted_veil_prog['u_intensity'].value = intensity
+        self._frosted_veil_prog['u_frost_alpha'].value = float(getattr(self, '_frosted_veil_alpha', 0.58))
+        self._frosted_veil_prog['u_beam_softness'].value = 0.34
+        self._frosted_veil_prog['u_beam_thickness'].value = 3.0
+        self._frosted_veil_prog['u_source_crop'].value = (0.0, 0.0, 1.0, 1.0)
+        stride = int(getattr(self, '_FLAT_FROST_STRIDE', 158))
+        for wall_idx in range(4):
+            self._frosted_veil_vao.render(moderngl.TRIANGLE_STRIP, vertices=stride, first=wall_idx * stride)
+        self.ctx.disable(moderngl.BLEND)
+        self.ctx.depth_mask = True
+        self.ctx.enable(moderngl.DEPTH_TEST)
 
 
     def _render_glow_shell(self, mgl_fbo, vp_mat, intensity_multiplier=None):
@@ -226,17 +321,7 @@ class EnvironmentEffectsMixin:
             return
 
         self._advance_glow_color()
-        source_tex = getattr(self, 'color_tex', None)
-        source_size = getattr(self, '_texture_size', None)
-        if getattr(self, '_runtime_direct_source', False):
-            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-            if 0 <= eye_index < len(runtime_textures) and runtime_textures[eye_index] is not None:
-                source_tex = runtime_textures[eye_index]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
-            elif runtime_textures and runtime_textures[0] is not None:
-                source_tex = runtime_textures[0]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
+        source_tex, source_size = self._screen_effect_source_texture()
         glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
         if mgl_fbo is not None:
             mgl_fbo.use()

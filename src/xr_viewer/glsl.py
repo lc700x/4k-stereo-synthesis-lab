@@ -874,37 +874,28 @@ void main() {
 }
 """
 
-_FROSTED_GLOW_VERT = """
+_FROSTED_VEIL_VERT = """
 #version 330
 in vec3 in_position;
-in vec3 in_attr;
-out vec3 v_attr;
+in vec2 in_uv;
+out vec2 v_uv;
+out vec3 v_local;
 uniform mat4 u_model;
 uniform mat4 u_vp;
-uniform float u_edge_inset;
 void main() {
-    v_attr = in_attr;
-    vec3 p = in_position;
-    float edge = floor(in_attr.z + 0.5);
-    float inset = clamp(u_edge_inset, 0.0, 0.35);
-    if (edge < 0.5) {
-        p.y -= inset;
-    } else if (edge < 1.5) {
-        p.y += inset;
-    } else if (edge < 2.5) {
-        p.x += inset;
-    } else {
-        p.x -= inset;
-    }
-    gl_Position = u_vp * u_model * vec4(p, 1.0);
+    v_uv = in_uv;
+    v_local = in_position;
+    gl_Position = u_vp * u_model * vec4(in_position, 1.0);
 }
 """
 
 _FROSTED_GLOW_FRAG = """
 #version 330
-in vec3 v_attr;
+in vec2 v_uv;
+in vec3 v_local;
 out vec4 frag_color;
 uniform sampler2D u_screen_tex;
+uniform float u_edge_inset;
 uniform float u_lod;
 uniform float u_threshold;
 uniform float u_intensity;
@@ -915,93 +906,79 @@ uniform float u_beam_softness;
 uniform float u_frost_blend;
 uniform float u_beam_thickness;
 uniform float u_diffuse_scatter;
+uniform vec4 u_source_crop;
 
-float hash21(vec2 p) {
-    p = fract(p * vec2(123.34, 345.45));
-    p += dot(p, p + 34.345);
-    return fract(p.x * p.y);
+float hash12(vec2 p) {
+    vec3 p3 = fract(vec3(p.xyx) * 0.1031);
+    p3 += dot(p3, p3.yzx + 33.33);
+    return fract((p3.x + p3.y) * p3.z);
 }
 
-vec3 sample_edge_area(sampler2D tex, vec2 center_uv, vec2 edge_dir, vec2 depth_dir, float lod, float frost_mix, float thickness) {
-    float along_radius = mix(0.035, 0.135, frost_mix) * thickness;
-    float depth_radius = mix(0.028, 0.115, frost_mix);
-    vec3 acc = vec3(0.0);
-    float sum_w = 0.0;
-    for (int i = -2; i <= 2; ++i) {
-        float a = float(i) / 2.0;
-        float aw = 1.0 - 0.18 * abs(a);
-        for (int j = 0; j <= 2; ++j) {
-            float d = float(j) / 2.0;
-            float dw = 1.0 - 0.22 * d;
-            vec2 uvp = center_uv + edge_dir * (a * along_radius) + depth_dir * (d * depth_radius);
-            float w = aw * dw;
-            acc += textureLod(tex, clamp(uvp, 0.0, 1.0), lod + 0.35 * float(j)).rgb * w;
-            sum_w += w;
-        }
-    }
-    return acc / max(sum_w, 1e-5);
+float wall_endpoint_fade(vec2 uv, vec3 local_pos) {
+    float horizontal_wall = step(abs(local_pos.x), abs(local_pos.y));
+    float endpoint_dist = mix(min(uv.y, 1.0 - uv.y), min(uv.x, 1.0 - uv.x), horizontal_wall);
+    return smoothstep(0.015, 0.12, endpoint_dist);
 }
 
 void main() {
-    float along = clamp(v_attr.x, 0.0, 1.0);
-    float across = clamp(v_attr.y, 0.0, 1.0);
-    float edge = floor(v_attr.z + 0.5);
-    float thickness = clamp(u_beam_thickness, 0.5, 3.0);
-    float side_width = mix(2.40, 1.10, 1.0 / thickness);
-    float side_fade = pow(clamp(1.0 - pow(abs(across * 2.0 - 1.0), side_width), 0.0, 1.0), 0.34);
-    float reach = exp(-along * 1.55) * (1.0 - smoothstep(0.82, 1.0, along));
-    if (side_fade <= 0.001 || reach <= 0.001) {
-        discard;
-    }
+    vec2 sample_uv = clamp(u_source_crop.xy + v_uv * u_source_crop.zw, vec2(0.0), vec2(1.0));
+    float depth = clamp(v_local.z, 0.0, 1.0);
+    float beam = exp(-depth / max(u_beam_softness, 0.001));
+    beam = pow(max(beam, 0.0), 1.0 / max(u_beam_thickness, 0.1));
 
-    vec2 screen_uv;
-    if (edge < 0.5) {
-        screen_uv = vec2(across, 1.0);
-    } else if (edge < 1.5) {
-        screen_uv = vec2(across, 0.0);
-    } else if (edge < 2.5) {
-        screen_uv = vec2(0.0, across);
-    } else {
-        screen_uv = vec2(1.0, across);
-    }
+    float edge_dist = min(min(v_uv.x, 1.0 - v_uv.x), min(v_uv.y, 1.0 - v_uv.y));
+    float edge = 1.0 - smoothstep(max(u_edge_inset, 0.0001), max(u_edge_inset, 0.0001) * 4.0, edge_dist);
 
-    float frost_blend = clamp(u_frost_blend, 0.0, 2.5);
-    float side = (across - 0.5) * u_beam_softness * thickness * 1.65;
-    vec2 edge_dir = (edge < 1.5) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
-    vec2 depth_dir = (edge < 0.5) ? vec2(0.0, -1.0) : ((edge < 1.5) ? vec2(0.0, 1.0) : ((edge < 2.5) ? vec2(1.0, 0.0) : vec2(-1.0, 0.0)));
-    vec2 root_smear = edge_dir * side;
-    vec2 glass_smear = depth_dir * mix(0.035, 0.125, clamp(frost_blend / 2.5, 0.0, 1.0));
-    float frost_mix = clamp(frost_blend / 2.5, 0.0, 1.0);
-    vec3 area = sample_edge_area(u_screen_tex, screen_uv, edge_dir, depth_dir, u_lod, frost_mix, thickness);
-    vec3 c0 = area;
-    vec3 c1 = textureLod(u_screen_tex, clamp(screen_uv + root_smear, 0.0, 1.0), u_lod + 1.0).rgb;
-    vec3 c2 = textureLod(u_screen_tex, clamp(screen_uv - root_smear * 0.65, 0.0, 1.0), u_lod + 2.0).rgb;
-    vec3 c3 = textureLod(u_screen_tex, clamp(screen_uv + vec2(-root_smear.y, root_smear.x) * 0.75, 0.0, 1.0), u_lod + 2.5).rgb;
-    vec3 c4 = textureLod(u_screen_tex, clamp(screen_uv + glass_smear, 0.0, 1.0), u_lod + 3.2).rgb;
-    vec3 c5 = textureLod(u_screen_tex, clamp(screen_uv + (edge_dir * 0.11 + depth_dir * 0.07) * thickness, 0.0, 1.0), u_lod + 3.6).rgb;
-    vec3 c6 = textureLod(u_screen_tex, clamp(screen_uv - (edge_dir * 0.11 - depth_dir * 0.07) * thickness, 0.0, 1.0), u_lod + 3.6).rgb;
-    vec3 edge_blur = mix(
-        c0 * 0.50 + c1 * 0.32 + c2 * 0.18,
-        c0 * 0.28 + c1 * 0.17 + c2 * 0.16 + c3 * 0.13 + c4 * 0.11 + c5 * 0.075 + c6 * 0.075,
-        frost_mix
-    );
-    float scatter = clamp(u_diffuse_scatter, 0.0, 2.0);
-    vec3 diffuse = mix(edge_blur, vec3(dot(edge_blur, vec3(0.25, 0.55, 0.20))), 0.22 * scatter);
-    diffuse += max(edge_blur - vec3(0.18), vec3(0.0)) * 0.22 * scatter;
-    vec3 blur = mix(edge_blur, diffuse, clamp(scatter * 0.55, 0.0, 1.0));
-    float luma = dot(blur, vec3(0.2126, 0.7152, 0.0722));
+    vec3 src = textureLod(u_screen_tex, sample_uv, max(u_lod, 0.0)).rgb;
+    float n = hash12(floor((sample_uv + vec2(u_time * 0.011, -u_time * 0.007)) * u_noise_scale));
+    float luma = dot(src, vec3(0.2126, 0.7152, 0.0722));
     float bright = smoothstep(u_threshold, 1.0, luma);
-    float n = hash21(floor((vec2(across, along) + vec2(u_time * 0.013, -u_time * 0.009)) * u_noise_scale));
-    float grain = mix(mix(0.72, 1.18, n), mix(0.92, 1.04, n), frost_mix);
-    float fog = side_fade * reach * grain;
-    float color_keep = mix(mix(0.24, 0.42, frost_mix), 1.0, bright);
-    vec3 color = blur * color_keep * u_intensity;
-    float glass = mix(1.0, 1.0 + side_fade * (0.35 + 0.20 * reach), clamp(scatter, 0.0, 1.0));
-    float alpha = fog * glass * mix(0.18 + 0.12 * frost_mix, 0.78, bright) * u_frost_alpha;
-    if (alpha <= 0.001) {
+    float scatter = max(bright, luma * clamp(u_diffuse_scatter, 0.0, 2.0) * 0.35);
+    float alpha = edge * wall_endpoint_fade(v_uv, v_local) * beam * scatter * u_frost_alpha * u_intensity * (0.82 + 0.30 * n);
+    if (alpha <= 0.002) {
         discard;
     }
-    frag_color = vec4(color * alpha, min(alpha, 0.68));
+    vec3 frost = mix(src, vec3(luma), 0.28);
+    frost = frost * (0.55 + u_frost_blend * 0.35) + src * bright * 0.35;
+    alpha = min(alpha, 1.0);
+    frag_color = vec4(frost * alpha, alpha);
+}
+"""
+
+_FROSTED_VEIL_FRAG = """
+#version 330
+in vec2 v_uv;
+in vec3 v_local;
+out vec4 frag_color;
+uniform sampler2D u_screen_tex;
+uniform float u_edge_inset;
+uniform float u_intensity;
+uniform float u_frost_alpha;
+uniform float u_beam_softness;
+uniform float u_beam_thickness;
+uniform vec4 u_source_crop;
+
+float wall_endpoint_fade(vec2 uv, vec3 local_pos) {
+    float horizontal_wall = step(abs(local_pos.x), abs(local_pos.y));
+    float endpoint_dist = mix(min(uv.y, 1.0 - uv.y), min(uv.x, 1.0 - uv.x), horizontal_wall);
+    return smoothstep(0.015, 0.12, endpoint_dist);
+}
+
+void main() {
+    vec2 sample_uv = clamp(u_source_crop.xy + v_uv * u_source_crop.zw, vec2(0.0), vec2(1.0));
+    float depth = clamp(v_local.z, 0.0, 1.0);
+    float beam = exp(-depth / max(u_beam_softness, 0.001));
+    beam = pow(max(beam, 0.0), 1.0 / max(u_beam_thickness, 0.1));
+
+    float edge_dist = min(min(v_uv.x, 1.0 - v_uv.x), min(v_uv.y, 1.0 - v_uv.y));
+    float edge = 1.0 - smoothstep(max(u_edge_inset, 0.0001), max(u_edge_inset, 0.0001) * 4.0, edge_dist);
+    float alpha = edge * wall_endpoint_fade(v_uv, v_local) * beam * u_frost_alpha * u_intensity;
+    if (alpha <= 0.002) {
+        discard;
+    }
+    alpha = min(alpha, 1.0);
+    vec3 src = textureLod(u_screen_tex, sample_uv, 0.0).rgb;
+    frag_color = vec4(src * alpha, alpha);
 }
 """
 

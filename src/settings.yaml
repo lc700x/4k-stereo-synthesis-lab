@@ -318,8 +318,14 @@ Depth Quick: Standard
 Depth Resolution: 518
 Anti-aliasing: 1
 Depth Antialias Strength: 1.0
-Foreground Scale: 0.0
+Depth Pop: 0.0
+Foreground Pop: 1.15
+Midground Pop: 1.05
+Background Pop: 1.05
+Depth Separation Preset: standard
 Convergence: 0.0
+Dynamic Convergence: false
+Dynamic Convergence Strength: 0.0
 Stereo Preset: cinema
 Stereo Quality: quality_4k
 Parallax Budget Preset: standard
@@ -359,7 +365,7 @@ Render Fixed Width: 1920
 Render Fixed Height: 1080
 Render Max Pixels: 8294400
 Render Min Dimension: 480
-Render Align: 16
+Render Align: 8
 Upscaler: 'Off'
 Upscaler Sharpness: 0.0
 Stream Protocol: HLS

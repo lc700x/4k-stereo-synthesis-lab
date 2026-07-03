@@ -115,6 +115,45 @@ def test_onnx_cuda_provider_falls_back_when_onnx_missing(monkeypatch, tmp_path):
     assert "FileNotFoundError" in (info.fallback_reason or "")
 
 
+def test_create_depth_provider_falls_back_to_pytorch_when_ort_missing(monkeypatch, tmp_path):
+    import stereo_runtime.depth_provider as provider_module
+
+    monkeypatch.setattr(provider_module, "_onnxruntime_available", lambda: False)
+
+    provider = create_depth_provider(
+        DepthProviderConfig(
+            backend="onnx_cuda",
+            device="cpu",
+            cache_dir=tmp_path,
+            local_files_only=True,
+        )
+    )
+
+    assert isinstance(provider, DistillAnyDepthBase518)
+    assert isinstance(provider, TorchDepthProvider)
+    assert provider.info.depth_backend == "pytorch_cpu"
+
+
+def test_create_depth_provider_requires_ort_when_fallback_disabled(monkeypatch, tmp_path):
+    import stereo_runtime.depth_provider as provider_module
+
+    monkeypatch.setattr(provider_module, "_onnxruntime_available", lambda: False)
+
+    try:
+        create_depth_provider(
+            DepthProviderConfig(
+                backend="onnx_cuda",
+                device="cpu",
+                cache_dir=tmp_path,
+                local_files_only=True,
+                allow_pytorch_fallback=False,
+            )
+        )
+    except RuntimeError as exc:
+        assert "ONNX Runtime is not installed" in str(exc)
+    else:
+        raise AssertionError("expected missing ONNX Runtime to fail when fallback is disabled")
+
 def test_create_depth_provider_supports_persistent_pytorch_provider(tmp_path):
     provider = create_depth_provider(
         DepthProviderConfig(

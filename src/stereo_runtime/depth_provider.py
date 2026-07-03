@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, asdict, field
 import importlib
+import importlib.util
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -34,6 +35,9 @@ INFINIDEPTH_ENCODERS = {
 }
 _RESOLVED_HF_MODEL_FILES: dict[tuple[str, str], str] = {}
 _MODEL_WEIGHT_FILENAMES = ("model.safetensors", "model.pt", "model.ckpt")
+
+def _onnxruntime_available() -> bool:
+    return importlib.util.find_spec("onnxruntime") is not None
 
 
 @dataclass(frozen=True)
@@ -881,42 +885,52 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
             depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
         )
 
-    if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
-        from .providers.nvidia.tensorrt_ort import TensorRtOrtDepthProvider
+    ort_available = _onnxruntime_available()
 
-        return TensorRtOrtDepthProvider(
-            device=device,
-            cache_dir=cfg.cache_dir,
-            onnx_path=cfg.onnx_path,
-            onnx_dtype=cfg.onnx_dtype,
-            trt_cache_dir=cfg.trt_cache_dir,
-            local_files_only=cfg.local_files_only,
-            force_download=cfg.force_download,
-            model_id=cfg.model_id,
-            model_name=cfg.model_name,
-            depth_upsample=cfg.depth_upsample,
-            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
-        )
+    if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
+        if not ort_available:
+            if cfg.require_tensorrt or not cfg.allow_pytorch_fallback:
+                raise RuntimeError("ONNX Runtime is not installed; TensorRT ORT depth provider is unavailable")
+        else:
+            from .providers.nvidia.tensorrt_ort import TensorRtOrtDepthProvider
+
+            return TensorRtOrtDepthProvider(
+                device=device,
+                cache_dir=cfg.cache_dir,
+                onnx_path=cfg.onnx_path,
+                onnx_dtype=cfg.onnx_dtype,
+                trt_cache_dir=cfg.trt_cache_dir,
+                local_files_only=cfg.local_files_only,
+                force_download=cfg.force_download,
+                model_id=cfg.model_id,
+                model_name=cfg.model_name,
+                depth_upsample=cfg.depth_upsample,
+                depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
+            )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "onnx_cuda", "onnx_cuda_iobinding"} and cfg.prefer_onnx:
-        from .providers.nvidia.onnx_cuda import OnnxCudaDepthProvider
+        if not ort_available:
+            if not cfg.allow_pytorch_fallback:
+                raise RuntimeError("ONNX Runtime is not installed; ONNX CUDA depth provider is unavailable")
+        else:
+            from .providers.nvidia.onnx_cuda import OnnxCudaDepthProvider
 
-        return OnnxCudaDepthProvider(
-            device=device,
-            cache_dir=cfg.cache_dir,
-            onnx_path=cfg.onnx_path,
-            onnx_dtype=cfg.onnx_dtype,
-            model_id=cfg.model_id,
-            model_name=cfg.model_name,
-            use_iobinding=cfg.use_iobinding,
-            use_dlpack=cfg.use_dlpack,
-            local_files_only=cfg.local_files_only,
-            force_download=cfg.force_download,
-            depth_upsample=cfg.depth_upsample,
-            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
-        )
+            return OnnxCudaDepthProvider(
+                device=device,
+                cache_dir=cfg.cache_dir,
+                onnx_path=cfg.onnx_path,
+                onnx_dtype=cfg.onnx_dtype,
+                model_id=cfg.model_id,
+                model_name=cfg.model_name,
+                use_iobinding=cfg.use_iobinding,
+                use_dlpack=cfg.use_dlpack,
+                local_files_only=cfg.local_files_only,
+                force_download=cfg.force_download,
+                depth_upsample=cfg.depth_upsample,
+                depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
+            )
 
-    if backend in {"distill_base_518", "pytorch_cuda", "pytorch"}:
+    if backend in {"distill_base_518", "distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort", "onnx_cuda", "onnx_cuda_iobinding", "pytorch_cuda", "pytorch"}:
         if cfg.model_id != DISTILL_ANY_DEPTH_BASE_MODEL_ID:
             if _is_infinidepth_model(cfg.model_id):
                 return InfiniDepthProvider(

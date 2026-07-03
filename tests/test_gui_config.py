@@ -212,15 +212,13 @@ def test_xr_preview_window_is_advanced_next_to_capture_fps():
     assert '"tooltip_xr_preview"' in localization_text
 
 
-def test_gui_requirements_do_not_install_terminal_styling_or_flet():
+def test_gui_requirements_install_flet_python_sdk_only():
     repo_root = Path(__file__).resolve().parents[1]
-    requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
-    risky_requirements = (repo_root / "requirements-risky.txt").read_text(encoding="utf-8")
+    requirements = (repo_root / "src" / "requirements.txt").read_text(encoding="utf-8")
     terminal_styling_package = "ri" + "ch"
 
     assert terminal_styling_package not in requirements.lower()
-    assert terminal_styling_package not in risky_requirements.lower()
-    assert "flet==" not in requirements
+    assert "flet==" in requirements
     assert "flet-desktop==" not in requirements
     assert "flet-cli==" not in requirements
 
@@ -299,13 +297,16 @@ def test_console_filter_suppresses_flet_startup_noise_lines():
     assert not any("[Main] Runtime preparation: checking depth model lc700x/InfiniDepth-Large".startswith(prefix) for prefix in noisy_prefixes)
 
 
-def test_gui_window_updates_after_layout_and_before_vendored_flet_preparation():
+def test_gui_sets_vendored_flet_view_before_importing_flet():
     text = _file_text("gui.py")
-    main_block = text[text.index("def main():"):text.index("async def _async_main")]
-    setup_block = text[text.index("async def setup(self):"):text.index("async def _prepare_startup_after_window_visible")]
+    setup_block = text[text.index("async def setup(self):"):text.index("def _signal_gui_ready")]
 
-    assert "ensure_vendored_flet_view()" not in main_block
-    assert main_block.index("_setup_console_logging()") < main_block.index("ft.run(_async_main)")
+    ensure_idx = text.index("ensure_vendored_flet_view()")
+    import_idx = text.index("import flet as ft")
+    assert ensure_idx < import_idx
+    assert "from .flet_runtime import ensure_vendored_flet_view" in text[:import_idx]
+    assert "await asyncio.to_thread(ensure_vendored_flet_view)" in text
+
     show_idx = setup_block.index("self.page.window.visible = True")
     update_idx = setup_block.index("self.page.update()", show_idx)
     ready_idx = setup_block.index("self._signal_gui_ready()", update_idx)
@@ -314,9 +315,6 @@ def test_gui_window_updates_after_layout_and_before_vendored_flet_preparation():
     fit_idx = setup_block.index("self._fit_window_to_content(update=False)")
     log_visibility_idx = setup_block.index('self._set_log_panel_visible(self._config.get("Show Log Panel", DEFAULTS["Show Log Panel"]), update=False)')
     assert populate_idx < log_visibility_idx < fit_idx < show_idx < update_idx < ready_idx < task_idx
-    assert "def _signal_gui_ready(self):" in text
-    assert "await asyncio.to_thread(ensure_vendored_flet_view)" in text
-
 
 def test_run_windows_waits_for_gui_ready_signal_before_closing_cmd():
     run_bat = Path(__file__).resolve().parents[1] / "run_windows.bat"

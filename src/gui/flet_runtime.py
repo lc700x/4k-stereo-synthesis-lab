@@ -8,7 +8,6 @@ import tarfile
 import zipfile
 from pathlib import Path
 
-from flet.utils import safe_tar_extractall, safe_zip_extractall
 from utils.platform_info import get_arch, get_flet_desktop_artifact_name, get_linux_distro_id, get_os_name
 
 from .paths import GUI_DIR
@@ -103,10 +102,10 @@ def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
     try:
         if archive_path.suffix == ".zip":
             with zipfile.ZipFile(archive_path, "r") as archive:
-                safe_zip_extractall(archive, str(tmp_dir))
+                _safe_zip_extractall(archive, tmp_dir)
         else:
             with tarfile.open(archive_path, "r:gz") as archive:
-                safe_tar_extractall(archive, str(tmp_dir))
+                _safe_tar_extractall(archive, tmp_dir)
 
         shutil.rmtree(extract_dir, ignore_errors=True)
         tmp_dir.rename(extract_dir)
@@ -114,6 +113,31 @@ def _extract_archive(archive_path: Path, extract_dir: Path) -> None:
         shutil.rmtree(tmp_dir, ignore_errors=True)
         raise
 
+
+def _safe_zip_extractall(archive: zipfile.ZipFile, target_dir: Path) -> None:
+    target = target_dir.resolve()
+    for member in archive.infolist():
+        destination = (target_dir / member.filename).resolve()
+        if not _is_relative_to(destination, target):
+            raise ValueError(f"Unsafe zip member path: {member.filename}")
+    archive.extractall(target_dir)
+
+
+def _safe_tar_extractall(archive: tarfile.TarFile, target_dir: Path) -> None:
+    target = target_dir.resolve()
+    for member in archive.getmembers():
+        destination = (target_dir / member.name).resolve()
+        if not _is_relative_to(destination, target):
+            raise ValueError(f"Unsafe tar member path: {member.name}")
+    archive.extractall(target_dir)
+
+
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 def _view_path_for_platform(extract_dir: Path) -> Path:
     if get_os_name() == "Windows":

@@ -9,6 +9,10 @@ Mixins:
 import os
 import asyncio
 import logging
+from .flet_runtime import ensure_vendored_flet_view
+
+ensure_vendored_flet_view()
+
 import flet as ft
 from utils import VERSION, OS_NAME, read_yaml
 from .builders import GUIBuilderMixin
@@ -19,7 +23,6 @@ from .config import DEFAULTS
 from .controls import S
 from .paths import BASE_DIR, GUI_READY_FILE, LOG_DIR
 from .localization import UI_MESSAGES
-from .flet_runtime import ensure_vendored_flet_view
 
 
 logger = logging.getLogger(__name__)

@@ -17,7 +17,7 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Current focus:
 
 ```text
-Desktop2Stereo GUI stereo-parameter cleanup, OpenXR comfort defaults, and engineering-spec refactor follow-ups
+OpenXR asynchronous decoupled rendering plan, GPU glow constraints, and presentation/runtime handoff follow-ups
 ```
 
 Latest pushed task commit:
@@ -30,6 +30,8 @@ Canonical specs for current work:
 
 - `docs/01-Realtime-2d-to-3d-specification.md` - official final runtime process spec; `docs/25` is obsolete.
 - `docs/02-desktop2stereo-engineering-design-specification.md` - engineering implementation, migration, compatibility cleanup, and compliance status.
+- `docs/35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md` - target OpenXR asynchronous decoupled rendering architecture.
+- `docs/36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md` - implementation plan for the OpenXR asynchronous refactor; use it as the current plan for Quad-layer screen presentation, panorama background, GPU Glow, and wall reflection work.
 - `prompts/codex-refactor-prompt.md`
 - This file: `docs/00-api-handoff-progress.md`
 
@@ -38,6 +40,7 @@ Canonical specs for current work:
 - Treat `docs/01-Realtime-2d-to-3d-specification.md` as canonical when Parallax Budget, render_size, OpenXR, or output contract details differ from the prompt or historical docs.
 - Keep `stereo_runtime` responsible for depth inference, stereo synthesis, OpenXR render-core config, output tensors, timings, and provider/debug contracts.
 - Keep capture/session/window lifecycle, GUI settings persistence, OpenXR session/swapchain timing, and final display/submit outside `stereo_runtime`.
+- For OpenXR asynchronous rendering, treat the virtual screen as the hard-realtime path. Background, Glow, and wall reflection are soft-realtime paths that must consume already-safe GPU results and must not block `xrEndFrame`.
 - Keep compatibility paths where recent tasks introduced new contracts: `RuntimeSettingsSnapshot`, normalized parallax budgets, and `CapturedFrame` metadata.
 - Do not commit or upload runtime artifacts: `models/`, `outputs/`, `python3/`, `python-cu13/`, `downloads/`, `.codegraph/`, or `4K.jpg`.
 
@@ -48,6 +51,7 @@ Canonical specs for current work:
 - The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
 - TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
 - CUDA/GL image texture upload must remain image-texture-first. PBO is an acceptable GPU fallback, but it must be logged as fallback and must not hide the original image texture failure. Any CPU upload fallback in OpenXR, local viewer, stream/debug realtime display, or depth provider hot path must print a red console warning and record the reason.
+- OpenXR Glow / screen-light sampling must follow `docs/20-openxr-gpu-glow-guide.md`: use GPU source texture, low-resolution glow texture, shader/compute sampling, or future D3D/Vulkan GPU passes. Do not reintroduce realtime `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` as screen-light sampling sources.
 
 ## Future Work
 
@@ -65,8 +69,39 @@ Current task queue:
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
 10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
+11. Implement the OpenXR asynchronous decoupled rendering plan in `docs/36`: first add flags/diagnostics and `ScreenFrameBridge`, then promote Quad-layer screen presentation, then add panorama background, async GPU Glow result pool, and GPU-only wall reflection/light probe paths.
 
 ## Current Status
+
+### 2026-07-04 OpenXR Asynchronous Decoupled Rendering Plan
+
+Implemented locally in the current worktree:
+
+- Added `docs/36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md` as the implementation plan for the architecture in `docs/35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md`.
+- The plan treats the virtual display as the hard-realtime OpenXR path and treats room background, Glow, and wall reflection as soft-realtime effects that consume previously completed GPU results.
+- The plan intentionally uses the target architecture from docs/35 as the north star instead of letting current partial implementation limits define the goal.
+- The plan explicitly requires GPU-only screen-light sampling based on `docs/20-openxr-gpu-glow-guide.md`; realtime CPU sampling via `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` is forbidden for Glow / screen-light color.
+- First implementation milestone should be flags + diagnostics, `ScreenFrameBridge`, and Quad-layer screen presenter. Panorama background, async GPU Glow, and wall reflection should follow only after the hard-realtime display path is proven.
+
+Verification for this doc pass:
+
+```powershell
+Get-Content -Encoding UTF8 docs\35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md
+Get-Content -Encoding UTF8 docs\20-openxr-gpu-glow-guide.md
+Get-Content -Encoding UTF8 docs\36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md
+```
+
+Result:
+
+```text
+Documentation-only update; no code tests required.
+```
+
+Handoff notes:
+
+- Do not treat existing disabled/partial Quad layer behavior as the target boundary. Quad layer screen presentation is the intended hard-realtime OpenXR display path.
+- Do not rewrite Glow around CPU average-color sampling. Existing GPU glow/downsample/shader technology remains the baseline and should be moved behind an async result-pool contract.
+- OpenXR async work should preserve latest-frame queue semantics: runtime producer and viewer presenter must not block each other.
 
 ### 2026-07-03 Realtime No-Sync Scalar Cleanup and Engineering Spec Rename
 

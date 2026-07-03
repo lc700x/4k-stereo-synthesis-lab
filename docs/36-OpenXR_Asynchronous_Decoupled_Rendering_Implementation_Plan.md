@@ -1,0 +1,410 @@
+# OpenXR 异步解耦渲染重构实施计划书
+
+## 1. 目标与边界
+
+本文以 `docs/35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md` 为技术目标，面向 Desktop2Stereo 当前工程制定 OpenXR 异步重构实施计划。
+
+核心目标不是在现有 OpenXR 路径上做局部补丁，而是把 OpenXR 输出重构为“显示器硬实时 + 背景/光效软实时”的解耦架构：
+
+- 虚拟显示器必须稳定跟随目标刷新率，优先消费最新 runtime 画面。
+- 房间背景、Glow、墙面反射不得阻塞显示器更新和 `xrEndFrame` 提交。
+- 所有高成本效果只消费已经完成的旧结果，不等待当前帧结果。
+- OpenXR submit/present、viewer upload、runtime inference、capture 必须分段统计，不混淆性能归因。
+- 现有实现只作为迁移参考，不以当前限制倒推目标架构。
+
+非目标：
+
+- 不在第一阶段重写 depth/stereo synthesis 算法。
+- 不把本地窗口、RTMP、OpenXR 三种输出合并为一个 frame loop。
+- 不把 OpenXR Quad Layer 作为可选装饰功能，而是作为虚拟显示器分层的主路径目标。
+
+## 2. 当前工程锚点
+
+计划实施时主要涉及以下模块：
+
+| 领域 | 现有模块 | 重构定位 |
+|---|---|---|
+| OpenXR viewer | `src/xr_viewer/*` | OpenXR frame loop、projection layer、quad layer、环境渲染、controller/overlay |
+| OpenXR Quad 层 | `src/xr_viewer/core_quad_layer.py` | 改为显示器硬实时主路径，而不是调试/候选路径 |
+| OpenXR runtime eye 上传 | `src/xr_viewer/core_runtime_eye.py` | 提供最新显示器纹理，后续接入独立 screen swapchain |
+| OpenXR 环境 | `src/xr_viewer/environment_renderer.py`, `environment_model.py`, `environment_profiles.py` | 由每帧复杂房间渲染迁移到 panorama/cubemap 背景路径 |
+| Glow/屏幕光 | `src/xr_viewer/core_glow.py`, `src/xr_viewer/core_screen_quality.py`, `src/xr_viewer/environment_effects.py`, `docs/20-openxr-gpu-glow-guide.md` | 以现有 GPU glow/downsample/shader 采样为基础，迁移到异步效果结果池；禁止 CPU 采样 |
+| Runtime pipeline | `src/stereo_runtime/pipeline.py`, `runtime.py` | 继续产出 latest runtime result，不被 viewer present 反压拖慢 |
+| OpenXR 状态 | `src/stereo_runtime/openxr_state.py` | 维护 render/source gate 和 hot config，不承载显示层同步细节 |
+| 队列语义 | `src/utils/queue_utils.py` | 保留 latest/overwrite/drop 模型，扩展统计而不是改成阻塞队列 |
+| 诊断 | `src/utils/breakdown.py`, runtime debug info | 新增 screen/background/effects/submit/present 分段指标 |
+
+## 3. 目标架构
+
+### 3.1 线程与职责
+
+目标运行时拆成四条职责明确的路径：
+
+| 路径 | 实时等级 | 职责 | 阻塞策略 |
+|---|---:|---|---|
+| Capture + StereoRuntime | 生产者 | 捕获、depth、stereo synthesis 或 RGB+D | 只写 latest result，队列满则覆盖旧帧 |
+| OpenXR Screen Presenter | 硬实时 | 更新虚拟显示器 Quad 层并提交 OpenXR frame | 不等待背景和效果；拿不到新帧则复用上一帧 |
+| Background Renderer | 软实时 | 生成或更新房间背景 panorama/cubemap/projection layer | 可低频、可延迟、可暂停 |
+| Effects Worker | 软实时 | Glow、屏幕平均色、墙面反射纹理 | 只发布 completed result；主线程消费旧 safe result |
+
+### 3.2 OpenXR 层结构
+
+目标 `xrEndFrame` 提交层顺序：
+
+1. 背景层：优先 equirect/cubemap composition layer；不支持时退化为 projection layer 内天空球。
+2. 环境/overlay projection layer：只包含必要 3D UI、controller、laser、OSD，不再承载显示器主体。
+3. 虚拟显示器 Quad layer：每帧更新，始终在前景，无遮挡。
+4. 可选辅助 Quad/overlay layer：调试 OSD、键盘、面板等，按交互需求叠加。
+
+显示器画面不再依赖房间 depth test，因此房间复杂度不能影响屏幕刷新。
+
+### 3.3 数据流
+
+```text
+Capture
+  -> RuntimePipelineLoop
+  -> latest OpenXRRuntimeResult
+  -> ScreenFrameBridge
+  -> ScreenSwapchain/QuadLayer
+  -> xrEndFrame
+
+ScreenFrameBridge
+  -> AsyncEffectsScheduler
+  -> glow_result_pool / light_probe_pool / wall_reflection_pool
+  -> Background/Projection shader consumes latest safe result
+
+Environment asset/profile
+  -> BackgroundBakeService
+  -> panorama/cubemap cache
+  -> Background layer or sky sphere
+```
+
+关键约束：
+
+- `ScreenFrameBridge` 可以覆盖旧帧，但不得阻塞 runtime producer。
+- `AsyncEffectsScheduler` 不向主 OpenXR frame loop 返回 future/promise 等待点。
+- 主 OpenXR frame loop 只读 `safe_index`，不等待 GPU fence。
+- 初始帧所有 effect result 使用黑色/透明默认纹理。
+
+## 4. 分阶段实施路线
+
+### 阶段 0：基线和开关
+
+目标：先建立可回滚、可对比的实验框架。
+
+任务：
+
+- 新增运行开关：
+  - `D2S_OPENXR_ASYNC_PRESENT=0/1`
+  - `D2S_OPENXR_SCREEN_QUAD=0/1`
+  - `D2S_OPENXR_ASYNC_EFFECTS=0/1`
+  - `D2S_OPENXR_PANORAMA_BACKGROUND=0/1`
+- 在 GUI/OpenXR config 中保留隐藏或高级开关，不影响普通用户默认路径。
+- 在 `FPSBreakdown` 中新增指标：
+  - `openxr_screen_upload_ms`
+  - `openxr_quad_update_ms`
+  - `openxr_background_ms`
+  - `openxr_effect_submit_ms`
+  - `openxr_effect_ready_age_frames`
+  - `openxr_xr_wait_ms`
+  - `openxr_xr_submit_ms`
+  - `openxr_layer_count`
+- 记录每帧使用的是 `new_screen_frame` 还是 `reused_screen_frame`。
+
+验收：
+
+- 关闭全部新开关时行为与当前主线一致。
+- 打开诊断后能分清 runtime FPS、viewer FPS、screen present FPS、submit/present 节奏。
+
+### 阶段 1：ScreenFrameBridge 与 Quad Layer 主路径
+
+目标：把虚拟显示器从 projection 内 3D quad 迁移为 OpenXR Quad Layer 主路径。
+
+任务：
+
+- 新增 `ScreenFrameBridge`：
+  - 从 `runtime_q` 非阻塞 drain latest。
+  - 维护 `latest_frame`, `last_presented_frame`, `frame_id`, `source_timestamp`。
+  - 未收到新 runtime result 时复用上一帧，不阻塞 `xrEndFrame`。
+- 重构 `core_quad_layer.py`：
+  - `_quad_layer_can_replace_projection_screen()` 不再硬编码禁用。
+  - Quad 层支持 stereo eye source、mono fallback 和 full synthesis eye source。
+  - Quad layer pose/size 由现有 screen placement 配置驱动。
+- 解耦 controller hit/UI：
+  - controller raycast 仍使用同一个 screen plane 几何模型。
+  - 交互命中不依赖 projection path 是否绘制屏幕。
+  - 屏幕边框/焦点/laser hit 可保留在 projection layer 或独立 overlay layer。
+- projection path 保留为兼容 fallback。
+
+验收：
+
+- Quad layer 打开时，房间 mesh depth 不遮挡显示器。
+- 同一 screen pose 下，鼠标/laser 命中区域与视觉 Quad 一致。
+- 环境模型复杂度提高时，显示器 present FPS 不下降到环境 FPS。
+- 不支持 Quad layer 或创建失败时自动回退 projection screen，并记录明确原因。
+
+### 阶段 2：OpenXR frame loop 硬实时化
+
+目标：主 OpenXR frame loop 不等待 runtime、背景、效果。
+
+任务：
+
+- 将 OpenXR frame loop 的每帧流程固定为：
+  1. `xrWaitFrame/xrBeginFrame`
+  2. 非阻塞读取最新 screen frame
+  3. 更新 screen quad swapchain 或复用上一张
+  4. 采样 latest safe background/effects result
+  5. 构造 layers
+  6. `xrEndFrame`
+- 对 runtime result 的处理拆分：
+  - screen upload 必须有预算上限。
+  - 超预算时可跳过本帧 upload，复用上一帧 screen texture。
+- 避免在 present 路径中执行：
+  - 每帧 CPU tensor readback
+  - 每帧模型/环境资源加载
+  - 当前帧 Glow 生成
+  - 当前帧墙面反射计算
+- 保留 latest/overwrite 队列模型，不引入阻塞 backpressure。
+
+验收：
+
+- 人为让 runtime 降到 30 FPS 时，OpenXR frame loop 仍按头显节奏提交，屏幕复用旧帧但头动/层合成不阻塞。
+- 人为让环境渲染耗时升高时，screen quad 仍可按最新可用帧刷新。
+- 日志能显示 reused frame 比例和 effect age。
+
+### 阶段 3：静态房间背景 panorama/cubemap
+
+目标：把复杂房间背景从每帧 mesh 渲染迁移为固定视点全景背景。
+
+任务：
+
+- 新增 `BackgroundBakeService`：
+  - 以当前 environment profile、screen placement、viewer origin 生成 cubemap 或 equirect panorama。
+  - 支持启动期生成、缓存到磁盘、profile 变更时失效。
+- 新增 `BackgroundLayerRenderer`：
+  - 首选 OpenXR equirect/cubemap layer（若 runtime 支持）。
+  - fallback 为 projection layer 内 sky sphere shader。
+- 明确 3DoF 前提：
+  - 只保留头部旋转视差。
+  - 位置移动被忽略或限制在 seated origin 附近。
+- 将动态 controller、laser、overlay 与静态背景分离。
+
+验收：
+
+- 复杂 GLB 房间加载后，每帧环境绘制成本降为接近单 draw call 或 layer submit。
+- panorama 背景在转头时无明显方向错误。
+- environment profile 改变后可重新 bake 并热切换。
+
+### 阶段 4：异步 GPU Glow 结果池
+
+目标：在 `docs/20-openxr-gpu-glow-guide.md` 已实现的 GPU glow 技术基础上，把屏幕光采样、downsample、blur 和混合迁移为可延迟消费的 GPU 结果池。这里不是重新引入 CPU 采样；屏幕颜色来源必须来自 GL texture、低分辨率 glow texture、shader/compute pass 或后续 D3D/Vulkan GPU pass。
+
+任务：
+
+- 新增 `AsyncEffectResultPool`：
+  - 至少 triple buffer。
+  - 每个 slot 状态：`idle`, `writing`, `ready`, `safe`。
+  - 主线程只读 `safe_slot`。
+- 新增 `GlowWorker` / `GpuGlowScheduler`：
+  - 复用现有 `_prepare_glow_downsample_texture()`、glow shader、frosted/surround shader 的 GPU 采样思路。
+  - 输入必须是 screen/runtime eye GL texture、shared GPU texture 或低分辨率 GPU 中间纹理。
+  - 降采样、多 pass blur、区域采样、边缘采样、高亮提取都在 GPU 内完成。
+  - 完成后只更新 ready/safe index，不唤醒主线程等待。
+  - 禁止通过 `.cpu()`、`.numpy()`、`glReadPixels()`、`tex.read()` 等 CPU readback 做实时屏幕采样。
+- 更新 environment/screen shader：
+  - 继续沿用 `20-openxr-gpu-glow-guide.md` 的低分辨率 GPU glow texture、`textureLod()`、边缘采样、区域化采样和 frosted/surround shader 方案。
+  - 使用 `safe_glow_texture` 叠加 screen glow / surround glow / frosted glow。
+  - 初始或 worker 失败时使用透明纹理。
+- 先以 OpenGL FBO/低频 pass 实现逻辑正确性；后续按平台升级到 D3D11 compute、D3D12/Vulkan async compute queue。
+
+验收：
+
+- Glow worker 降频到 30/45 Hz 时，OpenXR screen present 不受影响。
+- Glow 纹理 age 可见但不卡顿。
+- GPU Glow Off fast path 不触发 downsample，不触发 CPU 采样。
+- worker 故障只关闭 Glow，不影响 screen quad 和 OpenXR submit。
+
+### 阶段 5：墙面反射和屏幕光斑
+
+目标：实现 `35` 中的“预计算掩码 + 动态光斑颜色”路径。
+
+任务：
+
+- 为 environment profile 增加可选资源：
+  - `wall_light_mask`：与 panorama UV 对齐的单通道或 RGB 权重纹理。
+  - `screen_light_layout`：屏幕到墙面的投影区域描述。
+- 新增 `LightProbeWorker` / `GpuLightProbeScheduler`：
+  - 从 screen/runtime eye GPU texture 生成 1x1、3x3、8x5 或 16x9 低频区域色。
+  - 必须复用 GPU Glow 降采样链或专用 GPU pass，不允许 CPU 采样。
+  - 输出 `screen_light_color_grid` 或低分辨率 GPU light texture。
+- background shader 合成：
+  - `final = panorama + mask * delayed_screen_light_color * intensity`
+  - 所有输入都来自 safe result。
+- 对简单房间提供数学 mask fallback；对复杂房间支持离线 bake。
+
+验收：
+
+- 屏幕画面颜色变化能延迟一两帧反映到墙面，不影响 screen FPS。
+- 没有 mask 时自动退化为现有 glow-only 视觉。
+- mask/profile 资源缺失有明确日志，不报错退出。
+
+### 阶段 6：GPU 后端升级路径
+
+目标：在不打断 Python/OpenXR 主流程的情况下，引入真正多队列能力。
+
+分层策略：
+
+1. OpenGL baseline：FBO + low-frequency pass + no-wait safe result，先验证架构语义。
+2. D3D11 native：复用现有 D3D11 backend，减少 GL/D3D 互操作成本，支持更稳定的 Windows OpenXR 路径。
+3. D3D12/Vulkan 后端：为 async compute/copy queue 建立接口，不把具体 API 绑死在 viewer 业务代码里。
+
+新增接口建议：
+
+```text
+EffectScheduler
+  submit_screen_frame(frame_handle, frame_id)
+  poll_completed()
+  latest_safe_glow()
+  latest_safe_light_probe()
+  release()
+
+ScreenLayerPresenter
+  update_or_reuse(frame)
+  make_quad_layers(predicted_display_time)
+  release()
+
+BackgroundPresenter
+  make_background_layer_or_projection()
+  update_safe_effect_inputs(effect_state)
+  release()
+```
+
+验收：
+
+- 后端替换不改变 OpenXR 主 loop 的 no-wait 规则。
+- GL/D3D11/D3D12/Vulkan 任一后端失败，都能回退到透明 effect + projection fallback。
+
+## 5. 关键设计约束
+
+### 5.1 主线程禁止等待 effect
+
+禁止在 OpenXR frame loop 中出现以下等待：
+
+- 等待 Glow 完成。
+- 等待墙面反射完成。
+- 等待 panorama bake 完成。
+- 等待当前 runtime result 必须可用。
+
+可接受行为：
+
+- 复用上一帧 screen texture。
+- 使用黑色/透明 effect texture。
+- 使用旧 panorama。
+- 暂停背景更新但继续提交 screen quad。
+
+### 5.2 Runtime 与 viewer 只通过 latest result 连接
+
+`RuntimePipelineLoop` 不应被 OpenXR present 速度反压。OpenXR viewer 也不应等待 runtime。两边通过 latest result 桥接：
+
+- producer 快：覆盖旧 result，统计 overwrite/drop。
+- producer 慢：viewer 复用旧 screen texture，统计 reuse。
+- producer 停：viewer 保持 last good frame 或进入明确 wait/idle 状态。
+
+### 5.3 屏幕交互与屏幕显示分离
+
+显示器视觉进入 Quad layer 后，交互仍需要一个逻辑 screen plane：
+
+- raycast 使用 screen pose/size。
+- UI hover/click 使用 logical UV。
+- projection layer 可绘制边框、hover highlight、controller laser。
+- 不允许因为 Quad layer 不参与 depth test 而丢失输入命中。
+
+### 5.4 渐进兼容
+
+| 功能 | 主路径 | fallback |
+|---|---|---|
+| 显示器 | OpenXR Quad layer | projection layer 内 screen quad |
+| 背景 | equirect/cubemap layer | projection sky sphere |
+| Glow | async safe texture | transparent/no glow |
+| 墙面反射 | mask + delayed light texture | disabled |
+| GPU 后端 | D3D11/D3D12/Vulkan async | OpenGL low-frequency pass |
+
+## 6. 测试计划
+
+### 6.1 单元测试
+
+- `ScreenFrameBridge`：latest drain、reuse、frame id、timestamp、drop 统计。
+- `AsyncEffectResultPool`：slot 状态转换、safe index 不读 writing slot。
+- GPU Glow 采样约束：测试文档/代码不得出现实时 `.cpu()`、`.numpy()`、`glReadPixels()`、`tex.read()` 作为屏幕光颜色来源。
+- `QuadLayerPresenter`：layer 构造、pose/size、fallback 条件。
+- `BackgroundBakeService`：cache key、profile invalidation、missing asset fallback。
+
+### 6.2 集成测试
+
+- OpenXR 无 headset preview 模式不崩溃。
+- Quad layer 创建失败自动 fallback projection。
+- runtime producer 低 FPS 时 viewer submit 不阻塞。
+- effect worker 人为 sleep 时 screen FPS 不下降。
+- GPU Glow Off fast path 不触发 downsample，不触发 CPU 采样。
+- environment GLB 极复杂时 screen quad 刷新不被拖慢。
+
+### 6.3 性能验收
+
+至少记录：
+
+| 指标 | 目标 |
+|---|---:|
+| screen present FPS | 接近头显目标刷新率 |
+| runtime FPS | 独立记录，不作为 present FPS |
+| screen frame reuse rate | 可解释、可接受 |
+| effect age | 通常 1-3 帧 |
+| OpenXR submit/present stall | 明确归因到 runtime/headset，不归因到 StereoRuntime |
+| CPU fallback count | OpenXR 实时路径必须红色告警；屏幕光/Glow 实时采样不得 CPU fallback |
+
+## 7. 推荐提交顺序
+
+1. `feat(openxr): add async rendering flags and diagnostics`
+2. `feat(openxr): introduce screen frame bridge`
+3. `feat(openxr): promote quad layer screen presenter`
+4. `feat(openxr): decouple frame loop from runtime producer`
+5. `feat(openxr): add panorama background presenter`
+6. `feat(openxr): add async glow result pool`
+7. `feat(openxr): add wall reflection light probe path`
+8. `refactor(openxr): split backend effect scheduler interfaces`
+9. `docs(openxr): update runtime architecture and fallback matrix`
+
+每个提交都必须保持旧路径可回退，避免一次性大重构导致 OpenXR 无法启动。
+
+## 8. 风险与处理
+
+| 风险 | 影响 | 处理 |
+|---|---|---|
+| Quad layer 与 projection screen 视觉/交互不一致 | 点击位置偏移 | screen pose/size 单一来源，raycast 与 layer 共用参数 |
+| OpenXR runtime 对 Quad/equirect 支持差异 | 某些设备黑屏或层失败 | 能力探测 + projection fallback |
+| Python/OpenGL 难以实现真正 GPU 多队列 | 无法达到最终并行度 | 先实现 no-wait 语义，再引入 D3D11/D3D12/Vulkan 后端 |
+| effect 结果读写冲突 | 闪烁或 GPU hazard | triple buffer + safe index，不读 writing slot |
+| panorama 背景与 6DoF 头动不匹配 | 平移时视差错误 | 明确 3DoF/固定 seated origin；6DoF 后续单独设计 |
+| 诊断口径混乱 | 性能问题误判 | 强制分开 capture/runtime/viewer/screen/effect/submit/present |
+
+## 9. 第一轮落地建议
+
+第一轮不要同时做 panorama、Glow、墙面反射。建议先完成硬实时显示器链路：
+
+1. 加 flags 和分段统计。
+2. 做 `ScreenFrameBridge`。
+3. 启用 Quad layer screen presenter。
+4. 保持背景仍走现有 projection/environment 渲染。
+5. 保持 Glow Off / GPU Glow fast path，不引入 CPU 屏幕采样。
+6. 验证复杂环境下 screen FPS 与环境成本解耦。
+
+只有当“显示器层不被环境拖慢”成立后，再进入异步 Glow 和 panorama 背景，否则会把多个问题混在一起，无法判断收益来源。
+
+## 10. 完成定义
+
+重构完成的判定不是“代码里有 Quad layer 或 async worker”，而是满足以下行为：
+
+- 显示器画面作为 OpenXR 前景层稳定提交。
+- 背景复杂度变化不改变显示器硬实时路径。
+- Glow 和墙面反射都可延迟、可降频、可失败关闭，但屏幕采样必须走 GPU glow/downsample/shader 路径，不能阻塞 screen submit，不能回退到 CPU 实时采样。
+- Runtime producer 与 OpenXR presenter 之间没有阻塞等待。
+- 日志能清楚解释每一帧的 runtime、viewer、screen、effect、submit/present 状态。

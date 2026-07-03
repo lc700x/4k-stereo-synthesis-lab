@@ -4,7 +4,8 @@ echo - Setting up the virtual environment
 
 @REM Install local Python 3.12 x64 first
 Set "PYTHON_VERSION=3.12.10"
-Set "PYTHON_ROOT=%~dp0python3"
+Set "SCRIPT_DIR=%~dp0"
+Set "PYTHON_ROOT=%SCRIPT_DIR%python3"
 Set "PYTHON_INSTALLER=%TEMP%\python-%PYTHON_VERSION%-amd64.exe"
 Set "PYTHON_URL=https://www.python.org/ftp/python/%PYTHON_VERSION%/python-%PYTHON_VERSION%-amd64.exe"
 
@@ -24,7 +25,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-"%PYTHON_INSTALLER%" /quiet InstallAllUsers=0 TargetDir="%PYTHON_ROOT%" Include_pip=1 Include_launcher=0 PrependPath=0 Include_test=0 Shortcuts=0 AssociateFiles=0
+start /wait "" "%PYTHON_INSTALLER%" /quiet InstallAllUsers=0 TargetDir="%PYTHON_ROOT%" Include_pip=1 Include_launcher=0 PrependPath=0 Include_test=0 Shortcuts=0 AssociateFiles=0
 if errorlevel 1 (
     echo Failed to install Python %PYTHON_VERSION% x64
     pause
@@ -42,12 +43,12 @@ if not exist "%PYTHON_ROOT%\python.exe" (
 :python_ready
 
 @REM Set paths
-Set "PYTHON_EXE=.\python3\python.exe"
+Set "PYTHON_EXE=%PYTHON_ROOT%\python.exe"
 
 
 @REM Update pip
 echo - Updating the pip package
-%PYTHON_EXE% -m pip install --upgrade pip --no-cache-dir --no-warn-script-location
+"%PYTHON_EXE%" -m pip install --upgrade pip --no-cache-dir --no-warn-script-location
 if %errorlevel% neq 0 (
     echo Failed to update pip
     pause
@@ -57,8 +58,8 @@ if %errorlevel% neq 0 (
 @REM Install requirements
 echo.
 echo - Installing the requirements
-%PYTHON_EXE% -m pip install -r requirements.txt --no-cache-dir --no-warn-script-location
-%PYTHON_EXE% -m pip install -r requirements-cuda0.txt --no-cache-dir --no-warn-script-location
+"%PYTHON_EXE%" -m pip install -r "%SCRIPT_DIR%requirements.txt" --no-cache-dir --no-warn-script-location
+"%PYTHON_EXE%" -m pip install -r "%SCRIPT_DIR%requirements-cuda0.txt" --no-cache-dir --no-warn-script-location
 if %errorlevel% neq 0 (
     echo Failed to install requirements
     pause

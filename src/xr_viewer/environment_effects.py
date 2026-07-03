@@ -135,17 +135,13 @@ class EnvironmentEffectsMixin:
         return should_show_source_border()
 
     def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
-        source_tex = getattr(self, '_runtime_effect_source_tex', None) or getattr(self, 'color_tex', None)
-        source_size = getattr(self, '_runtime_effect_source_size', None) or getattr(self, '_texture_size', None)
-        if source_tex is None and allow_runtime_eye and getattr(self, '_runtime_direct_source', False):
-            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-            if 0 <= eye_index < len(runtime_textures) and runtime_textures[eye_index] is not None:
-                source_tex = runtime_textures[eye_index]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
-            elif runtime_textures and runtime_textures[0] is not None:
-                source_tex = runtime_textures[0]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
+        if getattr(self, '_runtime_direct_source', False):
+            return (
+                getattr(self, '_runtime_effect_source_tex', None),
+                getattr(self, '_runtime_effect_source_size', None),
+            )
+        source_tex = getattr(self, 'color_tex', None)
+        source_size = getattr(self, '_texture_size', None)
         return source_tex, source_size
 
 
@@ -157,7 +153,7 @@ class EnvironmentEffectsMixin:
             return
 
         self._advance_glow_color()
-        source_tex, source_size = self._screen_effect_source_texture()
+        source_tex, source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
         screen_long = max(self.screen_width, self.screen_height)
         glow_scale = screen_long / max(float(getattr(self, '_glow_ref_screen', 2.4)), 1e-6)
         glow_width = float(getattr(self, '_glow_width_m', 0.50)) * glow_scale
@@ -214,7 +210,7 @@ class EnvironmentEffectsMixin:
             return
         if getattr(self, '_frosted_glow_prog', None) is None or getattr(self, '_frosted_glow_vao', None) is None:
             return
-        source_tex, _source_size = self._screen_effect_source_texture()
+        source_tex, _source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
         if source_tex is None:
             return
 
@@ -272,7 +268,7 @@ class EnvironmentEffectsMixin:
         ):
             return
 
-        source_tex, _source_size = self._screen_effect_source_texture()
+        source_tex, _source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
         if source_tex is None:
             return
         if mgl_fbo is not None:
@@ -321,7 +317,7 @@ class EnvironmentEffectsMixin:
             return
 
         self._advance_glow_color()
-        source_tex, source_size = self._screen_effect_source_texture()
+        source_tex, source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
         glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
         if mgl_fbo is not None:
             mgl_fbo.use()

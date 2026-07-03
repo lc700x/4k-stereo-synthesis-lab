@@ -125,105 +125,6 @@ class CoreFrameUploadMixin:
         """Update glow target from a thin frame border with minimal CPU work."""
         try:
             if is_tensor:
-                rgb_t = rgb.detach()
-                if rgb_t.ndim == 4:
-                    rgb_t = rgb_t[0]
-                if rgb_t.ndim == 3 and rgb_t.shape[0] in (3, 4):
-                    channels_first = True
-                    rgb_t = rgb_t[:3]
-                    h, w = int(rgb_t.shape[1]), int(rgb_t.shape[2])
-                elif rgb_t.ndim == 3 and rgb_t.shape[-1] >= 3:
-                    channels_first = False
-                    rgb_t = rgb_t[..., :3]
-                    h, w = int(rgb_t.shape[0]), int(rgb_t.shape[1])
-                else:
-                    return
-                bt = max(1, int(min(h, w) * 0.08))
-
-                top_h = min(bt, h)
-                bot_h = min(bt, h)
-                if channels_first:
-                    total = rgb_t[:, :top_h, :].float().sum(dim=(1, 2))
-                    total = total + rgb_t[:, max(0, h - bot_h):, :].float().sum(dim=(1, 2))
-                else:
-                    total = rgb_t[:top_h, :, :].float().sum(dim=(0, 1))
-                    total = total + rgb_t[max(0, h - bot_h):, :, :].float().sum(dim=(0, 1))
-                count = (top_h * w) + (bot_h * w)
-
-                mid_h = max(0, h - top_h - bot_h)
-                side_w = min(bt, w)
-                if mid_h > 0 and side_w > 0:
-                    y0 = top_h
-                    y1 = h - bot_h
-                    if channels_first:
-                        total = total + rgb_t[:, y0:y1, :side_w].float().sum(dim=(1, 2))
-                        total = total + rgb_t[:, y0:y1, max(0, w - side_w):].float().sum(dim=(1, 2))
-                    else:
-                        total = total + rgb_t[y0:y1, :side_w, :].float().sum(dim=(0, 1))
-                        total = total + rgb_t[y0:y1, max(0, w - side_w):, :].float().sum(dim=(0, 1))
-                    count += mid_h * side_w * 2
-
-                avg_t = (total / max(1, count)).float()
-                if avg_t.numel() and float(avg_t.detach().max().item()) <= 1.0:
-                    warn_cpu_transfer(
-                        "OpenXR glow color sampling",
-                        ".cpu().numpy()",
-                        detail=describe_tensor(avg_t),
-                        key="openxr_glow_target_color_cpu",
-                    )
-                    avg = avg_t.clamp(0.0, 1.0).detach().cpu().numpy()
-                    scale = 1.0
-                else:
-                    warn_cpu_transfer(
-                        "OpenXR glow color sampling",
-                        ".cpu().numpy()",
-                        detail=describe_tensor(avg_t),
-                        key="openxr_glow_target_color_cpu",
-                    )
-                    avg = avg_t.clamp(0.0, 255.0).detach().cpu().numpy()
-                    scale = 255.0
-                self._glow_target_color = (
-                    float(avg[0]) / scale,
-                    float(avg[1]) / scale,
-                    float(avg[2]) / scale,
-                )
-                stride = 8
-                grid = []
-                x_edges = tuple((w * i) // _GLOW_GRID_COLS for i in range(_GLOW_GRID_COLS + 1))
-                y_edges = tuple((h * i) // _GLOW_GRID_ROWS for i in range(_GLOW_GRID_ROWS + 1))
-                for row in range(_GLOW_GRID_ROWS):
-                    y0, y1 = y_edges[row], y_edges[row + 1]
-                    for col in range(_GLOW_GRID_COLS):
-                        x0, x1 = x_edges[col], x_edges[col + 1]
-                        if x1 <= x0 or y1 <= y0:
-                            grid.append(self._glow_target_color)
-                            continue
-                        if channels_first:
-                            region = rgb_t[:, y0:y1:stride, x0:x1:stride].float()
-                            avg_t = region.mean(dim=(1, 2))
-                        else:
-                            region = rgb_t[y0:y1:stride, x0:x1:stride, :].float()
-                            avg_t = region.mean(dim=(0, 1))
-                        if avg_t.numel() and float(avg_t.detach().max().item()) <= 1.0:
-                            warn_cpu_transfer(
-                                "OpenXR glow grid sampling",
-                                ".cpu().numpy()",
-                                detail=describe_tensor(avg_t),
-                                key="openxr_glow_grid_cpu",
-                            )
-                            avg3 = avg_t.clamp(0.0, 1.0).detach().cpu().numpy()
-                            scale3 = 1.0
-                        else:
-                            warn_cpu_transfer(
-                                "OpenXR glow grid sampling",
-                                ".cpu().numpy()",
-                                detail=describe_tensor(avg_t),
-                                key="openxr_glow_grid_cpu",
-                            )
-                            avg3 = avg_t.clamp(0.0, 255.0).detach().cpu().numpy()
-                            scale3 = 255.0
-                        grid.append((float(avg3[0]) / scale3, float(avg3[1]) / scale3, float(avg3[2]) / scale3))
-                self._screen_light_target_colors = tuple(grid)
                 return
 
             rgb_np = np.asarray(rgb, dtype=np.uint8)
@@ -502,20 +403,6 @@ class CoreFrameUploadMixin:
         print(f"[OpenXRViewer] upload segments path={path} size={w}x{h} total_ms={total_ms:.1f} {parts}")
 
     def _maybe_sample_glow_target_color(self, rgb, is_tensor):
-        """Sample frame color only when glow or cinema spill lighting consumes it."""
-        glow_active = False
-        env_spill_active = False
-        env_static_spill_active = (
-            getattr(self, '_bg_color_idx', 0) != 1
-            and bool(getattr(self, '_env_model_visible', False))
-            and bool(getattr(self, '_env_model_prims', []))
-            and float(getattr(self, '_screen_light_intensity', 0.0)) > 0.0
-        )
-        if glow_active or env_spill_active:
-            self._glow_color_counter = int(getattr(self, '_glow_color_counter', 0)) + 1
-            interval = max(1, int(getattr(self, '_screen_light_sample_interval', 15)))
-            if self._glow_color_counter >= interval:
-                self._glow_color_counter = 0
-                self._sample_glow_target_color(rgb, is_tensor)
-        elif env_static_spill_active:
-            self._glow_color_counter = 0
+        """Runtime glow uses the GPU source texture; avoid CPU frame sampling here."""
+        self._glow_color_counter = 0
+        return

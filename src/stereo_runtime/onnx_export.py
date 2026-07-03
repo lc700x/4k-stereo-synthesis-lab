@@ -8,6 +8,8 @@ import warnings
 
 import torch
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_operation
+
 OnnxDtypeMode = Literal["auto", "fp16", "fp32"]
 
 from .model_capabilities import FORCE_FP32_KEYWORDS
@@ -74,6 +76,12 @@ def probe_model_dtype(model, *, device, dtype, height: int, width: int) -> tuple
         depth = _extract_depth_output(output).detach().float()
         if depth.numel() == 0:
             return False, "empty output"
+        warn_cpu_operation(
+            "stereo_runtime.probe_model_dtype",
+            "depth validity/range .item() sync",
+            detail=describe_tensor(depth),
+            key=f"stereo_runtime_probe_model_dtype_cpu_stats_{dtype}",
+        )
         if not torch.isfinite(depth).all().item():
             return False, "output contains NaN or Inf"
         abs_max = float(depth.abs().max().item())

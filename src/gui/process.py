@@ -20,7 +20,6 @@ from .paths import BASE_DIR, DIAG_LOG, LOG_DIR, LOG_FILE, STOP_REQUEST_FILE
 from .capture_sources import get_primary_monitor_index, list_windows
 from .localization import UI_MESSAGES
 from .log_handler import GuiLogHandler
-from .controls import S
 from utils.logging_setup import _NoisyThirdPartyDebugFilter
 
 # ── module-level console helpers ──
@@ -39,6 +38,7 @@ _FLET_MESSAGE_PREFIXES = ("[flet]", "[flet_desktop]", "[flet_controls]", "[flet_
 _PROGRESS_PERCENT_RE = re.compile(r"(?P<percent>\d{1,3}(?:\.\d+)?)%")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _LOG_FILE_LINE_RE = re.compile(r"^\[(?P<asctime>\d\d:\d\d:\d\d)\] \[(?P<level>[A-Z]+)\] \[(?P<name>[^\]]+)\] (?P<message>.*)$")
+_LEGACY_LOG_FILE_LINE_RE = re.compile(r"^\[(?P<asctime>\d\d:\d\d:\d\d)\] \[(?P<name>[^\]]+)\] (?P<message>.*)$")
 _PROGRESS_PREFIX = "[D2S_PROGRESS] "
 _ASYNCIO_SHUTDOWN_UNRAISABLE_MODULES = (
     "asyncio.base_subprocess",
@@ -69,11 +69,17 @@ def _is_asyncio_shutdown_unraisable(unraisable):
 def _log_item_from_file_line(line: str):
     text = str(line or "").rstrip("\r\n")
     match = _LOG_FILE_LINE_RE.match(text)
-    if not match:
-        return None
-    level_name = match.group("level")
-    levelno = getattr(logging, level_name, logging.INFO)
-    return levelno, match.group("name"), match.group("asctime"), text
+    if match:
+        level_name = match.group("level")
+        levelno = getattr(logging, level_name, logging.INFO)
+        return levelno, match.group("name"), match.group("asctime"), text
+    legacy_match = _LEGACY_LOG_FILE_LINE_RE.match(text)
+    if legacy_match:
+        asctime = legacy_match.group("asctime")
+        name = legacy_match.group("name")
+        message = legacy_match.group("message")
+        return logging.INFO, name, asctime, f"[{asctime}] [INFO] [{name}] {message}"
+    return None
 
 
 def _read_log_file_items():
@@ -130,14 +136,33 @@ class _HideStructuredProgressFilter(logging.Filter):
         return _PROGRESS_PREFIX not in record.getMessage()
 
 
+class _CpuOperationAsCriticalFilter(logging.Filter):
+    def filter(self, record):
+        text = f"{record.name} {record.getMessage()}".lower()
+        if "cpu" in text:
+            record.levelno = logging.CRITICAL
+            record.levelname = "CRITICAL"
+        return True
+
+
+def _disable_flet_logging():
+    for name in _FLET_LOGGER_NAMES:
+        logging.getLogger(name).disabled = True
+
+
 def _setup_console_logging():
     """Configure console logging, file logging, and GUI log queue."""
     global _console_logging_installed, _gui_log_handler
+    _disable_flet_logging()
     if _console_logging_installed:
         _install_asyncio_shutdown_noise_filter()
         return _gui_log_handler
 
     os.makedirs(LOG_DIR, exist_ok=True)
+    try:
+        open(LOG_FILE, "w", encoding="utf-8").close()
+    except Exception:
+        pass
 
     try:
         for name in os.listdir(LOG_DIR):
@@ -157,15 +182,17 @@ def _setup_console_logging():
     console_handler = logging.StreamHandler(console_stream)
     console_handler.setLevel(logging.DEBUG)
     console_handler.addFilter(_FletInfoAsDebugFilter())
+    console_handler.addFilter(_CpuOperationAsCriticalFilter())
     console_handler.addFilter(_NoisyThirdPartyDebugFilter())
     console_handler.addFilter(_HideStructuredProgressFilter())
-    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    console_handler.setFormatter(logging.Formatter(
+        "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%H:%M:%S"
+    ))
 
-    file_handler = logging.FileHandler(LOG_FILE, mode="w", encoding="utf-8")
+    file_handler = logging.FileHandler(LOG_FILE, mode="a", encoding="utf-8")
     file_handler.setLevel(logging.DEBUG)
     file_handler.addFilter(_FletInfoAsDebugFilter())
-    file_handler.addFilter(_NoisyThirdPartyDebugFilter())
-    file_handler.addFilter(_HideStructuredProgressFilter())
+    file_handler.addFilter(_CpuOperationAsCriticalFilter())
     file_handler.setFormatter(logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%H:%M:%S"
     ))
@@ -173,6 +200,7 @@ def _setup_console_logging():
     gui_handler = GuiLogHandler(maxlen=2000)
     gui_handler.setLevel(logging.DEBUG)
     gui_handler.addFilter(_FletInfoAsDebugFilter())
+    gui_handler.addFilter(_CpuOperationAsCriticalFilter())
     gui_handler.addFilter(_NoisyThirdPartyDebugFilter())
     gui_handler.setFormatter(logging.Formatter(
         "[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%H:%M:%S"
@@ -268,17 +296,21 @@ class GUIProcessMixin:
         self._safe_update(self.run_btn, self.stop_btn)
 
     def _diag(self, msg, error=False):
-        import datetime
         os.makedirs(LOG_DIR, exist_ok=True)
+        level_name = "ERROR" if error else "INFO"
+        timestamp = datetime.datetime.now().strftime('%H:%M:%S')
+        lines = str(msg).splitlines() or [""]
         try:
             with open(LOG_FILE, "a", encoding="utf-8") as f:
-                f.write(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] [diag] {msg}\n")
+                for line in lines:
+                    f.write(f"[{timestamp}] [{level_name}] [diag] {line}\n")
         except Exception:
             pass
         if error:
             try:
                 original = getattr(sys.stdout, "original", sys.stdout)
-                original.write(f"[diag] {msg}\n")
+                for line in lines:
+                    original.write(f"[{timestamp}] [{level_name}] [diag] {line}\n")
                 original.flush()
             except Exception:
                 pass
@@ -653,16 +685,7 @@ class GUIProcessMixin:
         return None
 
     def _format_gui_log_line(self, item):
-        levelno, name, asctime, formatted = item
-        prefix = f"[{asctime}] "
-        marker = "] "
-        message = formatted.split(marker, 2)[-1] if marker in formatted else formatted
-        if name == "status":
-            return f"{prefix}{message}"
-        emoji = self._log_emoji(name, levelno)
-        if name == "status":
-            return f"{prefix}{emoji}{message}"
-        return f"{prefix}{name}: {message}" if name not in ("root", "stdout", "child") else f"{prefix}{message}"
+        return item[3]
 
     def _log_emoji(self, logger_name, levelno):
         if logger_name != "status":
@@ -672,30 +695,55 @@ class GUIProcessMixin:
         if levelno >= logging.WARNING:
             return "⚠️ "
         return "✅ "
-    def _selected_log_level(self):
-        value = getattr(getattr(self, "log_level_dd", None), "value", "ALL")
+    def _selected_log_filter(self):
+        return getattr(getattr(self, "log_level_dd", None), "value", "ALL") or "ALL"
+
+    def _log_item_matches_filter(self, item):
+        value = self._selected_log_filter()
+        levelno, name = item[0], item[1]
+        if value == "ALL":
+            return True
         if value == "STATUS":
-            return -1
-        return {"ALL": 0, "DEBUG": logging.DEBUG, "INFO": logging.INFO,
-                "WARNING": logging.WARNING, "ERROR": logging.ERROR}.get(value, 0)
+            return name == "status"
+        if value == "DEBUG":
+            return levelno == logging.DEBUG
+        if value == "INFO":
+            return levelno == logging.INFO
+        if value == "WARNING":
+            return levelno == logging.WARNING
+        if value == "ERROR":
+            return levelno == logging.ERROR
+        if value == "CRITICAL":
+            return levelno == logging.CRITICAL
+        return True
 
-    def _log_text_width(self, text):
-        return max(S(500), sum(S(13) if ord(ch) > 127 else S(7) for ch in str(text)) + S(32))
-
-    def _make_log_text(self, item):
+    def _make_log_span(self, item, line=None):
         levelno, name, _, _ = item
-        line = self._format_gui_log_line(item)
-        return ft.Text(
-            line,
-            color=self._log_color(levelno, line),
-            size=12,
-            weight=ft.FontWeight.BOLD if name == "status" else ft.FontWeight.NORMAL,
-            selectable=True,
-            no_wrap=True,
-            max_lines=1,
-            overflow=ft.TextOverflow.VISIBLE,
-            width=self._log_text_width(line),
-        )
+        line = self._format_gui_log_line(item) if line is None else line
+        color = self._log_color(levelno, line)
+        style_kwargs = {
+            "size": 12,
+            "weight": ft.FontWeight.BOLD if name == "status" else ft.FontWeight.NORMAL,
+        }
+        if color is not None:
+            style_kwargs["color"] = color
+        return ft.TextSpan(text=f"{line}\n", style=ft.TextStyle(**style_kwargs))
+
+    def _append_log_span(self, span):
+        log_text = getattr(self, "log_text", None)
+        if log_text is None:
+            return
+        if log_text.spans is None:
+            log_text.spans = []
+        log_text.spans.append(span)
+        if len(log_text.spans) > 1000:
+            kept_spans = log_text.spans[-500:]
+            kept_ids = {id(item) for item in kept_spans}
+            log_text.spans = kept_spans
+            progress_spans = getattr(self, "_progress_log_spans", {})
+            self._progress_log_spans = {
+                key: value for key, value in progress_spans.items() if id(value) in kept_ids
+            }
 
     def _progress_event(self, item):
         levelno, name, _, formatted = item
@@ -753,11 +801,7 @@ class GUIProcessMixin:
         return key, f"{desc} {percent:5.1f}%"
 
     def _append_log_item(self, item):
-        min_level = self._selected_log_level()
-        if min_level == -1:
-            if item[1] != "status":
-                return
-        elif item[0] < min_level:
+        if not self._log_item_matches_filter(item):
             return
         event = self._progress_event(item)
         if event is not None:
@@ -766,34 +810,23 @@ class GUIProcessMixin:
         progress = self._progress_log_line(item)
         if progress is not None:
             key, line = progress
-            controls = getattr(self, "_progress_log_controls", {})
-            existing = controls.get(key)
+            progress_spans = getattr(self, "_progress_log_spans", {})
+            existing = progress_spans.get(key)
             if existing is not None:
-                existing.value = line
-                existing.width = self._log_text_width(line)
+                existing.text = f"{line}\n"
                 return
-            text = ft.Text(
-                line,
-                color=self._log_color(item[0], line),
-                size=12,
-                selectable=True,
-                no_wrap=True,
-                max_lines=1,
-                overflow=ft.TextOverflow.VISIBLE,
-                width=self._log_text_width(line),
-            )
-            controls[key] = text
-            self.log_listview.controls.append(text)
+            span = self._make_log_span(item, line)
+            progress_spans[key] = span
+            self._progress_log_spans = progress_spans
+            self._append_log_span(span)
             return
-        self.log_listview.controls.append(self._make_log_text(item))
-        if len(self.log_listview.controls) > 1000:
-            self.log_listview.controls = self.log_listview.controls[-500:]
+        self._append_log_span(self._make_log_span(item))
 
     async def _poll_log_queue(self):
         while not self._closed:
             handler = getattr(self, "gui_log_handler", None)
-            listview = getattr(self, "log_listview", None)
-            if handler is None or listview is None:
+            log_text = getattr(self, "log_text", None)
+            if handler is None or log_text is None:
                 await asyncio.sleep(0.1)
                 continue
             changed = False
@@ -809,7 +842,9 @@ class GUIProcessMixin:
             if changed:
                 self._fit_window_to_content(update=False)
                 self._safe_update(
-                    listview,
+                    getattr(self, "log_viewport", None),
+                    getattr(self, "log_scroll_row", None),
+                    log_text,
                     getattr(self, "download_progress_panel", None),
                     getattr(self, "log_title", None),
                     getattr(self, "report_issue_btn", None),
@@ -831,26 +866,28 @@ class GUIProcessMixin:
         self._safe_update(self.log_toggle_btn, self.log_body)
 
     def on_log_level_filter(self, e=None):
-        self.log_listview.controls.clear()
-        self._progress_log_controls.clear()
+        self.log_text.spans = []
+        self._progress_log_spans.clear()
         if getattr(self, "download_progress_panel", None) is not None:
             self.download_progress_panel.visible = False
         items = _read_log_file_items()
         handler = getattr(self, "gui_log_handler", None)
         if not items and handler is not None:
-            items = list(getattr(handler, "cache", []))
             value = getattr(getattr(self, "log_level_dd", None), "value", "ALL")
-            if value == "STATUS":
-                items = list(getattr(handler, "status_cache", items))
-            elif value == "ALL" and not any(item[1] == "status" for item in items):
+            items = list(getattr(handler, "status_cache", [])) if value == "STATUS" else list(getattr(handler, "cache", []))
+            if value == "ALL" and not any(item[1] == "status" for item in items):
                 items.extend(getattr(handler, "status_cache", []))
         for item in items:
             self._append_log_item(item)
-        self._safe_update(self.log_listview)
+        self._safe_update(
+            getattr(self, "log_viewport", None),
+            getattr(self, "log_scroll_row", None),
+            self.log_text,
+        )
 
     def on_log_clear(self, e=None):
-        self.log_listview.controls.clear()
-        self._progress_log_controls.clear()
+        self.log_text.spans = []
+        self._progress_log_spans.clear()
         handler = getattr(self, "gui_log_handler", None)
         if handler is not None:
             handler.cache.clear()
@@ -864,7 +901,13 @@ class GUIProcessMixin:
         if getattr(self, "log_title", None) is not None:
             self.log_title.value = UI_MESSAGES[self.locale].get("Log panel title", "Run Log")
             self.log_title.color = None
-        self._safe_update(self.log_listview, getattr(self, "download_progress_panel", None), getattr(self, "log_title", None))
+        self._safe_update(
+            getattr(self, "log_viewport", None),
+            getattr(self, "log_scroll_row", None),
+            self.log_text,
+            getattr(self, "download_progress_panel", None),
+            getattr(self, "log_title", None),
+        )
 
     def on_report_issue(self, e=None):
         handler = getattr(self, "gui_log_handler", None)

@@ -55,6 +55,15 @@ def warn_cpu_transfer(component: str, action: str, *, detail: str | None = None,
     )
 
 
+def warn_cpu_operation(component: str, action: str, *, detail: str | None = None, key: str | None = None, once: bool = True) -> None:
+    red_cpu_warning(
+        "[CPU-OP]",
+        f"{component}: action={action}{_format_detail(detail)}",
+        key=key or f"operation:{component}:{action}:{detail or ''}",
+        once=once,
+    )
+
+
 def describe_tensor(value: Any) -> str:
     shape = getattr(value, "shape", None)
     dtype = getattr(value, "dtype", None)

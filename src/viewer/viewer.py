@@ -1207,6 +1207,12 @@ class OverlayTextureRenderer:
             self.texture = self.ctx.texture((w, h), 4, dtype="f1")
             self.texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
             self.size = (w, h)
+        warn_cpu_transfer(
+            "OverlayTextureRenderer",
+            "CPU RGBA texture.write",
+            detail=f"shape={getattr(rgba, 'shape', 'unknown')}",
+            key="overlay_texture_renderer_cpu_write",
+        )
         self.texture.write(np.ascontiguousarray(rgba).tobytes())
         return True
 
@@ -1606,6 +1612,12 @@ class StereoWindow:
         """
         # Integrated GPU (or no pinned staging / colour PBO): direct texture write.
         if self._cuda_integrated or self._pinned_rgb is None or self._cuda_resource_color is None:
+            warn_cpu_transfer(
+                "StereoWindow color upload",
+                "CPU RGB texture.write",
+                detail=f"shape={getattr(rgb_host, 'shape', 'unknown')} integrated={self._cuda_integrated}",
+                key="stereo_window_color_texture_write_cpu",
+            )
             self.color_tex.write(np.ascontiguousarray(rgb_host).tobytes())
             return
 
@@ -1613,10 +1625,22 @@ class StereoWindow:
         nbytes = h * w * 3
         if self._pinned_rgb.shape[:2] == (h, w):
             # In-place CPU copy numpy -> pinned torch buffer
+            warn_cpu_transfer(
+                "StereoWindow color upload",
+                "CPU numpy -> pinned torch staging",
+                detail=f"shape={getattr(rgb_host, 'shape', 'unknown')}",
+                key="stereo_window_color_pinned_staging_cpu",
+            )
             self._pinned_rgb.copy_(torch.from_numpy(np.ascontiguousarray(rgb_host)))
             src_ptr = self._pinned_rgb_ptr
         else:
             # Size mismatch fallback: copy directly from the (pageable) numpy buffer
+            warn_cpu_fallback(
+                "StereoWindow color upload",
+                "pinned_staging_size_mismatch",
+                detail=f"rgb_shape={getattr(rgb_host, 'shape', 'unknown')} pinned_shape={getattr(self._pinned_rgb, 'shape', 'unknown')}",
+                key="stereo_window_color_pageable_cpu_fallback",
+            )
             rgb_c = np.ascontiguousarray(rgb_host)
             src_ptr = rgb_c.ctypes.data
             nbytes = rgb_c.nbytes

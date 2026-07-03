@@ -537,6 +537,7 @@ def test_runtime_pipeline_holds_pending_result_until_cuda_event_ready(monkeypatc
 def test_runtime_pipeline_continues_until_pending_cuda_depth_limit(monkeypatch):
     import stereo_runtime.pipeline as pipeline
 
+    monkeypatch.setenv("D2S_RUNTIME_PENDING_CUDA_DEPTH", "2")
     raw_q = queue.Queue(maxsize=2)
     runtime_q = queue.Queue(maxsize=2)
     raw_q.put(("raw-a", (2, 2), 10.0))
@@ -595,11 +596,14 @@ def test_runtime_pipeline_continues_until_pending_cuda_depth_limit(monkeypatch):
     )
     monkeypatch.setattr(pipeline, "_attach_cuda_ready_event", attach_ready_event)
 
-    RuntimePipelineLoop(context).run()
+    loop = RuntimePipelineLoop(context)
+    loop.run()
 
     assert runtime.rgb_calls == 2
     assert raw_q.empty()
     assert runtime_q.empty()
+    assert len(loop._pending_runtime_items) == 1
+    assert loop._pending_runtime_items[0][1] == 11.0
     assert stats["runtime_pending_cuda"] == 2
     assert breakdown["runtime_pending_cuda"] == 2
 
@@ -667,6 +671,8 @@ def test_runtime_pipeline_drops_raw_when_pending_cuda_depth_is_full():
 
     assert runtime_q.empty()
     assert raw_q.empty()
+    assert len(loop._pending_runtime_items) == 1
+    assert loop._pending_runtime_items[0][1] == 9.0
     assert stats["raw_get"] == 1
     assert stats["runtime_drop_cuda_inflight"] == 1
     assert breakdown["runtime_drop_cuda_inflight"] == 1

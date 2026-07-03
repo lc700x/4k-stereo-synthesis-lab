@@ -230,17 +230,15 @@ def test_hidden_log_panel_does_not_contribute_to_window_width():
     fit_end = builders_text.index("def _on_page_resize", fit_start)
     fit_block = builders_text[fit_start:fit_end]
 
-    assert "if log_panel.visible:" in fit_block
-    assert "log_panel.expand = True" in fit_block
-    assert "log_panel.width = self._estimate_log_panel_width(main_width)" in fit_block
-    assert "log_panel.expand = False" in fit_block
-    assert "log_panel.width = 0" in fit_block
+    assert "log_panel.expand = bool(log_panel.visible)" in fit_block
+    assert "log_panel.width" not in fit_block
 
     width_start = builders_text.index("def _estimate_window_width")
     width_end = builders_text.index("def _control_has_effective_content", width_start)
     width_block = builders_text[width_start:width_end]
-    assert "self._estimate_log_panel_width" not in width_block
+    assert "self._estimate_log_panel_width" not in builders_text
     assert "self.log_panel.width" not in width_block
+    assert "controls[-200:]" not in builders_text
 
 
 def test_console_output_uses_standard_logging_with_filtered_stream_redirect():
@@ -257,6 +255,7 @@ def test_console_output_uses_standard_logging_with_filtered_stream_redirect():
     assert "console=Console(file=console_stream)" not in text
     assert "console_stream = sys.__stderr__ or sys.stderr or open(os.devnull" in text
     assert "console_handler = logging.StreamHandler(console_stream)" in text
+    assert '"[%(asctime)s] [%(levelname)s] [%(name)s] %(message)s", "%H:%M:%S"' in text
     assert "class _StreamToLogger" in text
     stream_index = text.index("class _StreamToLogger")
     filter_index = text.index("if line and _is_key_console_output(line):", stream_index)
@@ -274,6 +273,10 @@ def test_console_filter_suppresses_flet_debug_patch_noise():
     assert 'record.name in _FLET_LOGGER_NAMES' in process_text
     assert 'record.getMessage().startswith(_FLET_MESSAGE_PREFIXES)' in process_text
     assert "record.levelno = logging.DEBUG" in process_text
+    assert "def _disable_flet_logging" in process_text
+    assert "for name in _FLET_LOGGER_NAMES:" in process_text
+    assert "logging.getLogger(name).disabled = True" in process_text
+    assert "_disable_flet_logging()" in process_text
     assert "console_handler.addFilter(_FletInfoAsDebugFilter())" in process_text
     assert "file_handler.addFilter(_FletInfoAsDebugFilter())" in process_text
     assert "gui_handler.addFilter(_FletInfoAsDebugFilter())" in process_text
@@ -389,43 +392,63 @@ def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     localization_text = _file_text("localization.py")
     assert 'LOG_FILE = os.path.join(LOG_DIR, "desktop2stereo.log")' in paths_text
     assert "DIAG_LOG = LOG_FILE" in paths_text
-    assert "logging.FileHandler(LOG_FILE, mode=\"w\", encoding=\"utf-8\")" in process_text
+    assert 'open(LOG_FILE, "w", encoding="utf-8").close()' in process_text
+    assert "logging.FileHandler(LOG_FILE, mode=\"a\", encoding=\"utf-8\")" in process_text
     assert "GuiLogHandler(maxlen=2000)" in process_text
     assert "self.gui_log_handler = _setup_console_logging()" in gui_text
     assert "self._log_poll_task = asyncio.create_task(self._poll_log_queue())" in gui_text
     assert "self.log_panel = ft.Container" in builders_text
-    assert "self.log_listview = ft.Column(scroll=ft.ScrollMode.AUTO" in builders_text
-    assert "content=ft.Row([self.log_listview], scroll=ft.ScrollMode.AUTO" in builders_text
+    assert 'options=["ALL", "STATUS", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]' in builders_text
+    assert "self.log_text = ft.Text(" in builders_text
+    assert "spans=[]" in builders_text
+    assert "selectable=True" in builders_text
+    assert "no_wrap=True" in builders_text
+    assert "overflow=ft.TextOverflow.VISIBLE" in builders_text
+    assert "self.log_scroll_row = ft.Row(" in builders_text
+    assert "[self.log_text]" in builders_text
+    assert "scroll=ft.Scrollbar(orientation=ft.ScrollbarOrientation.BOTTOM)" in builders_text
+    assert "vertical_alignment=ft.CrossAxisAlignment.START" in builders_text
+    assert "self.log_viewport = ft.Column(" in builders_text
+    assert "scroll=ft.Scrollbar(orientation=ft.ScrollbarOrientation.RIGHT)" in builders_text
+    assert "content=self.log_viewport" in builders_text
     assert "ft.ListView" not in builders_text
     assert "SelectionArea" not in builders_text
     assert "visible=False" in builders_text
-    assert "page.add(ft.Row([self._main_panel, self.log_panel]" in builders_text
+    assert "self._root_row = ft.Row([self._main_panel, self.log_panel], expand=True, tight=True" in builders_text
+    assert "page.add(self._root_row)" in builders_text
     assert "self.log_title = ft.Text" not in builders_text
     assert "self.log_clear_btn = ft.Button" not in builders_text
     assert "self.log_toggle_btn = ft.Button" not in builders_text
     assert "def _estimate_main_panel_width" in builders_text
-    assert "def _estimate_log_panel_width" in builders_text
+    assert "def _estimate_log_panel_width" not in builders_text
     assert "self._main_panel.width = main_width" in builders_text
-    assert "log_panel.width = self._estimate_log_panel_width(main_width)" in builders_text
+    assert "log_panel.width" not in builders_text
     assert "def _fit_window_to_content(self, update=True, resize_window=False)" in builders_text
+    assert "self._last_page_width" not in builders_text
+    resize_block = builders_text[builders_text.index("def _on_page_resize"):builders_text.index("def _spacing_width")]
+    assert "self._fit_window_to_content" not in resize_block
+    assert 'width = getattr(e, "width", None)' not in builders_text
+    assert "self._root_row.width" not in builders_text
     assert "if resize_window:" in builders_text
     assert "self.page.window.min_width = main_width" in builders_text
     assert "self.page.window.min_width = width" not in builders_text
     assert "min(width, S(520))" not in builders_text
     assert "self.page.window.width = width" in builders_text
     assert "self.page.window.update()" in builders_text
+    assert "self.page.window.width = None" in builders_text
     assert "except RuntimeError:" in builders_text
-    assert "self.page.window.max_width = width" in builders_text
+    assert "self.page.window.max_width = None" in builders_text
+    assert "self.page.window.max_width = width" not in builders_text
     assert "self.page.on_resize = self._on_page_resize" in gui_text
     assert "max_total_width" not in builders_text
-    assert "min_log_width = S(500)" in builders_text
-    assert "available_width = window_width - main_width" in builders_text
-    assert "controls[-200:]" in builders_text
+    assert "content_width += S(500)" in builders_text
+    assert "available_width = window_width - main_width" not in builders_text
+    assert "controls[-200:]" not in builders_text
     assert "self._fit_window_to_content(update=False)" in process_text
     assert "min_width=S(360)" not in builders_text
     assert "min_width=S(500)" not in builders_text
     assert "width=S(360)" not in builders_text
-    assert "width=S(500)" in builders_text
+    assert "width=S(500)" not in builders_text
     assert "expand=True" in builders_text
     assert 'UI_MESSAGES[self.locale].get("Report issue", "Report")' not in builders_text
     assert 'UI_MESSAGES[self.locale].get("Report issue", "Report bug")' in builders_text
@@ -462,31 +485,61 @@ def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     assert "print(text)" not in process_text
     assert "asyncio.create_task(self._pump_child_output(self.process))" in process_text
     assert "from " + "ri" + "ch" not in process_text
-    assert "from .controls import S" in process_text
-    assert "def _log_text_width" in process_text
-    assert "no_wrap=True" in process_text
-    assert "max_lines=1" in process_text
-    assert "overflow=ft.TextOverflow.VISIBLE" in process_text
-    assert "width=self._log_text_width(line)" in process_text
+    assert "from .controls import S" not in process_text
+    assert "def _log_text_width" not in process_text
+    assert "def _make_log_text" not in process_text
+    assert "def _make_log_span" in process_text
+    assert "ft.TextSpan(text=f\"{line}\\n\", style=ft.TextStyle(**style_kwargs))" in process_text
+    assert "max_lines=1" not in process_text
+    assert "width=self._log_text_width(line)" not in process_text
     assert "def _progress_log_line" in process_text
     assert "def _progress_event" in process_text
     assert "def _update_download_progress" in process_text
     assert "if _PROGRESS_PREFIX not in text:" in process_text
     assert "text = text[text.index(_PROGRESS_PREFIX):]" in process_text
     assert "class _HideStructuredProgressFilter" in process_text
-    assert process_text.count("addFilter(_HideStructuredProgressFilter())") == 2
+    assert "class _CpuOperationAsCriticalFilter" in process_text
+    assert 'if "cpu" in text:' in process_text
+    assert "record.levelno = logging.CRITICAL" in process_text
+    assert "record.levelname = \"CRITICAL\"" in process_text
+    assert "console_handler.addFilter(_CpuOperationAsCriticalFilter())" in process_text
+    assert "file_handler.addFilter(_CpuOperationAsCriticalFilter())" in process_text
+    assert "gui_handler.addFilter(_CpuOperationAsCriticalFilter())" in process_text
+    assert "console_handler.addFilter(_HideStructuredProgressFilter())" in process_text
+    assert "file_handler.addFilter(_HideStructuredProgressFilter())" not in process_text
+    assert "file_handler.addFilter(_NoisyThirdPartyDebugFilter())" not in process_text
     assert "self.download_progress_bar = ft.ProgressBar" in builders_text
     assert "self.download_progress_panel" in builders_text
     assert "_PROGRESS_PREFIX = \"[D2S_PROGRESS] \"" in process_text
-    assert 'controls = getattr(self, "_progress_log_controls", {})' in process_text
-    assert "existing.value = line" in process_text
-    assert "self.log_listview.controls.append(text)" in process_text
-    assert "self._progress_log_controls.clear()" in process_text
+    assert 'progress_spans = getattr(self, "_progress_log_spans", {})' in process_text
+    assert 'existing.text = f"{line}\\n"' in process_text
+    assert "self._append_log_span(span)" in process_text
+    assert "self._progress_log_spans.clear()" in process_text
     assert "def _read_log_file_items" in process_text
     assert "items = _read_log_file_items()" in process_text
+    assert "_LOG_FILE_LINE_RE" in process_text
+    assert "_LEGACY_LOG_FILE_LINE_RE" in process_text
+    assert 'return logging.INFO, name, asctime, f"[{asctime}] [INFO] [{name}] {message}"' in process_text
+    assert "def _selected_log_filter" in process_text
+    assert "def _log_item_matches_filter" in process_text
+    assert 'if value == "DEBUG":\n            return levelno == logging.DEBUG' in process_text
+    assert 'if value == "INFO":\n            return levelno == logging.INFO' in process_text
+    assert 'if value == "WARNING":\n            return levelno == logging.WARNING' in process_text
+    assert 'if value == "ERROR":\n            return levelno == logging.ERROR' in process_text
+    assert 'if value == "CRITICAL":\n            return levelno == logging.CRITICAL' in process_text
+    assert 'if value == "STATUS":\n            return name == "status"' in process_text
+    assert "def _format_gui_log_line" in process_text
+    assert "return item[3]" in process_text
+    assert 'f"[{timestamp}] [{level_name}] [diag] {line}\\n"' in process_text
+    assert "def _selected_log_level" not in process_text
+    assert "item[0] < min_level" not in process_text
     assert "if not items and handler is not None:" in process_text
-    assert 'if value == "STATUS":' in process_text
-    assert 'getattr(handler, "status_cache", items)' in process_text
+    assert 'items = list(getattr(handler, "status_cache", [])) if value == "STATUS" else list(getattr(handler, "cache", []))' in process_text
+    assert "seen = set(items)" not in process_text
+    assert "items.append(cached_item)" not in process_text
+    assert "self.log_text.spans = []" in process_text
+    assert "self._progress_log_spans.clear()" in process_text
+    assert "self._progress_log_controls" not in gui_text + process_text
     assert 'handler.status_cache.clear()' in process_text
     assert '"Show Log Panel": True' in config_text
     assert "self.log_visibility_link" in builders_text
@@ -1225,3 +1278,65 @@ def test_legacy_desktop_duplication_config_maps_to_dxgi_name():
 
     assert 'if ct == "DesktopDuplication":' in config_mgr_text
     assert 'ct = "DXGIDesktopDuplication"' in config_mgr_text
+
+
+def test_cpu_warning_helpers_cover_runtime_cpu_operations():
+    repo_root = Path(__file__).resolve().parents[1]
+    cpu_warnings_text = (repo_root / "src" / "utils" / "cpu_warnings.py").read_text(encoding="utf-8")
+    core_eye_text = (repo_root / "src" / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    viewer_text = (repo_root / "src" / "viewer" / "viewer.py").read_text(encoding="utf-8")
+    io_text = (repo_root / "src" / "stereo_runtime" / "io.py").read_text(encoding="utf-8")
+    report_text = (repo_root / "src" / "stereo_runtime" / "report.py").read_text(encoding="utf-8")
+    runtime_text = (repo_root / "src" / "stereo_runtime" / "runtime.py").read_text(encoding="utf-8")
+    motion_text = (repo_root / "src" / "stereo_runtime" / "motion_signal.py").read_text(encoding="utf-8")
+    onnx_export_text = (repo_root / "src" / "stereo_runtime" / "onnx_export.py").read_text(encoding="utf-8")
+    visual_regression_text = (repo_root / "src" / "stereo_runtime" / "openxr_visual_regression.py").read_text(encoding="utf-8")
+    core_frame_upload_text = (repo_root / "src" / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
+    d3d11_text = (repo_root / "src" / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+
+    assert "def warn_cpu_operation" in cpu_warnings_text
+    assert '"[CPU-OP]"' in cpu_warnings_text
+    assert "OpenXR runtime eye source mean" not in core_eye_text
+    assert "tensor mean .item() sync" not in core_eye_text
+    assert "tensor min/max/mean .item() sync" not in core_eye_text
+    assert "tensor diff mean/max .item() sync" not in core_eye_text
+    assert "GL texture readback tex.read()" in core_eye_text
+    assert "OverlayTextureRenderer" in viewer_text
+    assert "CPU RGBA texture.write" in viewer_text
+    assert "CPU RGB texture.write" in viewer_text
+    assert "CPU numpy -> pinned torch staging" in viewer_text
+    assert "stereo_runtime.save_rgb" in io_text
+    assert "stereo_runtime.save_depth" in io_text
+    assert "stereo_runtime.basic_image_metrics" in report_text
+    assert "stereo_runtime.depth_metrics" in report_text
+    assert "stereo_runtime.depth_comparison_metrics" in report_text
+    assert "stereo_runtime.make_contact_sheet" in report_text
+    assert "stereo_runtime.make_labeled_contact_sheet" in report_text
+    assert "stereo_runtime.draw_labels" in report_text
+    assert "def _dynamic_convergence_measurement" in runtime_text
+    dyn_start = runtime_text.index("def _dynamic_convergence_measurement")
+    dyn_end = runtime_text.index("def _depth_quantile_tensor", dyn_start)
+    dyn_block = runtime_text[dyn_start:dyn_end]
+    assert "event.query()" in dyn_block
+    assert "pending.copy_(tensor, non_blocking=True)" in dyn_block
+    assert "event.record(torch.cuda.current_stream(tensor.device))" in dyn_block
+    assert "runtime._dynamic_convergence_pending_measurement = pending" in dyn_block
+    assert ".item()" not in dyn_block
+    assert "depth quantile .item() sync" not in runtime_text
+    assert "_normalize_openxr_runtime_float_eye" not in runtime_text
+    assert "source_rgb.detach().float().clamp(0.0, 1.0).cpu()" not in runtime_text
+    assert "RuntimeMotionSampler" in motion_text
+    assert "self.pending_motion_event.query()" in motion_text
+    assert "pending.copy_(motion_tensor, non_blocking=True)" in motion_text
+    assert ".item()" not in motion_text
+    assert "pending motion .item() sync" not in motion_text
+    assert "motion tensor .item() sync" not in motion_text
+    assert "warn_cpu_operation" not in motion_text
+    assert "stereo_runtime.probe_model_dtype" in onnx_export_text
+    assert "OpenXR visual regression" in visual_regression_text
+    assert "OpenXR glow color sampling" not in core_frame_upload_text
+    assert "OpenXR glow grid sampling" not in core_frame_upload_text
+    assert "OpenXR runtime eye tensor pack" not in core_eye_text
+    assert "openxr_runtime_eye_tensor_pack_max_item" not in core_eye_text
+    assert "OpenXR D3D11 runtime eye tensor pack" not in d3d11_text
+    assert "openxr_d3d11_runtime_eye_max_item" not in d3d11_text

@@ -196,6 +196,8 @@ def test_radiance_hdr_loader_decodes_flat_rgbe(tmp_path):
 
 
 def test_official_webxr_hdr_environments_are_packaged():
+    import pytest
+
     names = {
         "WebXR Autumn Forest": "autumn_forest_01_2k.hdr",
         "WebXR Cave Wall": "cave_wall_2k.hdr",
@@ -204,6 +206,8 @@ def test_official_webxr_hdr_environments_are_packaged():
         "WebXR Snowy Park": "snowy_park_01_2k.hdr",
         "WebXR Studio": "studio_small_03_2k.hdr",
     }
+    if not (SRC / "xr_viewer" / "environments" / "WebXR Autumn Forest" / "profile.json").is_file():
+        pytest.skip("optional WebXR HDR panorama assets are not packaged")
     for env_name, hdr_name in names.items():
         env_dir = SRC / "xr_viewer" / "environments" / env_name
         profile = (env_dir / "profile.json").read_text(encoding="utf-8")
@@ -214,6 +218,10 @@ def test_official_webxr_hdr_environments_are_packaged():
 
 
 def test_panorama_profile_survives_viewer_initialization(monkeypatch):
+    import pytest
+
+    if not (SRC / "xr_viewer" / "environments" / "WebXR Autumn Forest" / "profile.json").is_file():
+        pytest.skip("optional WebXR HDR panorama assets are not packaged")
     monkeypatch.chdir(SRC)
     from xr_viewer.environment import OpenXRViewer
 
@@ -532,6 +540,76 @@ def test_frosted_glow_shader_uses_flat_grid_source_crop():
     assert "hash12" in glsl_text
 
 
+def test_screen_effects_do_not_sample_runtime_eye_texture():
+    effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    source_func = effects_text.split("def _screen_effect_source_texture", 1)[1].split("def _render_glow", 1)[0]
+
+    assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
+    assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
+    assert "_runtime_effect_source_tex" in source_func
+    assert "_runtime_eye_textures" not in source_func
+    assert "_current_eye_index" not in source_func
+
+
+def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
+    render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    source_func = render_text.split("def _screen_light_source_texture", 1)[1].split("def _apply_cinema_light_uniforms", 1)[0]
+
+    assert "_runtime_effect_source_tex" in source_func
+    assert "_runtime_effect_source_size" in source_func
+    assert "_runtime_eye_textures" not in source_func
+    assert "_current_eye_index" not in source_func
+
+
+def test_runtime_effect_source_texture_is_prepared_for_all_glow_modes(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    cases = [
+        ("screen", 1.0, 0.0),
+        ("surround", 0.0, 1.0),
+        ("veil", 1.0, 0.0),
+        ("frosted", 1.0, 0.0),
+    ]
+
+    for mode, glow_mult, shell_mult in cases:
+        viewer._glow_mode = mode
+        viewer._glow_intensity_multiplier = glow_mult
+        viewer._glow_shell_intensity_multiplier = shell_mult
+        assert viewer._runtime_effects_need_source_texture()
+
+    viewer._glow_mode = "off"
+    viewer._glow_intensity_multiplier = 1.0
+    viewer._glow_shell_intensity_multiplier = 1.0
+
+    assert not viewer._runtime_effects_need_source_texture()
+
+
+def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
+    runtime_text = (SRC / "stereo_runtime" / "runtime.py").read_text(encoding="utf-8")
+    pipeline_text = (SRC / "stereo_runtime" / "pipeline.py").read_text(encoding="utf-8")
+    core_text = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    uploader_text = (SRC / "viewer" / "gl_texture_uploader.py").read_text(encoding="utf-8")
+
+    assert "source_rgb: torch.Tensor | None = None" in runtime_text
+    assert "source_rgb=source_rgb" in runtime_text
+    assert "openxr_result_from_stereo_result(runtime_result, source_rgb=runtime_rgb)" in pipeline_text
+    assert "def _try_update_runtime_effect_source_texture_gpu" in core_text
+    assert "CudaGlTextureUploader" in core_text
+    assert "self.ctx.texture((w, h), 4, dtype='f1')" in core_text
+    gpu_upload_func = core_text.split("def _try_update_runtime_effect_source_texture_gpu", 1)[1].split("def _update_runtime_effect_source_texture", 1)[0]
+    assert "torch.cuda.current_stream(device_index).synchronize()" not in gpu_upload_func
+    assert "ready_event.synchronize()" not in core_text
+    assert gpu_upload_func.index("source_rgba =") < gpu_upload_func.index("upload_path = uploader.upload_rgba")
+    update_func = core_text.split("def _update_runtime_effect_source_texture", 1)[1].split("def _release_runtime_eye_texture_resources", 1)[0]
+    assert "_try_update_runtime_effect_source_texture_gpu" in update_func
+    assert "_runtime_eye_to_numpy" not in update_func
+    assert ".write(rgba.tobytes())" not in update_func
+    assert "self._release_runtime_effect_source_texture()" in update_func
+    image_upload = uploader_text.split("def _upload_image", 1)[1].split("def _ensure_pbos", 1)[0]
+    assert "glFlush()" not in image_upload
+    assert "_screen_effect_source_texture(allow_runtime_eye=False)" in effects_text
+
+
 def test_screen_glow_shader_uses_region_color_grid():
     glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
     effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
@@ -554,18 +632,20 @@ def test_surround_glow_shell_uses_screen_border_color():
     assert "uniform int u_glow_use_tex" in glsl_text
     assert "sample_border_color" in glsl_text
     assert "sample_region_reflection" in glsl_text
-    assert "vec2 grid = vec2(16.0, 9.0)" in glsl_text
-    assert "top_col" in glsl_text
-    assert "bottom_col" in glsl_text
-    assert "left_col" in glsl_text
-    assert "right_col" in glsl_text
-    assert "edge_band_depth" in glsl_text
-    assert "vertical_edges" in glsl_text
-    assert "textureLod(u_glow_tex, sp, 0.0)" in glsl_text
-    assert "region_mix" in glsl_text
+    assert "vec2 grid = vec2(4.0, 3.0)" in glsl_text
+    shell_frag = glsl_text.split("_GLOW_SHELL_FRAG", 1)[1]
+    assert "top_col" in shell_frag
+    assert "bottom_col" in shell_frag
+    assert "left_col" in shell_frag
+    assert "right_col" in shell_frag
+    assert "vertical_edges" in shell_frag
+    assert "textureLod(u_glow_tex, q, 0.0)" in shell_frag
+    assert "region_mix" in shell_frag
+    assert "edge_band_depth" not in shell_frag
+    assert "for (int" not in shell_frag
 
 
-def test_screen_glow_sampler_builds_16x9_color_grid(monkeypatch):
+def test_screen_glow_sampler_builds_4x3_color_grid(monkeypatch):
     import numpy as np
 
     viewer = _make_default_viewer(monkeypatch)
@@ -575,8 +655,8 @@ def test_screen_glow_sampler_builds_16x9_color_grid(monkeypatch):
 
     viewer._sample_glow_target_color(rgb, is_tensor=False)
 
-    assert len(viewer._screen_light_target_colors) == 144
-    assert viewer._screen_light_target_colors[0][0] < viewer._screen_light_target_colors[15][0]
+    assert len(viewer._screen_light_target_colors) == 12
+    assert viewer._screen_light_target_colors[0][0] < viewer._screen_light_target_colors[3][0]
     assert viewer._screen_light_target_colors[0][1] < viewer._screen_light_target_colors[-1][1]
 
 

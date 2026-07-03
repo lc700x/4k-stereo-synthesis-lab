@@ -4,8 +4,8 @@ import collections as _collections
 
 EDGE_STRENGTH = 0.6 # snapping strength of cursor around screen edge
 
-_GLOW_GRID_COLS = 16
-_GLOW_GRID_ROWS = 9
+_GLOW_GRID_COLS = 4
+_GLOW_GRID_ROWS = 3
 _GLOW_GRID_COUNT = _GLOW_GRID_COLS * _GLOW_GRID_ROWS
 
 # Cursor ownership tuning (keyboard vs. virtual screen) consumed by _handle_cursor().

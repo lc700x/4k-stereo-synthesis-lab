@@ -371,11 +371,11 @@ def _cuda_event_ready(event) -> bool:
 
 
 def _runtime_pending_depth_limit() -> int:
-    value = str(os.environ.get("D2S_RUNTIME_PENDING_CUDA_DEPTH", "2") or "2").strip()
+    value = str(os.environ.get("D2S_RUNTIME_PENDING_CUDA_DEPTH", "1") or "1").strip()
     try:
         return max(1, int(value))
     except ValueError:
-        return 2
+        return 1
 
 
 def _is_fatal_runtime_preparation_error(exc: Exception) -> bool:
@@ -475,15 +475,16 @@ class RuntimePipelineLoop:
         ctx.breakdown_inc("runtime")
 
     def _publish_ready_pending_items(self) -> int:
-        published = 0
-        while self._pending_runtime_items:
-            pending_result = self._pending_runtime_items[0][0]
-            if not _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
-                break
-            item = self._pending_runtime_items.pop(0)
-            self._publish_runtime_item(item)
-            published += 1
-        return published
+        if not self._pending_runtime_items:
+            return 0
+        item = self._pending_runtime_items[-1]
+        pending_result = item[0]
+        if not _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
+            self._pending_runtime_items[:] = [item]
+            return 0
+        self._pending_runtime_items.clear()
+        self._publish_runtime_item(item)
+        return 1
 
     def run(self) -> None:
         ctx = self.context
@@ -655,7 +656,7 @@ class RuntimePipelineLoop:
                         if original_stereo_config is not None:
                             ctx.stereo_runtime.stereo_config = original_stereo_config
                     if ctx.run_mode == "OpenXR":
-                        runtime_result = openxr_result_from_stereo_result(runtime_result)
+                        runtime_result = openxr_result_from_stereo_result(runtime_result, source_rgb=runtime_rgb)
                 ctx.breakdown_add_time("rt_call", time.perf_counter() - runtime_call_start_time)
                 _attach_pipeline_debug(
                     runtime_result,
@@ -700,9 +701,9 @@ class RuntimePipelineLoop:
                 ctx.thread_latencies["runtime"] = runtime_latency
 
                 if not _cuda_event_ready(self._last_cuda_ready_event):
-                    self._pending_runtime_items.append(
+                    self._pending_runtime_items[:] = [
                         (runtime_result, capture_start_time, process_latency, runtime_latency, time.perf_counter())
-                    )
+                    ]
                     ctx.breakdown_inc("runtime_pending_cuda")
                     ctx.source_stat_inc("runtime_pending_cuda")
                     ctx.breakdown_add_time("rt_loop", time.perf_counter() - loop_start_time)

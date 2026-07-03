@@ -170,11 +170,12 @@ def test_openxr_result_from_stereo_result_keeps_full_size_eye_views_for_quality_
         provider_info={"provider": "fake"},
     )
 
-    result = openxr_result_from_stereo_result(stereo_result)
+    source_rgb = torch.full((1, 3, 2, 4), 0.5)
+    result = openxr_result_from_stereo_result(stereo_result, source_rgb=source_rgb)
 
     assert isinstance(result, OpenXRRuntimeResult)
     assert result.depth is depth
-    assert result.source_rgb is None
+    assert result.source_rgb is source_rgb
     assert result.left_eye.dtype == torch.uint8
     assert result.right_eye.dtype == torch.uint8
     assert result.left_eye.shape == (2, 4, 4)
@@ -263,6 +264,9 @@ def test_openxr_rgb_depth_debug_info_carries_structured_shader_uniforms():
         "depth_response": "linear_clamp_convergence_v1",
         "depth_strength": 2.0,
         "convergence": 0.0,
+        "foreground_shift_scale": 1.0,
+        "midground_shift_scale": 1.0,
+        "background_shift_scale": 1.0,
         "render_size": (16, 12),
         "screen_roll": 0.0,
     }

@@ -12,7 +12,7 @@ from .parallax import parallax_debug_info, resolve_parallax_budget
 @dataclass(frozen=True)
 class ShiftParams:
     depth_strength: float = 2.0
-    convergence: float = 0.0
+    convergence: float | torch.Tensor = 0.0
     max_disparity_px: float | None = None
     parallax_preset: str = "standard"
     foreground_shift_scale: float = 1.0

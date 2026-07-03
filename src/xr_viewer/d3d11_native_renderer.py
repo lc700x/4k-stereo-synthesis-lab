@@ -4,7 +4,7 @@ import sys
 
 import numpy as np
 
-from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
+from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_operation, warn_cpu_transfer
 
 
 DXGI_FORMAT_R32G32_FLOAT = 16
@@ -759,9 +759,7 @@ class D3D11NativeRenderer:
         else:
             raise RuntimeError(f"Unsupported OpenXR runtime eye shape for D3D11: {tuple(tensor.shape)}")
         if tensor.is_floating_point():
-            max_value = float(tensor.detach().amax().item()) if tensor.numel() else 0.0
-            if max_value <= 1.0:
-                tensor = tensor * 255.0
+            tensor = tensor * 255.0
         tensor = tensor.contiguous().clamp(0, 255).to(torch_module.uint8)
         h, w = tensor.shape[:2]
         rgba = torch_module.empty((h, w, 4), device=tensor.device, dtype=torch_module.uint8)

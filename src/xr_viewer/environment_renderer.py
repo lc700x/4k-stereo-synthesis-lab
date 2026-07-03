@@ -85,17 +85,13 @@ class EnvironmentRendererMixin:
     """Environment shader uniforms and GL primitive rendering."""
 
     def _screen_light_source_texture(self):
+        if getattr(self, '_runtime_direct_source', False):
+            return (
+                getattr(self, '_runtime_effect_source_tex', None),
+                getattr(self, '_runtime_effect_source_size', None),
+            )
         source_tex = getattr(self, 'color_tex', None)
         source_size = getattr(self, '_texture_size', None)
-        if getattr(self, '_runtime_direct_source', False):
-            eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-            runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-            if 0 <= eye_index < len(runtime_textures) and runtime_textures[eye_index] is not None:
-                source_tex = runtime_textures[eye_index]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
-            elif runtime_textures and runtime_textures[0] is not None:
-                source_tex = runtime_textures[0]
-                source_size = getattr(self, '_runtime_eye_texture_size', source_size)
         return source_tex, source_size
 
     def _apply_cinema_light_uniforms(self, mgl_fbo=None):

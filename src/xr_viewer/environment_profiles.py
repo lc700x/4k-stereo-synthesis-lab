@@ -550,7 +550,7 @@ class EnvironmentProfileMixin:
 
 
     def _builtin_profile_path(self):
-        return os.path.join(self._environment_root, '.builtin_default.json')
+        return os.path.join(self._environment_root, 'Default', 'profile.json')
 
 
     def _persist_screen_state(self):
@@ -701,7 +701,7 @@ class EnvironmentProfileMixin:
 
 
     def _save_glow_to_builtin_profile(self):
-        """Write glow settings into .builtin_default.json for the Default env."""
+        """Write glow settings into Default/profile.json for the Default env."""
         builtin_path = self._builtin_profile_path()
         try:
             profile = {}

@@ -29,7 +29,7 @@ Latest pushed task commit:
 Canonical specs for current work:
 
 - `docs/01-Realtime-2d-to-3d-specification.md` - official final runtime process spec; `docs/25` is obsolete.
-- `docs/01-desktop2stereo-engineering-design-specification.md` - engineering implementation, migration, compatibility cleanup, and compliance status.
+- `docs/02-desktop2stereo-engineering-design-specification.md` - engineering implementation, migration, compatibility cleanup, and compliance status.
 - `prompts/codex-refactor-prompt.md`
 - This file: `docs/00-api-handoff-progress.md`
 
@@ -51,7 +51,7 @@ Canonical specs for current work:
 
 ## Future Work
 
-Detailed engineering and migration rules live in `docs/01-desktop2stereo-engineering-design-specification.md`. This handoff file only tracks the current task queue and verification status.
+Detailed engineering and migration rules live in `docs/02-desktop2stereo-engineering-design-specification.md`. This handoff file only tracks the current task queue and verification status.
 
 Current task queue:
 
@@ -64,9 +64,45 @@ Current task queue:
 7. Optimize TensorRT ORT depth provider for real GPU zero-copy: replace CPU numpy input binding with CUDA/DLPack or direct CUDA OrtValue binding, keep iobinding output on CUDA, and return a CUDA torch tensor without `OrtValue.numpy()` / `torch.from_numpy()` CPU staging.
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
-10. Keep `docs/01-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
+10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
 
 ## Current Status
+
+### 2026-07-03 Realtime No-Sync Scalar Cleanup and Engineering Spec Rename
+
+Implemented locally in the current worktree:
+
+- Renamed the engineering design spec from `docs/01-desktop2stereo-engineering-design-specification.md` to `docs/02-desktop2stereo-engineering-design-specification.md`. `docs/01-Realtime-2d-to-3d-specification.md` remains the canonical runtime process spec; `docs/02` is the engineering implementation/status spec.
+- Removed realtime CUDA `.item()` hard-sync points from the current per-frame paths in `src/stereo_runtime/runtime.py`, `motion_signal.py`, `baseline_shift.py`, `synthesis.py`, `openxr_render.py`, `parallax.py`, `src/xr_viewer/core_runtime_eye.py`, and `core_frame_upload.py`.
+- Dynamic convergence no longer has to pull the measured depth scalar back to CPU. `resolve_parallax_budget(...).depth_response()` accepts tensor `convergence` and keeps the math on the depth tensor's device/dtype; `ShiftParams`, `StereoConfig`, and `OpenXRRenderConfig` now allow `convergence` to be either `float` or `torch.Tensor`.
+- When dynamic convergence is represented as a CUDA scalar tensor, the runtime skips the TRT/Triton `fast_plus_fused` half-SBS path because that fast path still expects a Python float convergence value. The fallback stays on the general GPU synthesis path instead of forcing `.item()`.
+- CPU-only consumers now use asynchronous scalar staging instead of hard sync: the motion sampler copies the CUDA scalar into a pinned CPU buffer guarded by a CUDA event, and the OpenXR shader-uniform path consumes the latest ready CPU scalar value without blocking on the current frame.
+- OpenXR runtime-eye diagnostics no longer compute tensor min/max/mean/diff via `.item()` in the realtime tensor path. Tensor diagnostics log shape/dtype/device/no-sync metadata; CPU/numpy diagnostics may still compute numeric stats.
+- Removed CPU tensor glow sampling from `core_frame_upload.py` so runtime glow must use the GPU source texture path instead of per-frame tensor `.cpu()` / `.item()` sampling.
+
+Verification run during this pass:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\stereo_runtime\motion_signal.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\parallax.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_frame_upload.py tests\test_gui_config.py
+rg -n "\.item\(" src\stereo_runtime\runtime.py src\stereo_runtime\motion_signal.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\parallax.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_frame_upload.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_motion_signal.py tests\test_gui_config.py tests\test_runtime_openxr.py tests\test_openxr_render.py tests\test_parallax.py tests\test_synthesis.py -q
+git diff --check -- src\stereo_runtime\runtime.py src\stereo_runtime\motion_signal.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\parallax.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_frame_upload.py
+```
+
+Result:
+
+```text
+py_compile passed
+no .item() matches in the checked realtime files
+187 passed; only a Windows .pytest_cache cleanup warning was reported
+git diff --check passed for the checked realtime files
+```
+
+Handoff notes:
+
+- Do not claim every repository `.item()` was removed. Offline/export/report/visual-regression code may still use `.item()` where it is not on the per-frame realtime path.
+- Realtime dynamic convergence should prefer GPU tensor scalars. If a consumer cannot use a CUDA scalar directly, use async staging and the previous ready scalar instead of synchronizing the current frame.
+- Runtime diagnostics must not introduce hidden GPU->CPU sync just to print min/max/mean. Any deliberate realtime CPU transfer must keep the existing red CPU warning policy.
 
 ### 2026-07-02 Stereo Parameter GUI, Dynamic Convergence, and Depth Separation Pass
 

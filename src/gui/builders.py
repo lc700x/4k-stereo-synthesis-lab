@@ -69,28 +69,24 @@ class GUIBuilderMixin:
             self._main_panel.expand = False
         log_panel = getattr(self, "log_panel", None)
         if log_panel is not None:
-            if log_panel.visible:
-                log_panel.expand = True
-                log_panel.width = self._estimate_log_panel_width(main_width)
-            else:
-                log_panel.expand = False
-                log_panel.width = 0
+            log_panel.expand = bool(log_panel.visible)
         width = self._estimate_window_width(main_width)
         self.page.window.min_width = main_width
+        self.page.window.max_width = None
         if resize_window:
             self.page.window.width = width
-            self.page.window.max_width = width
         self.page.window.height = self._estimate_window_height()
         if resize_window:
             try:
                 self.page.window.update()
             except RuntimeError:
                 pass
+            self.page.window.width = None
         if update:
             self.page.update()
 
     def _on_page_resize(self, e=None):
-        self._fit_window_to_content()
+        pass
 
     def _spacing_width(self, controls, spacing):
         visible_count = sum(1 for ctrl in controls if self._control_has_effective_content(ctrl))
@@ -141,26 +137,6 @@ class GUIBuilderMixin:
         if getattr(self, "stream_container", None) and self.stream_container.visible:
             widths.append(self._estimate_group_width(self.stream_container))
         return max(S(520), min(S(1040), max(widths + [0]) + S(12)))
-
-    def _estimate_log_panel_width(self, main_width=None):
-        if not getattr(self, "log_panel", None) or not self.log_panel.visible:
-            return 0
-        main_width = self._estimate_main_panel_width() if main_width is None else main_width
-        min_log_width = S(500)
-        page_padding = (getattr(self.page, "padding", 0) or 0) * 2
-        spacing = S(10)
-        safety_margin = S(12)
-        window_width = getattr(self.page.window, "width", None) or getattr(self.page, "width", None) or 0
-        available_width = window_width - main_width - page_padding - spacing - safety_margin if window_width else 0
-        controls = getattr(getattr(self, "log_listview", None), "controls", []) or []
-        text_widths = [self._ctrl_width(ctrl) for ctrl in controls[-200:]]
-        content_width = max(text_widths + [min_log_width])
-        padding = getattr(self.log_panel, "padding", None)
-        pad_x = (getattr(padding, "left", 0) or 0) + (getattr(padding, "right", 0) or 0) if padding else 0
-        desired_width = max(min_log_width, content_width + pad_x + S(24))
-        if available_width > min_log_width:
-            return min(desired_width, available_width)
-        return min_log_width
 
     def _estimate_window_width(self, main_width=None):
         if not getattr(self, "depth_group", None):
@@ -643,7 +619,7 @@ class GUIBuilderMixin:
             self.lang_group, self.depth_group, self.device_group, self.stream_container,
         ], scroll=ft.ScrollMode.AUTO, expand=False, tight=True, spacing=S(8))
         self.log_level_dd = CompactDropdown(
-            options=["ALL", "STATUS", "DEBUG", "INFO", "WARNING", "ERROR"],
+            options=["ALL", "STATUS", "DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
             value="ALL",
             width=S(110),
             on_select=self.on_log_level_filter,
@@ -673,9 +649,29 @@ class GUIBuilderMixin:
             border_radius=6,
             visible=False,
         )
-        self.log_listview = ft.Column(scroll=ft.ScrollMode.AUTO, auto_scroll=True, spacing=2)
+        self.log_text = ft.Text(
+            spans=[],
+            selectable=True,
+            no_wrap=True,
+            overflow=ft.TextOverflow.VISIBLE,
+            size=12,
+        )
+        self.log_scroll_row = ft.Row(
+            [self.log_text],
+            scroll=ft.Scrollbar(orientation=ft.ScrollbarOrientation.BOTTOM),
+            tight=True,
+            vertical_alignment=ft.CrossAxisAlignment.START,
+        )
+        self.log_viewport = ft.Column(
+            [self.log_scroll_row],
+            scroll=ft.Scrollbar(orientation=ft.ScrollbarOrientation.RIGHT),
+            auto_scroll=True,
+            expand=True,
+            tight=True,
+            spacing=0,
+        )
         self.log_body = ft.Container(
-            content=ft.Row([self.log_listview], scroll=ft.ScrollMode.AUTO, expand=True),
+            content=self.log_viewport,
             expand=True,
             visible=True,
         )
@@ -688,7 +684,6 @@ class GUIBuilderMixin:
                 self.download_progress_panel,
                 self.log_body,
             ], spacing=S(6), expand=True),
-            width=S(500),
             visible=False,
             expand=True,
             padding=ft.Padding(S(10), S(10), S(10), S(10)),
@@ -716,7 +711,8 @@ class GUIBuilderMixin:
             content=ft.Column([scroll_area, footer], expand=True, tight=True, spacing=0),
             expand=False,
         )
-        page.add(ft.Row([self._main_panel, self.log_panel], expand=True, spacing=S(10)))
+        self._root_row = ft.Row([self._main_panel, self.log_panel], expand=True, tight=True, spacing=S(10))
+        page.add(self._root_row)
 
     # ── streamer rows ──
 

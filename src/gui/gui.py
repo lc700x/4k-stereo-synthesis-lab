@@ -60,7 +60,7 @@ class Desktop2StereoGUI(
         self._local_ip_task = None
         self.gui_log_handler = None
         self._log_poll_task = None
-        self._progress_log_controls = {}
+        self._progress_log_spans = {}
 
     async def setup(self):
         self.gui_log_handler = _setup_console_logging()

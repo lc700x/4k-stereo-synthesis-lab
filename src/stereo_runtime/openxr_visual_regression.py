@@ -7,6 +7,8 @@ from typing import Any
 import torch
 import torch.nn.functional as F
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_operation
+
 from .io import load_depth, load_rgb, save_depth, save_rgb
 from .output import ensure_b1hw, ensure_bchw
 
@@ -117,6 +119,12 @@ def render_viewer_shader_eye_cpu(
     params: OpenXRViewerShaderParams,
 ) -> torch.Tensor:
     """CPU/Torch approximation of the OpenXR viewer rgb_depth shader path."""
+    warn_cpu_operation(
+        "OpenXR visual regression",
+        "CPU/Torch shader approximation",
+        detail=f"rgb={describe_tensor(rgb)} depth={describe_tensor(depth)}",
+        key="openxr_visual_regression_cpu_shader",
+    )
     rgb = ensure_bchw(rgb, name="rgb").float().clamp(0.0, 1.0)
     depth = ensure_b1hw(depth).float().clamp(0.0, 1.0)
     if depth.shape[-2:] != rgb.shape[-2:]:
@@ -153,6 +161,12 @@ def compare_tensors(a: torch.Tensor, b: torch.Tensor) -> dict[str, float]:
     a = ensure_bchw(a, name="a").float()
     b = ensure_bchw(b, name="b").float()
     diff = (a - b).abs()
+    warn_cpu_operation(
+        "OpenXR visual regression compare_tensors",
+        "diff metrics .item() sync",
+        detail=describe_tensor(diff),
+        key="openxr_visual_regression_compare_cpu_stats",
+    )
     return {
         "mae": float(diff.mean().item()),
         "rmse": float(torch.sqrt((diff * diff).mean()).item()),

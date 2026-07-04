@@ -389,6 +389,37 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert empty_poll.frame_id == 1
 
 
+def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pending():
+    from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    viewer.depth_q = queue.Queue()
+    viewer._openxr_async_present_enabled = True
+    viewer._openxr_screen_upload_budget_ms = 1.0
+    viewer._openxr_screen_upload_budget_skip_armed = True
+    viewer._pending_source_frame = object()
+    viewer._fps_breakdown_add_time = lambda *args, **kwargs: None
+    inc_calls = []
+    viewer._fps_breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
+    viewer._openxr_screen_frame_bridge.latest_frame = object()
+    viewer._openxr_screen_frame_bridge.latest_frame_id = 1
+    viewer._openxr_screen_frame_bridge.last_presented_frame = object()
+    viewer._openxr_screen_frame_bridge.last_presented_frame_id = 1
+    viewer._update_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
+    viewer._update_runtime_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
+
+    assert viewer._poll_source_frame(upload=True) is False
+
+    assert viewer._pending_source_frame is not None
+    assert viewer._openxr_screen_upload_budget_skip_armed is False
+    assert ("openxr_reused_screen_frame", 1) in inc_calls
+    assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
+
+
 def test_openxr_async_phase0_diagnostics_are_wired():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
@@ -400,6 +431,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_layer_count",
         "openxr_new_screen_frame",
         "openxr_reused_screen_frame",
+        "openxr_screen_upload_budget_skip",
+        "openxr_projection_screen_skipped",
     ):
         assert name in implementation or name in source_state
 
@@ -407,7 +440,14 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "D2S_OPENXR_SCREEN_QUAD" in implementation
     assert "D2S_OPENXR_ASYNC_EFFECTS" in implementation
     assert "D2S_OPENXR_PANORAMA_BACKGROUND" in implementation
-    assert "kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)" in implementation
+    assert "D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS" in implementation
+    assert "'D2S_OPENXR_ASYNC_PRESENT', '1'" in implementation
+    assert "'D2S_OPENXR_SCREEN_QUAD', '1'" in implementation
+    assert "'D2S_OPENXR_ASYNC_EFFECTS', '1'" in implementation
+    assert "'D2S_OPENXR_PANORAMA_BACKGROUND', '1'" in implementation
+    assert "'D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS',\n            4.0" in implementation
+    assert "self._xr_quad_layer_enabled = bool(self._openxr_screen_quad_enabled)" in implementation
+    assert "kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)" not in implementation
     assert "def _submit_openxr_frame(layers):" in implementation
 
 

@@ -334,6 +334,21 @@ class CoreSourceStateMixin:
             self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
 
+        budget_ms = float(getattr(self, "_openxr_screen_upload_budget_ms", 0.0) or 0.0)
+        skip_armed = bool(getattr(self, "_openxr_screen_upload_budget_skip_armed", False))
+        if (
+            getattr(self, "_openxr_async_present_enabled", False)
+            and budget_ms > 0.0
+            and skip_armed
+        ):
+            reuse = bridge.reuse_presented()
+            if reuse.frame is not None:
+                self._openxr_screen_upload_budget_skip_armed = False
+                self._breakdown_inc("openxr_reused_screen_frame")
+                self._breakdown_inc("openxr_screen_upload_budget_skip")
+                self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+                return False
+
         pending_frame = self._pending_source_frame
         source_frame, frame_ts = self._normalize_source_frame(pending_frame)
         self._pending_source_frame = None
@@ -345,6 +360,10 @@ class CoreSourceStateMixin:
             rgb, depth = source_frame
             self._update_frame(rgb, depth)
         upload_elapsed = time.perf_counter() - upload_start
+        upload_elapsed_ms = upload_elapsed * 1000.0
+        self._last_openxr_screen_upload_ms = upload_elapsed_ms
+        if budget_ms > 0.0:
+            self._openxr_screen_upload_budget_skip_armed = upload_elapsed_ms > budget_ms
         bridge.mark_presented(pending_frame)
         self._breakdown_inc("openxr_new_screen_frame")
         self._breakdown_add_time("openxr_upload", upload_elapsed)

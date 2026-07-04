@@ -504,7 +504,7 @@ def test_curved_screen_uses_same_fragment_path_as_flat_screen():
 def test_openxr_screen_shader_uniforms_are_initialized_for_flat_and_curved_paths():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
+    render_eye = render_eye.split("# 3. Keyboard", 1)[0]
 
     assert "screen_source_size = (" in render_eye
     assert "runtime_rgb_depth_max_disparity_px = (" in render_eye
@@ -582,9 +582,11 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
     assert "return source0 is not None and source1 is not None and size0 is not None and size1 is not None" in quad_gate
 
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
+    render_eye = render_eye.split("# 3. Keyboard", 1)[0]
     assert "draw_projection_screen = not self._quad_layer_can_replace_projection_screen()" in render_eye
-    assert "if draw_projection_screen:\n                self.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_eye
+    assert "if draw_projection_screen:" in render_eye
+    assert "self.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_eye
+    assert "openxr_projection_screen_skipped" in render_eye
     assert "screen_depth_tex = self._runtime_depth_texture" in render_eye
 
 

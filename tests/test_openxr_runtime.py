@@ -387,3 +387,25 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert empty_poll.frame is None
     assert empty_poll.dequeued == 0
     assert empty_poll.frame_id == 1
+
+
+def test_openxr_async_phase0_diagnostics_are_wired():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
+
+    for name in (
+        "openxr_screen_upload_ms",
+        "openxr_xr_wait_ms",
+        "openxr_xr_submit_ms",
+        "openxr_layer_count",
+        "openxr_new_screen_frame",
+        "openxr_reused_screen_frame",
+    ):
+        assert name in implementation or name in source_state
+
+    assert "D2S_OPENXR_ASYNC_PRESENT" in implementation
+    assert "D2S_OPENXR_SCREEN_QUAD" in implementation
+    assert "D2S_OPENXR_ASYNC_EFFECTS" in implementation
+    assert "D2S_OPENXR_PANORAMA_BACKGROUND" in implementation
+    assert "kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)" in implementation
+    assert "def _submit_openxr_frame(layers):" in implementation

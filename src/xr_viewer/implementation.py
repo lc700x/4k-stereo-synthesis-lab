@@ -425,7 +425,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._screen_quality_filter = bool(kwargs.get('screen_quality_filter', False))
         self._screen_quality_sharpness = max(0.0, min(1.0, float(kwargs.get('screen_quality_sharpness', 0.35))))
         self._screen_quality_oversample = max(0.75, min(1.5, float(kwargs.get('screen_quality_oversample', 1.0))))
-        self._xr_quad_layer_enabled = bool(kwargs.get('xr_quad_layer_enabled', False))
+        self._xr_quad_layer_enabled = bool(
+            kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)
+        )
         self._xr_quad_layer_active = False
         self._xr_quad_layer_failed = False
         self._xr_quad_layer_debug_offset = float(kwargs.get('xr_quad_layer_debug_offset', 0.05))
@@ -4248,8 +4250,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _loop_mark('poll_no_upload')
 
             # Wait for the runtime to signal frame timing.
+            xr_wait_start = time.perf_counter() if loop_breakdown_enabled else 0.0
             frame_state = xr.wait_frame(self._xr_session, self._xr_frame_wait_info)
             if loop_breakdown_enabled:
+                self._breakdown_add_time('openxr_xr_wait_ms', time.perf_counter() - xr_wait_start)
                 predicted_time = getattr(frame_state, 'predicted_display_time', None)
                 previous_time = getattr(self, '_last_xr_predicted_display_time', None)
                 self._last_xr_predicted_display_time = predicted_time
@@ -4310,6 +4314,22 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     _loop_mark('controller_missing')
 
             composition_layers = []
+
+            def _submit_openxr_frame(layers):
+                if loop_breakdown_enabled:
+                    self._breakdown_inc('openxr_layer_count', len(layers))
+                xr_submit_start = time.perf_counter() if loop_breakdown_enabled else 0.0
+                xr.end_frame(
+                    self._xr_session,
+                    xr.FrameEndInfo(
+                        display_time=frame_state.predicted_display_time,
+                        environment_blend_mode=xr.EnvironmentBlendMode.OPAQUE,
+                        layers=layers,
+                    ),
+                )
+                if loop_breakdown_enabled:
+                    self._breakdown_add_time('openxr_xr_submit_ms', time.perf_counter() - xr_submit_start)
+
             session_idle_timeout = self._track_session_idle_render(frame_state.should_render, now)
             if frame_state.should_render:
                 self._breakdown_inc('openxr_should_render')
@@ -4328,14 +4348,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     )
                     print("[OpenXRViewer] Headset detected, render confirmed")
                 else:
-                    xr.end_frame(
-                        self._xr_session,
-                        xr.FrameEndInfo(
-                            display_time=frame_state.predicted_display_time,
-                            environment_blend_mode=xr.EnvironmentBlendMode.OPAQUE,
-                            layers=composition_layers,
-                        ),
-                    )
+                    _submit_openxr_frame(composition_layers)
                     if loop_trace_enabled:
                         _loop_mark('end_frame')
                     if loop_breakdown_enabled:
@@ -4357,14 +4370,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._pause_xr_output_for_source_stall()
                 if not self._has_renderable_source_frame():
                     self._breakdown_inc('openxr_no_renderable')
-                    xr.end_frame(
-                        self._xr_session,
-                        xr.FrameEndInfo(
-                            display_time=frame_state.predicted_display_time,
-                            environment_blend_mode=xr.EnvironmentBlendMode.OPAQUE,
-                            layers=composition_layers,
-                        ),
-                    )
+                    _submit_openxr_frame(composition_layers)
                     if loop_trace_enabled:
                         _loop_mark('end_frame')
                     if loop_breakdown_enabled:
@@ -4729,14 +4735,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     if loop_trace_enabled:
                         _loop_mark('render_no_layers')
 
-            xr.end_frame(
-                self._xr_session,
-                xr.FrameEndInfo(
-                    display_time=frame_state.predicted_display_time,
-                    environment_blend_mode=xr.EnvironmentBlendMode.OPAQUE,
-                    layers=composition_layers,
-                ),
-            )
+            _submit_openxr_frame(composition_layers)
             if loop_trace_enabled:
                 _loop_mark('end_frame')
             if loop_breakdown_enabled:

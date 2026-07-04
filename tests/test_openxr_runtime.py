@@ -350,3 +350,40 @@ def test_runtime_rgb_depth_config_keeps_debug_uniform_fallback(monkeypatch):
     assert viewer._runtime_rgb_depth_depth_strength == 1.7
     assert viewer._runtime_rgb_depth_max_disparity_px == 18.0
     assert viewer._runtime_rgb_depth_render_width == 1920
+
+
+def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
+    from xr_viewer.core_source_state import ScreenFrameBridge
+
+    source_q = queue.Queue()
+    stale_frame = object()
+    latest_frame = object()
+    source_q.put(stale_frame)
+    source_q.put(latest_frame)
+
+    bridge = ScreenFrameBridge(source_q)
+    poll = bridge.drain_latest()
+
+    assert poll.frame is latest_frame
+    assert poll.dequeued == 2
+    assert poll.dropped == 1
+    assert poll.is_new
+    assert poll.frame_id == 1
+    assert bridge.latest_frame is latest_frame
+    assert bridge.reuse_presented().frame is None
+
+    presented = bridge.mark_presented()
+    reuse = bridge.reuse_presented()
+
+    assert presented.frame is latest_frame
+    assert presented.is_new
+    assert not presented.reused
+    assert reuse.frame is latest_frame
+    assert reuse.frame_id == 1
+    assert reuse.reused
+
+    empty_poll = bridge.drain_latest()
+
+    assert empty_poll.frame is None
+    assert empty_poll.dequeued == 0
+    assert empty_poll.frame_id == 1

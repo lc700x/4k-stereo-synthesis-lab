@@ -218,6 +218,23 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._runtime_eye_texture_size = None
         self._runtime_effect_source_tex = None
         self._runtime_effect_source_size = None
+
+        def _bool_env_option(key, env_name, default):
+            value = kwargs.get(key, os.environ.get(env_name, default))
+            return str(value or default).strip().lower() in ('1', 'true', 'yes', 'on')
+
+        self._openxr_async_present_enabled = _bool_env_option(
+            'openxr_async_present', 'D2S_OPENXR_ASYNC_PRESENT', '0'
+        )
+        self._openxr_screen_quad_enabled = _bool_env_option(
+            'openxr_screen_quad', 'D2S_OPENXR_SCREEN_QUAD', '0'
+        )
+        self._openxr_async_effects_enabled = _bool_env_option(
+            'openxr_async_effects', 'D2S_OPENXR_ASYNC_EFFECTS', '0'
+        )
+        self._openxr_panorama_background_enabled = _bool_env_option(
+            'openxr_panorama_background', 'D2S_OPENXR_PANORAMA_BACKGROUND', '0'
+        )
         self._runtime_direct_enabled = str(
             kwargs.get('openxr_runtime_direct', os.environ.get('D2S_OPENXR_RUNTIME_DIRECT', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')

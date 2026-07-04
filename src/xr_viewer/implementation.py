@@ -1480,9 +1480,21 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
     # Screen transform helpers
 
     def _quad_layer_can_replace_projection_screen(self):
-        # Quad Layer is currently disabled because it cannot preserve stereo screen
-        # content and controller hit UI consistently with the projection path.
-        return False
+        if not getattr(self, '_xr_quad_layer_enabled', False):
+            return False
+        if not getattr(self, '_xr_quad_layer_active', False):
+            return False
+        if getattr(self, '_xr_quad_layer_failed', False):
+            return False
+        if getattr(self, '_screen_curved', False):
+            return False
+        if not getattr(self, '_runtime_direct_source', False):
+            return False
+        if 0 not in self._quad_swapchains or 1 not in self._quad_swapchains:
+            return False
+        source0, size0, _flip0 = self._quad_layer_source_texture(0)
+        source1, size1, _flip1 = self._quad_layer_source_texture(1)
+        return source0 is not None and source1 is not None and size0 is not None and size1 is not None
 
     def _update_quad_layer_swapchain(self, eye_index):
         return super()._update_quad_layer_swapchain(eye_index)
@@ -2201,6 +2213,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             _mark_perf('pre_border')
 
         # Main screen
+        draw_projection_screen = not self._quad_layer_can_replace_projection_screen()
         mgl_fbo.use()
         eye_sign = -1.0 if eye_index == 0 else 1.0
         runtime_rgb_depth_max_disparity_px = (
@@ -2314,11 +2327,14 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._curved_prog['u_depth_strength'].value = screen_depth_strength
             self._curved_prog['u_convergence'].value = float(self.convergence)
             self._curved_prog['u_corner_radius'].value = self._corner_radius
-            self._curved_vao.render(moderngl.TRIANGLE_STRIP, vertices=(48 + 1) * 2)
+            if draw_projection_screen:
+                self._curved_vao.render(moderngl.TRIANGLE_STRIP, vertices=(48 + 1) * 2)
         else:
             if screen_depth_tex is None:
-                self.ctx.screen.use()
-                return
+                if draw_projection_screen:
+                    self.ctx.screen.use()
+                    return
+                screen_depth_tex = screen_tex
             screen_tex.use(location=0)
             screen_depth_tex.use(location=1)
             self.prog['u_mvp'].write(mvp.T.tobytes())
@@ -2334,7 +2350,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self.prog['u_depth_strength'].value = screen_depth_strength
             self.prog['u_convergence'].value = float(self.convergence)
             self.prog['u_corner_radius'].value = self._corner_radius
-            self.quad_vao.render(moderngl.TRIANGLE_STRIP)
+            if draw_projection_screen:
+                self.quad_vao.render(moderngl.TRIANGLE_STRIP)
         if perf_enabled:
             _mark_perf('screen')
 

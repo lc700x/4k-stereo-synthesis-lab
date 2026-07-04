@@ -409,3 +409,37 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "D2S_OPENXR_PANORAMA_BACKGROUND" in implementation
     assert "kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)" in implementation
     assert "def _submit_openxr_frame(layers):" in implementation
+
+
+def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._xr_quad_layer_enabled = True
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    viewer._screen_curved = False
+    viewer._runtime_direct_source = True
+    viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_eye_texture_size = (1920, 1080)
+
+    assert viewer._quad_layer_can_replace_projection_screen() is True
+
+    viewer._runtime_eye_textures[1] = None
+    assert viewer._quad_layer_can_replace_projection_screen() is False
+
+    viewer._runtime_eye_textures[1] = object()
+    viewer._screen_curved = True
+    assert viewer._quad_layer_can_replace_projection_screen() is False
+
+    viewer._screen_curved = False
+    viewer._runtime_direct_source = False
+    assert viewer._quad_layer_can_replace_projection_screen() is False
+
+    viewer._runtime_direct_source = True
+    viewer._xr_quad_layer_active = False
+    assert viewer._quad_layer_can_replace_projection_screen() is False

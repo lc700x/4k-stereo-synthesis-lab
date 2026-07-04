@@ -569,18 +569,22 @@ def test_curved_border_is_rendered_behind_screen_not_over_image():
     assert "self._render_border(mgl_fbo, vp_mat)" in after_main
 
 
-def test_quad_layer_is_disabled_and_projection_screen_is_always_drawn():
+def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_ready():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
     quad_gate = impl_text.split("def _quad_layer_can_replace_projection_screen(self):", 1)[1]
     quad_gate = quad_gate.split("def _update_quad_layer_swapchain", 1)[0]
-    assert "return False" in quad_gate
-    assert "self._xr_quad_layer_active" not in quad_gate
+    assert "getattr(self, '_xr_quad_layer_enabled', False)" in quad_gate
+    assert "getattr(self, '_xr_quad_layer_active', False)" in quad_gate
+    assert "getattr(self, '_runtime_direct_source', False)" in quad_gate
+    assert "getattr(self, '_screen_curved', False)" in quad_gate
+    assert "0 not in self._quad_swapchains or 1 not in self._quad_swapchains" in quad_gate
+    assert "return source0 is not None and source1 is not None and size0 is not None and size1 is not None" in quad_gate
 
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
     render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
-    assert "draw_projection_screen" not in render_eye
-    assert "_quad_layer_can_replace_projection_screen" not in render_eye
+    assert "draw_projection_screen = not self._quad_layer_can_replace_projection_screen()" in render_eye
+    assert "if draw_projection_screen:\n                self.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_eye
     assert "screen_depth_tex = self._runtime_depth_texture" in render_eye
 
 

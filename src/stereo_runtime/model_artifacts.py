@@ -134,16 +134,17 @@ def ensure_model_downloaded(
             raise FileNotFoundError(f"model weights resolved but model directory was not found: {model_dir}")
         return model_dir
 
-    from .depth_provider import _reachable_hf_endpoints
+    from .depth_provider import _hf_download_progress_patch, _reachable_hf_endpoints
     from huggingface_hub import snapshot_download
 
     _reachable_hf_endpoints(model_spec.model_id)
-    snapshot_download(
-        repo_id=model_spec.model_id,
-        cache_dir=str(cache_dir),
-        local_files_only=local_files_only,
-        force_download=force_download,
-    )
+    with _hf_download_progress_patch():
+        snapshot_download(
+            repo_id=model_spec.model_id,
+            cache_dir=str(cache_dir),
+            local_files_only=local_files_only,
+            force_download=force_download,
+        )
     if not model_dir.exists():
         raise FileNotFoundError(f"download completed but model directory was not found: {model_dir}")
     return model_dir

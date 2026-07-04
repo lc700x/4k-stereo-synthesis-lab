@@ -352,6 +352,34 @@ def test_generic_download_confirms_snapshot_even_when_cache_dir_exists(monkeypat
     assert calls["force_download"] is False
 
 
+def test_generic_snapshot_download_uses_structured_progress_patch(monkeypatch, tmp_path: Path):
+    from contextlib import contextmanager
+
+    events = []
+    spec = ModelRegistry.default().get("Distill-Any-Depth-Base")
+    model_dir = spec.model_dir(tmp_path)
+    model_dir.mkdir(parents=True)
+
+    @contextmanager
+    def fake_progress_patch():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    def fake_snapshot_download(**kwargs):
+        events.append("download")
+        return str(model_dir / "snapshots" / "fake")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr("stereo_runtime.depth_provider._hf_download_progress_patch", fake_progress_patch)
+    monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com",))
+
+    assert ensure_model_downloaded(spec, cache_dir=tmp_path, local_files_only=False) == model_dir
+    assert events == ["enter", "download", "exit"]
+
+
 def test_prepare_model_artifacts_builds_trt_from_existing_onnx(monkeypatch, tmp_path: Path):
     calls = {}
 

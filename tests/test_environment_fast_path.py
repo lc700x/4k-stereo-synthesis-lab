@@ -233,6 +233,33 @@ def test_panorama_profile_survives_viewer_initialization(monkeypatch):
     assert viewer._controller_hdr_lighting is True
 
 
+def test_async_panorama_background_disables_default_glb_mesh(monkeypatch, tmp_path):
+    import json
+
+    root = tmp_path / "environments"
+    default = root / "Default"
+    default.mkdir(parents=True)
+    (default / "profile.json").write_text(
+        json.dumps({"xr_quad_layer_enabled": False}),
+        encoding="utf-8",
+    )
+    (default / "environment.glb").write_bytes(b"glb")
+    monkeypatch.chdir(SRC)
+    from xr_viewer.environment import OpenXRViewer
+
+    viewer = OpenXRViewer(environment_model="None", show_preview_window=False)
+    viewer._environment_root = str(root)
+    viewer._environment_model = "Default"
+    viewer._openxr_panorama_background_enabled = True
+    viewer._xr_quad_layer_enabled = True
+
+    viewer._configure_environment_profile()
+
+    assert viewer._env_model_path is None
+    assert viewer._panorama_background_path is None
+    assert viewer._xr_quad_layer_enabled is True
+
+
 def test_panorama_environment_skips_glb_initialization(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._environment_enabled = True
@@ -546,7 +573,7 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
 
     assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
     assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
-    assert "_runtime_effect_source_tex" in source_func
+    assert "_runtime_effect_safe_source_tex" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
 
@@ -555,8 +582,8 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
     render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     source_func = render_text.split("def _screen_light_source_texture", 1)[1].split("def _apply_cinema_light_uniforms", 1)[0]
 
-    assert "_runtime_effect_source_tex" in source_func
-    assert "_runtime_effect_source_size" in source_func
+    assert "_runtime_effect_safe_source_tex" in source_func
+    assert "_runtime_effect_safe_source_size" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
 
@@ -621,7 +648,7 @@ def test_screen_glow_shader_uses_region_color_grid():
     assert "textureLod(u_screen_light_tex" in glsl_text
     assert "glow_grid_color" in glsl_text
     assert "def _screen_effect_source_texture" in effects_text
-    assert "_runtime_effect_source_tex" in effects_text
+    assert "_runtime_effect_safe_source_tex" in effects_text
 
 
 def test_surround_glow_shell_uses_screen_border_color():
@@ -645,19 +672,14 @@ def test_surround_glow_shell_uses_screen_border_color():
     assert "for (int" not in shell_frag
 
 
-def test_screen_glow_sampler_builds_4x3_color_grid(monkeypatch):
-    import numpy as np
+def test_realtime_screen_glow_cpu_sampler_is_removed():
+    upload_text = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
+    maybe_sample = upload_text.split("def _maybe_sample_glow_target_color", 1)[1]
 
-    viewer = _make_default_viewer(monkeypatch)
-    rgb = np.zeros((90, 160, 3), dtype=np.uint8)
-    rgb[:, :, 0] = np.arange(160, dtype=np.uint8)[None, :]
-    rgb[:, :, 1] = np.arange(90, dtype=np.uint8)[:, None]
-
-    viewer._sample_glow_target_color(rgb, is_tensor=False)
-
-    assert len(viewer._screen_light_target_colors) == 12
-    assert viewer._screen_light_target_colors[0][0] < viewer._screen_light_target_colors[3][0]
-    assert viewer._screen_light_target_colors[0][1] < viewer._screen_light_target_colors[-1][1]
+    assert "def _sample_glow_target_color" not in upload_text
+    assert "np.asarray(rgb" not in maybe_sample
+    assert "self._glow_color_counter = 0" in maybe_sample
+    assert "return" in maybe_sample
 
 
 def test_screen_glow_does_not_trigger_cpu_color_sampling(monkeypatch):
@@ -672,10 +694,6 @@ def test_screen_glow_does_not_trigger_cpu_color_sampling(monkeypatch):
     viewer._glow_color_counter = 0
     viewer._sampled = False
 
-    def _sample(*_args):
-        viewer._sampled = True
-
-    viewer._sample_glow_target_color = _sample
     viewer._maybe_sample_glow_target_color(None, is_tensor=False)
 
     assert not viewer._sampled
@@ -695,10 +713,6 @@ def test_environment_dynamic_light_does_not_trigger_cpu_color_sampling(monkeypat
     viewer._glow_color_counter = 0
     viewer._sampled = False
 
-    def _sample(*_args):
-        viewer._sampled = True
-
-    viewer._sample_glow_target_color = _sample
     viewer._maybe_sample_glow_target_color(None, is_tensor=False)
 
     assert not viewer._sampled
@@ -719,10 +733,6 @@ def test_default_dark_room_does_not_trigger_cpu_color_sampling(monkeypatch):
     viewer._glow_color_counter = 0
     viewer._sampled = False
 
-    def _sample(*_args):
-        viewer._sampled = True
-
-    viewer._sample_glow_target_color = _sample
     viewer._maybe_sample_glow_target_color(None, is_tensor=False)
 
     assert not viewer._sampled

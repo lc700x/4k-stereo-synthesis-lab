@@ -170,6 +170,8 @@ class EnvironmentProfileMixin:
         else:
             glb_name = str(glb_value)
             glb_path = glb_name if os.path.isabs(glb_name) else os.path.join(room_dir, glb_name)
+        if getattr(self, '_openxr_panorama_background_enabled', False) and not is_panorama:
+            glb_path = None
         if not is_panorama and (glb_path is None or not os.path.isfile(glb_path)):
             auto_panorama_path = self._find_panorama_image_file(room_dir)
             if auto_panorama_path:
@@ -268,9 +270,6 @@ class EnvironmentProfileMixin:
                 self._screen_quality_oversample = max(0.75, min(1.5, float(quality_oversample)))
             except (TypeError, ValueError):
                 pass
-        quad_layer = profile.get('xr_quad_layer_enabled', profile.get('screen_quad_layer'))
-        if quad_layer is not None:
-            self._xr_quad_layer_enabled = bool(quad_layer)
         quad_debug_offset = profile.get('xr_quad_layer_debug_offset')
         if quad_debug_offset is not None:
             try:

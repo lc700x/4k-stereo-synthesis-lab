@@ -87,8 +87,8 @@ class EnvironmentRendererMixin:
     def _screen_light_source_texture(self):
         if getattr(self, '_runtime_direct_source', False):
             return (
-                getattr(self, '_runtime_effect_source_tex', None),
-                getattr(self, '_runtime_effect_source_size', None),
+                getattr(self, '_runtime_effect_safe_source_tex', None),
+                getattr(self, '_runtime_effect_safe_source_size', None),
             )
         source_tex = getattr(self, 'color_tex', None)
         source_size = getattr(self, '_texture_size', None)

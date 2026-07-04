@@ -31,9 +31,6 @@ try:
 except ImportError:
     CUDART_GL = None
 
-from .constants import _GLOW_GRID_COLS, _GLOW_GRID_ROWS
-
-
 class CoreFrameUploadMixin:
     def _init_textures(self, w, h):
         if self.color_tex:
@@ -120,55 +117,6 @@ class CoreFrameUploadMixin:
                 glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
             except Exception:
                 pass
-
-    def _sample_glow_target_color(self, rgb, is_tensor):
-        """Update glow target from a thin frame border with minimal CPU work."""
-        try:
-            if is_tensor:
-                return
-
-            rgb_np = np.asarray(rgb, dtype=np.uint8)
-            h, w = rgb_np.shape[:2]
-            bt = max(1, int(min(h, w) * 0.08))
-            top_h = min(bt, h)
-            bot_h = min(bt, h)
-            step = 4
-
-            total = rgb_np[:top_h:step, ::step, :].sum(axis=(0, 1), dtype=np.float64)
-            total += rgb_np[max(0, h - bot_h)::step, ::step, :].sum(axis=(0, 1), dtype=np.float64)
-            count = (len(range(0, top_h, step)) + len(range(0, bot_h, step))) * len(range(0, w, step))
-
-            mid_h = max(0, h - top_h - bot_h)
-            side_w = min(bt, w)
-            if mid_h > 0 and side_w > 0:
-                y0 = top_h
-                y1 = h - bot_h
-                total += rgb_np[y0:y1:step, :side_w:step, :].sum(axis=(0, 1), dtype=np.float64)
-                total += rgb_np[y0:y1:step, max(0, w - side_w)::step, :].sum(axis=(0, 1), dtype=np.float64)
-                count += len(range(y0, y1, step)) * len(range(0, side_w, step)) * 2
-
-            avg = total / max(1, count)
-            self._glow_target_color = (
-                float(avg[0]) / 255.0,
-                float(avg[1]) / 255.0,
-                float(avg[2]) / 255.0,
-            )
-            stride = 8
-            grid = []
-            x_edges = tuple((w * i) // _GLOW_GRID_COLS for i in range(_GLOW_GRID_COLS + 1))
-            y_edges = tuple((h * i) // _GLOW_GRID_ROWS for i in range(_GLOW_GRID_ROWS + 1))
-            for row in range(_GLOW_GRID_ROWS):
-                y0, y1 = y_edges[row], y_edges[row + 1]
-                for col in range(_GLOW_GRID_COLS):
-                    x0, x1 = x_edges[col], x_edges[col + 1]
-                    if x1 <= x0 or y1 <= y0:
-                        grid.append(self._glow_target_color)
-                        continue
-                    avg3 = rgb_np[y0:y1:stride, x0:x1:stride, :].mean(axis=(0, 1))
-                    grid.append((float(avg3[0]) / 255.0, float(avg3[1]) / 255.0, float(avg3[2]) / 255.0))
-            self._screen_light_target_colors = tuple(grid)
-        except Exception:
-            pass
 
     # Per-frame helpers
     def _update_frame(self, rgb, depth):

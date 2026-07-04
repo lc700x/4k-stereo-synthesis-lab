@@ -157,6 +157,8 @@ class FPSBreakdown:
             f"fx_total={avg_ms('runtime_effect_source_total'):.2f}ms "
             f"fx_tensor={avg_ms('runtime_effect_source_tensor'):.2f}ms "
             f"fx_upload={avg_ms('runtime_effect_source_upload'):.2f}ms "
+            f"fx_age={avg_ms('openxr_effect_ready_age_frames'):.2f}f "
+            f"fx_skip={rate('openxr_effect_source_interval_skip'):.1f} "
             f"xr_poll0={avg_ms('openxr_poll_no_upload'):.2f}ms "
             f"xr_wait={avg_ms('openxr_wait_frame'):.2f}ms "
             f"xr_pred={avg_ms('openxr_predicted_period'):.2f}ms "

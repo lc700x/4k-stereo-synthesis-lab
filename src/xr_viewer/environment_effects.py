@@ -134,11 +134,21 @@ class EnvironmentEffectsMixin:
             return True
         return should_show_source_border()
 
+    def _record_screen_effect_safe_age(self, source_tex):
+        if source_tex is None:
+            return
+        safe_frame_id = int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0)
+        current_frame = int(getattr(self, '_frame_count', 0) or 0)
+        if safe_frame_id > 0 and current_frame >= safe_frame_id:
+            self._breakdown_add_time('openxr_effect_ready_age_frames', float(current_frame - safe_frame_id) / 1000.0)
+
     def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
         if getattr(self, '_runtime_direct_source', False):
+            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
+            self._record_screen_effect_safe_age(source_tex)
             return (
-                getattr(self, '_runtime_effect_source_tex', None),
-                getattr(self, '_runtime_effect_source_size', None),
+                source_tex,
+                getattr(self, '_runtime_effect_safe_source_size', None),
             )
         source_tex = getattr(self, 'color_tex', None)
         source_size = getattr(self, '_texture_size', None)

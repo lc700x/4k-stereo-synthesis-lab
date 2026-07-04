@@ -420,6 +420,26 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
     assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
 
 
+def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
+    runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    effects = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+
+    assert "self._runtime_effect_safe_source_tex = self._runtime_effect_source_staging_tex" in runtime_eye
+    assert "openxr_effect_source_reused_safe" in runtime_eye
+    assert "D2S_OPENXR_EFFECT_SOURCE_INTERVAL" in runtime_eye
+    assert "openxr_effect_source_interval_skip" in runtime_eye
+    update_block = runtime_eye.split("def _update_runtime_effect_source_texture", 1)[1].split(
+        "def _release_runtime_eye_texture_resources", 1
+    )[0]
+    assert "self._release_runtime_effect_source_texture()" not in update_block.split(
+        "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1
+    )[1]
+    assert "getattr(self, '_runtime_effect_safe_source_tex', None)" in effects
+    assert "openxr_effect_ready_age_frames" in effects
+    assert "getattr(self, '_runtime_effect_source_tex', None)" not in effects.split(
+        "def _screen_effect_source_texture", 1
+    )[1].split("def _render_glow", 1)[0]
+
 def test_openxr_async_phase0_diagnostics_are_wired():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")

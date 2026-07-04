@@ -146,7 +146,7 @@ def load_model_for_dtype(
     import torch
 
     if _is_infinidepth_model(model_id):
-        from models.InfiniDepth.api import InfiniDepthModel
+        from stereo_runtime.model_impl.InfiniDepth.api import InfiniDepthModel
 
         from .depth_provider import _infinidepth_encoder_for_model, _resolve_hf_model_file
 

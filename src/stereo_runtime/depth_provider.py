@@ -633,7 +633,7 @@ class InfiniDepthProvider:
         self.depth_upsample = depth_upsample
         self.depth_upsample_edge_strength = float(depth_upsample_edge_strength)
         self.info = DepthProviderInfo(
-            provider="models.InfiniDepth.api.InfiniDepthModel",
+            provider="stereo_runtime.model_impl.InfiniDepth.api.InfiniDepthModel",
             model_name=self.model_name,
             model_id=self.model_id,
             depth_resolution=self.depth_resolution,
@@ -648,7 +648,7 @@ class InfiniDepthProvider:
         if self._model is not None:
             return self._model
 
-        from models.InfiniDepth.api import InfiniDepthModel
+        from stereo_runtime.model_impl.InfiniDepth.api import InfiniDepthModel
 
         model_path = _resolve_hf_model_file(
             self.model_id,

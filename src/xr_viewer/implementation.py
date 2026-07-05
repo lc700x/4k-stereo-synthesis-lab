@@ -4495,9 +4495,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     time.sleep(0.01)
                     continue
 
-            # Lazy init: load environment model after OpenXR session is running.
-            self._ensure_env_model_initialized("Lazy")
-
             if frame_state.should_render:
                 # Drain depth_q non-blocking -keep only the newest frame
                 self._poll_source_frame(upload=True)
@@ -4885,6 +4882,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             if loop_breakdown_enabled:
                 self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
             self._flush_runtime_effect_submit()
+            # Keep asset initialization off the current frame's screen submit path.
+            self._ensure_env_model_initialized("Lazy")
             if loop_perf_log_enabled:
                 loop_total_ms = (time.perf_counter() - loop_t0) * 1000.0
                 loop_log_now = time.perf_counter()

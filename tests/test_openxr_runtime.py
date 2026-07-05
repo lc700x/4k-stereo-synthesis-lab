@@ -167,13 +167,19 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
     assert calls[0]["openxr_screen_distance"] == 9.5
 
 
-def test_openxr_run_seeds_screen_bridge_with_bootstrap_frame():
+def test_openxr_run_seeds_screen_bridge_with_renderable_bootstrap_frame():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    bootstrap_block = implementation.split("# Upload the first frame supplied by main.py", 1)[1].split(
+        "# Default fallback projection", 1
+    )[0]
 
-    assert "first_source_frame = (first_runtime_result, first_frame_ts)" in implementation
-    assert "first_source_frame = (first_rgb, first_depth, first_frame_ts)" in implementation
-    assert "bridge.mark_presented(first_source_frame)" in implementation
-    assert "self._mark_source_frame_received()" in implementation
+    assert "first_source_frame = (first_runtime_result, first_frame_ts)" in bootstrap_block
+    assert "first_source_frame = (first_rgb, first_depth, first_frame_ts)" in bootstrap_block
+    assert "if self._has_renderable_source_frame():" in bootstrap_block
+    assert bootstrap_block.index("if self._has_renderable_source_frame():") < bootstrap_block.index(
+        "bridge.mark_presented(first_source_frame)"
+    )
+    assert "self._mark_source_frame_received()" in bootstrap_block
 
 
 def test_run_openxr_mode_bootstraps_without_waiting_for_first_runtime_frame(monkeypatch):

@@ -4334,8 +4334,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             bridge.frame_id += 1
             bridge.latest_frame_id = bridge.frame_id
             bridge.source_timestamp = first_frame_ts
-            bridge.mark_presented(first_source_frame)
-            self._mark_source_frame_received()
+            if self._has_renderable_source_frame():
+                bridge.mark_presented(first_source_frame)
+                self._mark_source_frame_received()
 
         # Default fallback projection (used before first locate_views succeeds)
         _default_fov = xr.Fovf(

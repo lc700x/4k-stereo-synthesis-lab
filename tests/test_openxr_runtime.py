@@ -1052,14 +1052,14 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     render_tail = implementation.split("# On the first valid frame", 1)[1].split(
         "_submit_openxr_frame(composition_layers)", 1
     )[0]
-    assert render_tail.index("updated_quad_eyes = self._update_quad_layer_swapchains()") < render_tail.index(
-        "eye_layer_views = []"
-    )
-    assert render_tail.index("eye_layer_views = []") < render_tail.index(
-        "for quad_eye_index in updated_quad_eyes:"
-    )
-    quad_layer_block = render_tail.split("for quad_eye_index in updated_quad_eyes:", 1)[1]
-    assert "composition_layers.append(" in quad_layer_block
+    update_idx = render_tail.index("updated_quad_eyes = self._update_quad_layer_swapchains()")
+    build_idx = render_tail.index("for quad_eye_index in updated_quad_eyes:")
+    failure_idx = render_tail.index("self._xr_quad_layer_failed = True", build_idx)
+    render_idx = render_tail.index("eye_layer_views = []")
+    append_idx = render_tail.index("for quad_layer_header in quad_layer_headers:")
+    assert update_idx < build_idx < failure_idx < render_idx < append_idx
+    quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
+    assert "composition_layers.append(quad_layer_header)" in quad_layer_block
 
     d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
         "if self._use_d3d11:", 1

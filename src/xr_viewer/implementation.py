@@ -4566,6 +4566,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     self._screen_eye_init = True
 
                 quad_layers = []
+                quad_layer_headers = []
                 updated_quad_eyes = []
                 if self._quad_layer_can_replace_projection_screen():
                     quad_update_start = time.perf_counter()
@@ -4573,6 +4574,26 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
                     if loop_trace_enabled:
                         _loop_mark('quad_update')
+
+                for quad_eye_index in updated_quad_eyes:
+                    try:
+                        quad_layer = self._make_quad_layer(quad_eye_index)
+                        if quad_layer is None:
+                            continue
+                        quad_layers.append(quad_layer)
+                        quad_layer_headers.append(
+                            ctypes.cast(ctypes.pointer(quad_layer),
+                                        ctypes.POINTER(xr.CompositionLayerBaseHeader))
+                        )
+                    except Exception as exc:
+                        self._xr_quad_layer_active = False
+                        self._xr_quad_layer_failed = True
+                        self._breakdown_inc('openxr_quad_layer_failed')
+                        print(f"[OpenXRViewer] Quad layer build failed: {type(exc).__name__}: {exc}")
+                        updated_quad_eyes = []
+                        quad_layers = []
+                        quad_layer_headers = []
+                        break
 
                 eye_layer_views = []
 
@@ -4857,22 +4878,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     if loop_trace_enabled:
                         _loop_mark('render_no_layers')
 
-                for quad_eye_index in updated_quad_eyes:
-                    try:
-                        quad_layer = self._make_quad_layer(quad_eye_index)
-                        if quad_layer is None:
-                            continue
-                        quad_layers.append(quad_layer)
-                        composition_layers.append(
-                            ctypes.cast(ctypes.pointer(quad_layer),
-                                        ctypes.POINTER(xr.CompositionLayerBaseHeader))
-                        )
-                    except Exception as exc:
-                        self._xr_quad_layer_active = False
-                        self._xr_quad_layer_failed = True
-                        self._breakdown_inc('openxr_quad_layer_failed')
-                        print(f"[OpenXRViewer] Quad layer build failed: {type(exc).__name__}: {exc}")
-                        break
+                for quad_layer_header in quad_layer_headers:
+                    composition_layers.append(quad_layer_header)
                 if loop_trace_enabled:
                     _loop_mark('layers')
 

@@ -601,6 +601,18 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     assert "self._render_env_model(mgl_fbo, vp_mat, view_mat)" in env_block
 
 
+def test_quad_layer_build_failure_happens_before_projection_fallback_render():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+
+    quad_build_idx = run_body.index("for quad_eye_index in updated_quad_eyes:")
+    failure_idx = run_body.index("self._xr_quad_layer_failed = True", quad_build_idx)
+    render_idx = run_body.index("self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat", failure_idx)
+    append_idx = run_body.index("for quad_layer_header in quad_layer_headers:", render_idx)
+
+    assert quad_build_idx < failure_idx < render_idx < append_idx
+
+
 def test_env_model_render_failure_restores_gl_state():
     render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     render_func = render_text.split("def _render_env_model", 1)[1]

@@ -1324,6 +1324,32 @@ def test_no_room_glow_pass_restores_gl_state_on_failure():
     render_finally = func.split("finally:", 1)[1]
     assert "self.ctx.disable(moderngl.BLEND)" in render_finally
     assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+
+
+def test_screen_effect_entrypoints_keep_failures_soft(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    inc_calls = []
+    viewer._should_render_source_screen_effects = lambda: True
+    viewer._default_blank_fast_path = lambda: False
+    viewer._glow_mode = "surround"
+    viewer._glow_intensity_multiplier = 1.0
+    viewer._glow_shell_intensity_multiplier = 1.0
+    viewer._env_model_visible = False
+    viewer._env_model_prims = []
+    viewer._bg_color_idx = 0
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._render_glow_shell = lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("bg failed"))
+
+    viewer._render_screen_background_effects(None, None)
+
+    viewer._glow_mode = "veil"
+    viewer._render_frosted_veil = lambda *_args: (_ for _ in ()).throw(RuntimeError("fg failed"))
+    viewer._render_screen_foreground_effects(None, None)
+
+    assert ("openxr_screen_background_effect_failed", 1) in inc_calls
+    assert ("openxr_screen_foreground_effect_failed", 1) in inc_calls
+
+
 def test_screen_effect_passes_restore_gl_state_on_failure():
     effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
     checks = [

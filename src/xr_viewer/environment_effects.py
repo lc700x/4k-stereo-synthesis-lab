@@ -433,39 +433,47 @@ class EnvironmentEffectsMixin:
 
 
     def _render_screen_background_effects(self, mgl_fbo, vp_mat):
-        if not self._should_render_source_screen_effects():
-            return
-        if self._default_blank_fast_path():
-            return
-        mode = str(getattr(self, '_glow_mode', 'screen') or 'screen').strip().lower()
-        if mode == 'off':
-            return
-        if (
-            float(getattr(self, '_glow_intensity_multiplier', 0.0)) <= 0.0
-            and float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)) <= 0.0
-        ):
-            return
-        env_active = bool(getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', []))
-        passthrough_active = getattr(self, '_bg_color_idx', 0) == 1
-        if not env_active and not passthrough_active:
-            if mode == 'surround':
-                self._render_glow_shell(mgl_fbo, vp_mat)
-            elif mode == 'screen':
-                screen_mult = float(getattr(self, '_glow_intensity_multiplier', 0.0))
-                self._render_glow_shell(mgl_fbo, vp_mat, intensity_multiplier=screen_mult * 0.72)
+        try:
+            if not self._should_render_source_screen_effects():
+                return
+            if self._default_blank_fast_path():
+                return
+            mode = str(getattr(self, '_glow_mode', 'screen') or 'screen').strip().lower()
+            if mode == 'off':
+                return
+            if (
+                float(getattr(self, '_glow_intensity_multiplier', 0.0)) <= 0.0
+                and float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)) <= 0.0
+            ):
+                return
+            env_active = bool(getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', []))
+            passthrough_active = getattr(self, '_bg_color_idx', 0) == 1
+            if not env_active and not passthrough_active:
+                if mode == 'surround':
+                    self._render_glow_shell(mgl_fbo, vp_mat)
+                elif mode == 'screen':
+                    screen_mult = float(getattr(self, '_glow_intensity_multiplier', 0.0))
+                    self._render_glow_shell(mgl_fbo, vp_mat, intensity_multiplier=screen_mult * 0.72)
+        except Exception as exc:
+            print(f"[OpenXRViewer] Screen background effect failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_screen_background_effect_failed")
 
     def _render_screen_foreground_effects(self, mgl_fbo, vp_mat):
-        if not self._should_render_source_screen_effects():
-            return
-        mode = str(getattr(self, '_glow_mode', 'screen') or 'screen').strip().lower()
-        if mode == 'off':
-            return
-        if (
-            float(getattr(self, '_glow_intensity_multiplier', 0.0)) <= 0.0
-            and float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)) <= 0.0
-        ):
-            return
-        if mode == 'veil':
-            self._render_frosted_veil(mgl_fbo, vp_mat)
-        elif mode == 'frosted':
-            self._render_frosted_glow(mgl_fbo, vp_mat)
+        try:
+            if not self._should_render_source_screen_effects():
+                return
+            mode = str(getattr(self, '_glow_mode', 'screen') or 'screen').strip().lower()
+            if mode == 'off':
+                return
+            if (
+                float(getattr(self, '_glow_intensity_multiplier', 0.0)) <= 0.0
+                and float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)) <= 0.0
+            ):
+                return
+            if mode == 'veil':
+                self._render_frosted_veil(mgl_fbo, vp_mat)
+            elif mode == 'frosted':
+                self._render_frosted_glow(mgl_fbo, vp_mat)
+        except Exception as exc:
+            print(f"[OpenXRViewer] Screen foreground effect failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_screen_foreground_effect_failed")

@@ -197,6 +197,8 @@ class FPSBreakdown:
             f"fx_ds_failed={rate('openxr_glow_downsample_failed'):.1f},"
             f"prewarm:{rate('openxr_effect_downsample_prewarm_failed'):.1f},"
             f"prewarm_skip:{rate('openxr_effect_downsample_prewarm_skip'):.1f} "
+            f"fx_entry_failed=bg:{rate('openxr_screen_background_effect_failed'):.1f},"
+            f"fg:{rate('openxr_screen_foreground_effect_failed'):.1f} "
             f"light_ds={rate('openxr_screen_light_downsample_source'):.1f} "
             f"light_reuse={rate('openxr_screen_light_source_reuse'):.1f} "
             f"light_bind_failed={rate('openxr_screen_light_bind_failed'):.1f} "

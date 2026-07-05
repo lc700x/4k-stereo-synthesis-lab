@@ -82,6 +82,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_effect_downsample_prewarm", 3)
     breakdown.inc("openxr_glow_downsample_failed", 1)
     breakdown.inc("openxr_effect_downsample_prewarm_failed", 2)
+    breakdown.inc("openxr_effect_downsample_prewarm_skip", 1)
     breakdown.inc("openxr_screen_light_downsample_source", 4)
     breakdown.inc("openxr_screen_light_source_reuse", 3)
     breakdown.inc("openxr_wall_light_mask_loaded", 1)
@@ -152,7 +153,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "fx_ds_render=2.0" in output
     assert "fx_ds_reuse=5.0" in output
     assert "fx_ds_prewarm=3.0" in output
-    assert "fx_ds_failed=1.0,prewarm:2.0" in output
+    assert "fx_ds_failed=1.0,prewarm:2.0,prewarm_skip:1.0" in output
     assert "light_ds=4.0" in output
     assert "light_reuse=3.0" in output
     assert "wall_mask=loaded:1.0,missing:2.0,disabled:3.0,failed:4.0" in output

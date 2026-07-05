@@ -209,6 +209,24 @@ def test_runtime_effect_source_promote_failure_reuses_existing_safe_texture(monk
     assert inc_calls.count(("openxr_effect_source_promote_failed", 1)) == 3
 
 
+def test_screen_light_source_lookup_failure_reuses_safe_texture(monkeypatch):
+    safe_tex = object()
+    inc_calls = []
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._frame_count = 8
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = safe_tex
+    viewer._runtime_effect_safe_source_size = (16, 9)
+    viewer._runtime_effect_safe_source_frame_id = 7
+    viewer._promote_runtime_effect_ready_texture = lambda: None
+    viewer._record_screen_effect_safe_age = lambda _source_tex: None
+    viewer._cached_glow_downsample_texture = lambda *_args: (_ for _ in ()).throw(RuntimeError("cache failed"))
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._screen_light_source_texture() == (safe_tex, (16, 9))
+    assert ("openxr_screen_light_source_failed", 1) in inc_calls
+
+
 def test_screen_effect_age_diagnostic_failure_does_not_break_effect_source(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     source_tex = object()

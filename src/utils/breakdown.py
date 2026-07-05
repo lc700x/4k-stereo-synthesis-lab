@@ -201,6 +201,7 @@ class FPSBreakdown:
             f"fg:{rate('openxr_screen_foreground_effect_failed'):.1f} "
             f"light_ds={rate('openxr_screen_light_downsample_source'):.1f} "
             f"light_reuse={rate('openxr_screen_light_source_reuse'):.1f} "
+            f"light_source_failed={rate('openxr_screen_light_source_failed'):.1f} "
             f"light_bind_failed={rate('openxr_screen_light_bind_failed'):.1f} "
             f"wall_mask="
             f"loaded:{rate('openxr_wall_light_mask_loaded'):.1f},"

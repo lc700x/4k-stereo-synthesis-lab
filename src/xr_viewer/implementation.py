@@ -148,6 +148,7 @@ from .core_openxr_opengl import CoreOpenXROpenGLMixin
 from .core_source_state import CoreSourceStateMixin
 from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
+from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
 
 class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
@@ -4610,30 +4611,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 quad_layers = []
                 quad_layer_headers = []
                 quad_update_start = time.perf_counter()
-                updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)
+                screen_presenter = getattr(self, '_screen_layer_presenter', None)
+                if screen_presenter is None:
+                    screen_presenter = ScreenLayerPresenter(self)
+                    self._screen_layer_presenter = screen_presenter
+                updated_quad_eyes = screen_presenter.update_or_reuse(
+                    screen_frame_uploaded=screen_frame_uploaded
+                )
                 self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
                 if loop_trace_enabled:
                     _loop_mark('quad_update')
 
-                for quad_eye_index in updated_quad_eyes:
-                    try:
-                        quad_layer = self._make_quad_layer(quad_eye_index)
-                        if quad_layer is None:
-                            raise RuntimeError(f"missing quad layer for eye {quad_eye_index}")
-                        quad_layers.append(quad_layer)
-                        quad_layer_headers.append(
-                            ctypes.cast(ctypes.pointer(quad_layer),
-                                        ctypes.POINTER(xr.CompositionLayerBaseHeader))
-                        )
-                    except Exception as exc:
-                        self._xr_quad_layer_active = False
-                        self._xr_quad_layer_failed = True
-                        self._breakdown_inc('openxr_quad_layer_failed')
-                        print(f"[OpenXRViewer] Quad layer build failed: {type(exc).__name__}: {exc}")
-                        updated_quad_eyes = []
-                        quad_layers = []
-                        quad_layer_headers = []
-                        break
+                quad_layers, quad_layer_headers, updated_quad_eyes = screen_presenter.make_quad_layers(
+                    updated_quad_eyes
+                )
 
                 eye_layer_views = []
                 render_projection_layer = self._projection_layer_needed()

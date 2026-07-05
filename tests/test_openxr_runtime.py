@@ -5,6 +5,7 @@ import subprocess
 import sys
 import time
 import types
+import ctypes
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -1069,6 +1070,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     frame_upload = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
     environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     screen_quality = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
 
     for name in (
@@ -1114,6 +1116,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
             or name in frame_upload
             or name in environment_renderer
             or name in screen_quality
+            or name in screen_presenter
         )
 
     assert "wall_mask=" in breakdown
@@ -1145,17 +1148,25 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "def _wait_swapchain_image" in implementation
     assert implementation.count("xr.wait_swapchain_image") == 1
     assert "xr.wait_swapchain_image" not in (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
-    quad_build_block = implementation.split(
-        "updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)", 1
+    screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
+    screen_present_block = implementation.split(
+        "screen_presenter = getattr(self, '_screen_layer_presenter', None)", 1
     )[1].split(
         "eye_layer_views = []", 1
     )[0]
-    assert "try:" in quad_build_block
-    assert "quad_layer = self._make_quad_layer(quad_eye_index)" in quad_build_block
-    assert "raise RuntimeError(f\"missing quad layer for eye {quad_eye_index}\")" in quad_build_block
-    assert "openxr_quad_layer_failed" in quad_build_block
-    assert "self._xr_quad_layer_active = False" in quad_build_block
-    assert "break" in quad_build_block
+    assert "from .screen_layer_presenter import ScreenLayerPresenter" in implementation
+    assert "ScreenLayerPresenter(self)" in screen_present_block
+    assert "screen_presenter.update_or_reuse(" in screen_present_block
+    assert "screen_frame_uploaded=screen_frame_uploaded" in screen_present_block
+    assert "screen_presenter.make_quad_layers(" in screen_present_block
+    assert "class ScreenLayerPresenter" in screen_presenter
+    assert "def update_or_reuse" in screen_presenter
+    assert "def make_quad_layers" in screen_presenter
+    assert "self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)" in screen_presenter
+    assert "quad_layer = viewer._make_quad_layer(quad_eye_index)" in screen_presenter
+    assert "raise RuntimeError(f\"missing quad layer for eye {quad_eye_index}\")" in screen_presenter
+    assert "openxr_quad_layer_failed" in screen_presenter
+    assert "viewer._xr_quad_layer_active = False" in screen_presenter
     trigger_block = implementation.split("# Trigger input -fires mouse clicks", 1)[1].split(
         "def _ensure_env_model_initialized", 1
     )[0]
@@ -1383,14 +1394,14 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
         "_submit_openxr_frame(composition_layers)", 1
     )[0]
     poll_idx = frame_block.index("screen_frame_uploaded = self._poll_source_frame(upload=True)")
-    update_idx = frame_block.index("updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)")
-    build_idx = frame_block.index("for quad_eye_index in updated_quad_eyes:")
+    presenter_idx = frame_block.index("screen_presenter = getattr(self, '_screen_layer_presenter', None)")
+    update_idx = frame_block.index("updated_quad_eyes = screen_presenter.update_or_reuse(")
+    build_idx = frame_block.index("screen_presenter.make_quad_layers(")
     assert "if self._quad_layer_can_replace_projection_screen():" not in frame_block[:update_idx]
-    failure_idx = frame_block.index("self._xr_quad_layer_failed = True", build_idx)
     render_idx = frame_block.index("eye_layer_views = []")
     skip_idx = frame_block.index("render_projection_layer = self._projection_layer_needed()")
     append_idx = frame_block.index("for quad_layer_header in quad_layer_headers:")
-    assert poll_idx < update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
+    assert poll_idx < presenter_idx < update_idx < build_idx < render_idx < skip_idx < append_idx
     assert "openxr_projection_layer_skipped" in render_tail
     render_eye = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
     render_eye_prefix, render_eye_block = render_eye.split("draw_projection_screen = not self._quad_layer_screen_presentable()", 1)
@@ -1555,6 +1566,51 @@ def test_quad_layer_update_requires_both_eyes_for_quad_submit():
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     assert viewer._update_quad_layer_swapchains() == []
+    assert viewer._xr_quad_layer_active is False
+    assert viewer._xr_quad_layer_failed is True
+    assert ("openxr_quad_layer_failed", 1) in inc_calls
+
+
+def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    class Viewer:
+        pass
+
+    viewer = Viewer()
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    update_calls = []
+    viewer._update_quad_layer_swapchains = lambda force=False: update_calls.append(force) or [0, 1]
+
+    left_layer = ctypes.c_int(1)
+    right_layer = ctypes.c_int(2)
+
+    def _make_quad_layer(eye_index):
+        return left_layer if eye_index == 0 else right_layer
+
+    viewer._make_quad_layer = _make_quad_layer
+    presenter = ScreenLayerPresenter(viewer)
+
+    assert presenter.update_or_reuse(screen_frame_uploaded=True) == [0, 1]
+    assert update_calls == [True]
+    quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0, 1])
+
+    assert quad_layers == [left_layer, right_layer]
+    assert len(quad_layer_headers) == 2
+    assert updated == [0, 1]
+    assert viewer._xr_quad_layer_active is True
+    assert viewer._xr_quad_layer_failed is False
+
+    viewer._make_quad_layer = lambda _eye_index: None
+    quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])
+
+    assert quad_layers == []
+    assert quad_layer_headers == []
+    assert updated == []
     assert viewer._xr_quad_layer_active is False
     assert viewer._xr_quad_layer_failed is True
     assert ("openxr_quad_layer_failed", 1) in inc_calls

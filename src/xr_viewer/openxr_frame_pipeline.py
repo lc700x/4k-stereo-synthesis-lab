@@ -56,9 +56,7 @@ class OpenXRFramePipeline:
         bridge.source_timestamp = first_frame_ts
         if viewer._has_renderable_source_frame():
             bridge.mark_presented(first_source_frame)
-            viewer._mark_source_frame_received()
-        else:
-            viewer._pending_source_frame = first_source_frame
+        viewer._mark_source_frame_received()
 
     def begin_loop_frame(self):
         viewer = self.viewer

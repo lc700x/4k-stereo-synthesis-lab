@@ -32,10 +32,9 @@ class ScreenLayerPresenter:
                 viewer._breakdown_inc("viewer_drop", poll.dropped)
 
         if latest is not None:
-            viewer._pending_source_frame = latest
             viewer._mark_source_frame_received()
 
-        if viewer._pending_source_frame is None:
+        if not bridge.has_unpresented_frame():
             reuse = bridge.reuse_presented()
             if reuse.frame is not None:
                 viewer._breakdown_inc("openxr_reused_screen_frame")
@@ -57,9 +56,8 @@ class ScreenLayerPresenter:
                 viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
                 return False
 
-        pending_frame = viewer._pending_source_frame
+        pending_frame = bridge.latest_frame
         source_frame, frame_ts = viewer._normalize_source_frame(pending_frame)
-        viewer._pending_source_frame = None
 
         upload_start = time.perf_counter()
         effect_source_rgb = None
@@ -72,7 +70,6 @@ class ScreenLayerPresenter:
         if budget_ms > 0.0:
             viewer._openxr_screen_upload_budget_skip_armed = (upload_elapsed * 1000.0) > budget_ms
         if not viewer._has_renderable_source_frame():
-            viewer._pending_source_frame = pending_frame
             viewer._breakdown_inc("openxr_screen_upload_not_renderable")
             viewer._breakdown_add_time("openxr_upload", upload_elapsed)
             viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)

@@ -71,6 +71,9 @@ class ScreenFrameBridge:
             is_new=True,
         )
 
+    def has_unpresented_frame(self):
+        return self.latest_frame is not None and self.last_presented_frame_id != self.latest_frame_id
+
     def mark_presented(self, frame=None):
         if frame is None:
             frame = self.latest_frame
@@ -420,7 +423,6 @@ class CoreSourceStateMixin:
                 self._breakdown_inc("viewer_drop", poll.dropped)
 
         if latest is not None:
-            self._pending_source_frame = latest
             self._mark_source_frame_received()
 
         self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)

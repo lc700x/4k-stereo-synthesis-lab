@@ -184,9 +184,9 @@ def test_openxr_frame_pipeline_seeds_screen_bridge_with_renderable_bootstrap_fra
         "bridge.mark_presented(first_source_frame)"
     )
     assert "viewer._mark_source_frame_received()" in seed_block
-    assert "else:\n            viewer._pending_source_frame = first_source_frame" in seed_block
+    assert "_pending_source_frame" not in seed_block
     assert seed_block.index("bridge.mark_presented(first_source_frame)") < seed_block.index(
-        "viewer._pending_source_frame = first_source_frame"
+        "viewer._mark_source_frame_received()"
     )
 
 
@@ -508,7 +508,6 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
     viewer.depth_q = queue.Queue()
     viewer._openxr_screen_upload_budget_ms = 1.0
     viewer._openxr_screen_upload_budget_skip_armed = True
-    viewer._pending_source_frame = object()
     time_calls = []
     viewer._fps_breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
     value_calls = []
@@ -517,7 +516,7 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
     viewer._fps_breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
     viewer._openxr_screen_frame_bridge.latest_frame = object()
-    viewer._openxr_screen_frame_bridge.latest_frame_id = 1
+    viewer._openxr_screen_frame_bridge.latest_frame_id = 2
     viewer._openxr_screen_frame_bridge.last_presented_frame = object()
     viewer._openxr_screen_frame_bridge.last_presented_frame_id = 1
     viewer._update_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
@@ -525,11 +524,11 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
 
     assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
-    assert viewer._pending_source_frame is not None
+    assert viewer._openxr_screen_frame_bridge.has_unpresented_frame()
     assert viewer._openxr_screen_upload_budget_skip_armed is False
     assert ("openxr_reused_screen_frame", 1) in inc_calls
     assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
-    assert ("openxr_screen_frame_age_frames", 0.0) in value_calls
+    assert ("openxr_screen_frame_age_frames", 1.0) in value_calls
 
 
 def test_openxr_upload_keeps_pending_until_frame_is_renderable():
@@ -546,7 +545,6 @@ def test_openxr_upload_keeps_pending_until_frame_is_renderable():
     viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
     viewer._openxr_screen_frame_bridge.latest_frame = pending_frame
     viewer._openxr_screen_frame_bridge.latest_frame_id = 1
-    viewer._pending_source_frame = pending_frame
     viewer._openxr_screen_upload_budget_ms = 0.0
     viewer._openxr_screen_upload_budget_skip_armed = False
     viewer._runtime_direct_source = False
@@ -562,7 +560,7 @@ def test_openxr_upload_keeps_pending_until_frame_is_renderable():
 
     assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
-    assert viewer._pending_source_frame is pending_frame
+    assert viewer._openxr_screen_frame_bridge.has_unpresented_frame()
     assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
     assert ("openxr_screen_upload_not_renderable", 1) in inc_calls
     assert "openxr_upload" in [name for name, _seconds in time_calls]
@@ -582,7 +580,6 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
     viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
     viewer._openxr_screen_frame_bridge.latest_frame = pending_frame
     viewer._openxr_screen_frame_bridge.latest_frame_id = 1
-    viewer._pending_source_frame = pending_frame
     viewer._openxr_screen_upload_budget_ms = 0.0
     viewer._openxr_screen_upload_budget_skip_armed = False
     viewer._runtime_direct_source = True
@@ -601,7 +598,7 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
 
     assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
-    assert viewer._pending_source_frame is None
+    assert viewer._openxr_screen_frame_bridge.has_unpresented_frame()
     assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
 
 
@@ -617,7 +614,6 @@ def test_openxr_effect_submit_is_timed_outside_screen_upload():
     source_q.put((runtime_result, 10.0))
     viewer = Viewer()
     viewer.depth_q = source_q
-    viewer._pending_source_frame = None
     viewer._openxr_screen_upload_budget_ms = 0.0
     viewer._openxr_screen_upload_budget_skip_armed = False
     viewer._last_source_frame_time = 0.0

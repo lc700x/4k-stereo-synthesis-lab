@@ -507,7 +507,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._last_source_frame_time = 0.0
         self._source_stalled = False
         self._source_stall_count = 0
-        self._pending_source_frame = None
         self._render_active_event = kwargs.get('render_active_event')
         self._source_active_event = kwargs.get('source_active_event')
         self._idle_active_event = kwargs.get('idle_active_event')

@@ -122,30 +122,14 @@ class EnvironmentRendererMixin:
             record_age = getattr(self, '_record_screen_effect_safe_age', None)
             if callable(record_age):
                 record_age(source_tex)
-            if source_tex is not None and source_size is not None:
-                src_w, src_h = int(source_size[0]), int(source_size[1])
-                out_w = max(32, min(192, src_w // 20))
-                out_h = max(18, min(108, src_h // 20))
-                out_w = max(2, out_w & ~1)
-                out_h = max(2, out_h & ~1)
-                downsample_key = (
-                    int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
-                    int(getattr(source_tex, 'glo', 0) or 0),
-                    src_w,
-                    src_h,
-                    out_w,
-                    out_h,
-                )
-                if (
-                    getattr(self, '_glow_ds_cache_key', None) == downsample_key
-                    and getattr(self, '_glow_ds_tex', None) is not None
-                ):
-                    self._breakdown_inc("openxr_screen_light_downsample_source")
-                    value = (self._glow_ds_tex, getattr(self, '_glow_ds_size', None))
-                    self._screen_light_source_cache_key = cache_key
-                    self._screen_light_source_cache_frame = frame_id
-                    self._screen_light_source_cache_value = value
-                    return value
+            cached_light_tex = self._cached_glow_downsample_texture(source_tex, source_size)
+            if cached_light_tex is not None:
+                self._breakdown_inc("openxr_screen_light_downsample_source")
+                value = (cached_light_tex, getattr(self, '_glow_ds_size', None))
+                self._screen_light_source_cache_key = cache_key
+                self._screen_light_source_cache_frame = frame_id
+                self._screen_light_source_cache_value = value
+                return value
             value = (source_tex, source_size)
             self._screen_light_source_cache_key = cache_key
             self._screen_light_source_cache_frame = frame_id

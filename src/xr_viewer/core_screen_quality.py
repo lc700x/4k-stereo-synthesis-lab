@@ -172,7 +172,7 @@ class CoreScreenQualityMixin:
         self._glow_ds_fbo = self.ctx.framebuffer(color_attachments=[self._glow_ds_tex])
         self._glow_ds_size = (w, h)
 
-    def _prepare_glow_downsample_texture(self, source_tex, source_size):
+    def _glow_downsample_key_and_size(self, source_tex, source_size):
         if source_tex is None or source_size is None:
             return None
         src_w, src_h = int(source_size[0]), int(source_size[1])
@@ -182,9 +182,11 @@ class CoreScreenQualityMixin:
         out_h = max(18, min(108, src_h // 20))
         out_w = max(2, out_w & ~1)
         out_h = max(2, out_h & ~1)
-        self._ensure_glow_downsample_resources((out_w, out_h))
         source_frame_id = None
-        if getattr(self, '_runtime_direct_source', False) and source_tex is getattr(self, '_runtime_effect_safe_source_tex', None):
+        if (
+            getattr(self, '_runtime_direct_source', False)
+            and source_tex is getattr(self, '_runtime_effect_safe_source_tex', None)
+        ):
             source_frame_id = int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0)
         cache_key = (
             int(source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)),
@@ -194,9 +196,30 @@ class CoreScreenQualityMixin:
             out_w,
             out_h,
         )
-        if getattr(self, '_glow_ds_cache_key', None) == cache_key:
+        return cache_key, (out_w, out_h), (src_w, src_h)
+
+    def _cached_glow_downsample_texture(self, source_tex, source_size):
+        info = self._glow_downsample_key_and_size(source_tex, source_size)
+        if info is None:
+            return None
+        cache_key, _out_size, _source_size = info
+        if (
+            getattr(self, '_glow_ds_cache_key', None) == cache_key
+            and getattr(self, '_glow_ds_tex', None) is not None
+        ):
             self._breakdown_inc("openxr_glow_downsample_reuse")
             return self._glow_ds_tex
+        return None
+
+    def _prepare_glow_downsample_texture(self, source_tex, source_size):
+        info = self._glow_downsample_key_and_size(source_tex, source_size)
+        if info is None:
+            return None
+        cache_key, (out_w, out_h), (src_w, src_h) = info
+        cached = self._cached_glow_downsample_texture(source_tex, source_size)
+        if cached is not None:
+            return cached
+        self._ensure_glow_downsample_resources((out_w, out_h))
 
         prev_viewport = self.ctx.viewport
         prev_depth_mask = self.ctx.depth_mask

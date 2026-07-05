@@ -388,7 +388,10 @@ class EnvironmentEffectsMixin:
             return
 
         source_tex, source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
-        glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
+        if getattr(self, '_runtime_direct_source', False):
+            glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
+        else:
+            glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
         if mgl_fbo is not None:
             mgl_fbo.use()
         center = getattr(self, '_head_pos_w', None)

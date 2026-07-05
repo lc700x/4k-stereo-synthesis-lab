@@ -1002,18 +1002,32 @@ def test_screen_effect_safe_age_records_once_per_safe_texture_per_frame(monkeypa
 
 def test_glow_downsample_cache_is_shared_across_eyes():
     quality_text = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
-    func = quality_text.split("def _prepare_glow_downsample_texture", 1)[1].split(
+    key_func = quality_text.split("def _glow_downsample_key_and_size", 1)[1].split(
+        "def _cached_glow_downsample_texture", 1
+    )[0]
+    cached_func = quality_text.split("def _cached_glow_downsample_texture", 1)[1].split(
+        "def _prepare_glow_downsample_texture", 1
+    )[0]
+    prepare_func = quality_text.split("def _prepare_glow_downsample_texture", 1)[1].split(
         "def _is_runtime_eye_texture_ready", 1
     )[0]
+    effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    shell_func = effects_text.split("def _render_glow_shell", 1)[1].split(
+        "def _render_screen_background_effects", 1
+    )[0]
 
-    assert "_glow_ds_cache_key" in func
-    assert "_current_eye_index" not in func
-    assert "_runtime_effect_safe_source_frame_id" in func
-    assert "source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)" in func
-    assert "except Exception as exc:" in func
-    assert "openxr_glow_downsample_failed" in func
-    assert "finally:" in func
-    render_finally = func.split("finally:", 1)[1]
+    assert "_glow_ds_cache_key" in cached_func
+    assert "_current_eye_index" not in key_func + cached_func + prepare_func
+    assert "_runtime_effect_safe_source_frame_id" in key_func
+    assert "source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)" in key_func
+    assert "_cached_glow_downsample_texture(source_tex, source_size)" in prepare_func
+    assert "if getattr(self, '_runtime_direct_source', False):" in shell_func
+    assert "_cached_glow_downsample_texture(source_tex, source_size)" in shell_func
+    assert "else:\n            glow_tex = self._prepare_glow_downsample_texture" in shell_func
+    assert "except Exception as exc:" in prepare_func
+    assert "openxr_glow_downsample_failed" in prepare_func
+    assert "finally:" in prepare_func
+    render_finally = prepare_func.split("finally:", 1)[1]
     assert "self.ctx.viewport = prev_viewport" in render_finally
     assert "self.ctx.depth_mask = prev_depth_mask" in render_finally
     assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
@@ -1051,7 +1065,7 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
     assert "_record_screen_effect_safe_age" in source_func
     assert "_prepare_glow_downsample_texture" in source_func
     assert "_prepare_glow_downsample_texture" not in runtime_direct_block
-    assert "_glow_ds_cache_key" in runtime_direct_block
+    assert "_cached_glow_downsample_texture" in runtime_direct_block
     assert "_glow_ds_size" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func

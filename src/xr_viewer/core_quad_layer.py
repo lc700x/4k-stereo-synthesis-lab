@@ -174,7 +174,7 @@ class CoreQuadLayerMixin:
                 self._breakdown_inc('openxr_quad_reused_screen_frame')
                 return [0, 1]
             return []
-        if not self._quad_layer_can_replace_projection_screen():
+        if not self._quad_layer_screen_presentable():
             return []
         self._quad_swapchain_presented_eyes = getattr(self, '_quad_swapchain_presented_eyes', set())
         shared_swapchain = (
@@ -204,6 +204,11 @@ class CoreQuadLayerMixin:
         source0, size0, flip0 = self._quad_layer_source_texture(0)
         source1, size1, flip1 = self._quad_layer_source_texture(1)
         if source0 is None or source1 is None or size0 is None or size1 is None:
+            if self._quad_layer_has_presented_frame():
+                breakdown_inc = getattr(self, '_breakdown_inc', None)
+                if callable(breakdown_inc):
+                    breakdown_inc('openxr_quad_missing_source_reuse')
+                return [0, 1]
             return []
         quad_w, quad_h = self._quad_swapchain_sizes[0]
         swapchain = self._quad_swapchains[0]

@@ -2307,6 +2307,34 @@ def test_quad_layer_reuses_presented_frame_on_partial_update():
     assert ("openxr_quad_update_partial_reuse", 1) in inc_calls
 
 
+def test_quad_layer_shared_swapchain_reuses_presented_frame_when_source_missing():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    shared_swapchain = object()
+    viewer = Viewer()
+    viewer._xr_quad_layer_enabled = True
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    viewer._screen_curved = False
+    viewer._runtime_direct_source = True
+    viewer._runtime_eye_has_frame = False
+    viewer._quad_swapchains = {0: shared_swapchain, 1: shared_swapchain}
+    viewer._runtime_eye_textures = [None, None]
+    viewer._runtime_eye_texture_size = None
+    viewer._quad_swapchain_array_size = {0: 2, 1: 2}
+    viewer._quad_swapchain_presented_eyes = {0, 1}
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._update_quad_layer_swapchains(force=True) == [0, 1]
+    assert viewer._xr_quad_layer_active is True
+    assert viewer._xr_quad_layer_failed is False
+    assert ("openxr_quad_missing_source_reuse", 1) in inc_calls
+
+
 def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.screen_layer_presenter import ScreenLayerPresenter

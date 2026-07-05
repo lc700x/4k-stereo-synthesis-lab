@@ -7,7 +7,7 @@
 # Renders Desktop2Stereo's depth-parallax left/right eye views into a VR headset
 # via the pyopenxr binding (pip install pyopenxr).
 # Uses a world-space virtual screen quad with proper per-eye view/projection matrices
-# derived from xr.locate_views() for full 6DoF/3DoF head tracking.
+# derived from xr.locate_views() for headset tracking.
 # The depth-parallax FRAGMENT_SHADER from viewer.py is reused unchanged.
 
 import sys

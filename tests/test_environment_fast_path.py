@@ -1536,7 +1536,7 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     assert ("openxr_screen_light_source_reuse", 1) in inc_calls
 
 
-def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatch):
+def test_screen_light_source_waits_for_prewarmed_downsample_when_safe_source_changes(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     first_tex = type("Tex", (), {"glo": 31})()
     next_tex = type("Tex", (), {"glo": 32})()
@@ -1559,9 +1559,9 @@ def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatc
     viewer._promote_runtime_effect_ready_texture = _promote
     viewer._prepare_glow_downsample_texture = _prepare
 
-    assert viewer._screen_light_source_texture() == (first_tex, (1920, 1080))
+    assert viewer._screen_light_source_texture() == (None, None)
     _set_runtime_effect_safe(viewer, next_tex, (1920, 1080), 4)
-    assert viewer._screen_light_source_texture() == (next_tex, (1920, 1080))
+    assert viewer._screen_light_source_texture() == (None, None)
 
     assert viewer._promote_count == 0
     assert viewer._age_count == 2

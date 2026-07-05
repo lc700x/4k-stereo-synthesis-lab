@@ -127,7 +127,7 @@ class EnvironmentRendererMixin:
                 self._screen_light_source_cache_frame = frame_id
                 self._screen_light_source_cache_value = value
                 return value
-            value = (source_tex, source_size)
+            value = (None, None)
             self._screen_light_source_cache_key = cache_key
             self._screen_light_source_cache_frame = frame_id
             self._screen_light_source_cache_value = value

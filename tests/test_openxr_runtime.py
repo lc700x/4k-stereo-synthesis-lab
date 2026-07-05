@@ -591,7 +591,7 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
 
     assert viewer._poll_source_frame(upload=True) is False
 
-    assert viewer._pending_source_frame is pending_frame
+    assert viewer._pending_source_frame is None
     assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
 
 

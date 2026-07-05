@@ -472,7 +472,6 @@ class CoreSourceStateMixin:
             self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
         if getattr(self, '_runtime_eye_reused_previous_frame', False):
-            self._pending_source_frame = pending_frame
             self._breakdown_add_time("openxr_upload", upload_elapsed)
             self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False

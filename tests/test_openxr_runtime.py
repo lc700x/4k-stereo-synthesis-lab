@@ -337,6 +337,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     monkeypatch.chdir(SRC)
     source = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     viewer_source = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
 
     assert "#define roll params.w" in source
@@ -350,7 +351,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     assert "eye_sign * ipd * 0.5" not in source
     assert "self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0" in source
     assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in implementation
-    assert "roll=self.screen_roll" in implementation
+    assert "roll=viewer.screen_roll" in projection_presenter
     assert "float depth_response = depth - u_convergence;" in viewer_source
     assert "float shift = depth_response;" in viewer_source
     assert "float px = u_eye_offset * shift * u_depth_strength * edge_falloff;" in viewer_source
@@ -474,6 +475,7 @@ def test_runtime_direct_renderable_source_does_not_require_depth_texture():
     viewer = Viewer()
     viewer._runtime_direct_source = True
     viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_eye_has_frame = True
     viewer._runtime_depth_texture = None
     viewer._use_d3d11 = False
     viewer._d3d11_native_renderer = None
@@ -845,11 +847,12 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
         SRC / "xr_viewer" / "core_source_state.py"
     ).read_text(encoding="utf-8")
     frame_submitter_text = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
-    assert "effect_submitter.flush_after_submit(" in implementation
-    assert "frame_submitter.submit(" in implementation
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    assert "self.effect_submitter.flush_after_submit(" in frame_pipeline
+    assert "self.frame_submitter.submit(" in frame_pipeline
     assert "openxr_submit_frame" in frame_submitter_text
-    assert implementation.index("frame_submitter.submit(") < implementation.index(
-        "effect_submitter.flush_after_submit("
+    assert frame_pipeline.index("self.frame_submitter.submit(") < frame_pipeline.index(
+        "self.effect_submitter.flush_after_submit("
     )
     assert "self._runtime_effect_safe_source_frame_id = pool.safe_frame_id" not in runtime_eye
     assert "self.ready_frame_id = int(frame_id or 0)" in scheduler_text
@@ -1088,7 +1091,12 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     frame_upload = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
     environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     screen_quality = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    effect_submitter = (SRC / "xr_viewer" / "effect_submitter.py").read_text(encoding="utf-8")
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    frame_submitter = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
+    frame_timing = (SRC / "xr_viewer" / "openxr_frame_timing.py").read_text(encoding="utf-8")
     frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
+    projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
     breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
@@ -1136,7 +1144,12 @@ def test_openxr_async_phase0_diagnostics_are_wired():
             or name in frame_upload
             or name in environment_renderer
             or name in screen_quality
+            or name in effect_submitter
+            or name in frame_pipeline
+            or name in frame_submitter
+            or name in frame_timing
             or name in frame_renderer
+            or name in projection_presenter
             or name in screen_presenter
             or name in background_presenter
         )
@@ -1171,7 +1184,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert implementation.count("xr.wait_swapchain_image") == 1
     assert "xr.wait_swapchain_image" not in (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in implementation
+    assert "from .openxr_frame_pipeline import OpenXRFramePipeline" in implementation
+    assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in frame_pipeline
     assert "from .screen_layer_presenter import ScreenLayerPresenter" in frame_renderer
     assert "ScreenLayerPresenter(viewer)" in frame_renderer
     assert "self.screen_presenter.prepare_frame_layers(" in frame_renderer
@@ -1190,36 +1204,27 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "try:" in trigger_block
     assert "self._handle_triggers()" in trigger_block
     assert "openxr_input_trigger_failed" in trigger_block
-    pbo_guard_block = implementation.split("if nv_interop_failed:", 1)[1].split(
-        "# PBO fallback: two-phase loop", 1
-    )[0]
-    assert "elif updated_quad_eyes:" in pbo_guard_block
-    assert "openxr_projection_pbo_skipped_for_quad" in pbo_guard_block
-    pbo_projection_block = implementation.split("# PBO fallback: two-phase loop", 1)[1].split(
-        "# Phase 2: map PBOs", 1
+    assert "if updated_quad_eyes:" in projection_presenter
+    assert "openxr_projection_pbo_skipped_for_quad" in projection_presenter
+    pbo_projection_block = projection_presenter.split("def render_d3d11_pbo", 1)[1].split(
+        "def render_opengl", 1
     )[0]
     assert "try:" in pbo_projection_block
-    assert "self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)" in pbo_projection_block
+    assert "viewer._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)" in pbo_projection_block
     assert "openxr_projection_render_failed" in pbo_projection_block
-    assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in pbo_projection_block
-    assert "for _pending in d3d11_pending:" in pbo_projection_block
-    pbo_upload_block = implementation.split("# Phase 2: map PBOs", 1)[1].split(
-        "else:\n                    for eye_index in range(2):", 1
-    )[0]
-    assert "try:" in pbo_upload_block
-    assert "self._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)" in pbo_upload_block
-    assert "openxr_projection_render_failed" in pbo_upload_block
-    assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in pbo_upload_block
-    assert "eye_layer_views = []" in pbo_upload_block
-    opengl_projection_block = implementation.split("raw_fbo, mgl_fbo = self._get_or_create_fbo", 1)[1].split(
-        "eye_layer_views.append(xr.CompositionLayerProjectionView", 1
+    assert "xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)" in pbo_projection_block
+    assert "for _pbo_id, _tex, _w, _h, pending_swapchain, _view in pending:" in pbo_projection_block
+    assert "viewer._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)" in pbo_projection_block
+    assert "eye_layer_views = []" in pbo_projection_block
+    opengl_projection_block = projection_presenter.split("def render_opengl", 1)[1].split(
+        "def _projection_view", 1
     )[0]
     assert "try:" in opengl_projection_block
-    assert "self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)" in opengl_projection_block
-    assert "self._preview_active and eye_index == 0 and not updated_quad_eyes" in opengl_projection_block
-    assert "glfw.swap_buffers(self.window)" in opengl_projection_block
+    assert "viewer._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)" in opengl_projection_block
+    assert "viewer._preview_active and eye_index == 0 and not updated_quad_eyes" in opengl_projection_block
+    assert "glfw.swap_buffers(viewer.window)" in projection_presenter
     assert "openxr_projection_render_failed" in opengl_projection_block
-    assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in opengl_projection_block
+    assert "xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)" in opengl_projection_block
     render_eye_aux_block = implementation.split("def _try_aux_render", 1)[1].split(
         "self.ctx.screen.use()", 1
     )[0]
@@ -1321,21 +1326,79 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
 
 def test_active_openxr_presenter_drains_source_after_begin_frame():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
-    pre_timing = run_body.split("frame_state, submit_start = frame_timing.begin_frame", 1)[0]
-    timing_to_upload = run_body.split("frame_state, submit_start = frame_timing.begin_frame", 1)[1].split(
-        "frame_renderer = getattr(self, '_openxr_frame_renderer', None)", 1
+    pre_timing = frame_pipeline.split("frame_state, submit_start = self.timing.begin_frame", 1)[0]
+    timing_to_upload = frame_pipeline.split("frame_state, submit_start = self.timing.begin_frame", 1)[1].split(
+        "screen_frame_uploaded = False", 1
     )[0]
 
-    assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_timing
-    assert "self._poll_source_frame(upload=False)" in pre_timing
-    assert "OpenXRFrameTiming(self)" in pre_timing
-    assert "OpenXRFrameInput(self)" in timing_to_upload
+    assert "if viewer._session_ready_pending or not viewer._has_fresh_source_frame(now):" in pre_timing
+    assert "viewer._poll_source_frame(upload=False)" in pre_timing
+    assert "self.input.sync_actions()" in timing_to_upload
     assert "xr.begin_frame" not in run_body
     assert "_update_aim_poses" not in run_body
     assert "_poll_controller_input" not in run_body
-    assert "screen_frame_uploaded = False" in timing_to_upload
-    assert "frame_renderer.render_frame(" not in timing_to_upload
+    assert "self.renderer.render_frame(" in frame_pipeline
+    assert frame_pipeline.index("self.timing.begin_frame(") < frame_pipeline.index("self.renderer.render_frame(")
+
+
+def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
+    from xr_viewer.openxr_frame_pipeline import OpenXRFramePipeline
+
+    calls = []
+    viewer = SimpleNamespace(
+        _openxr_perf_log=False,
+        _session_ready_pending=True,
+        _frame_count=7,
+    )
+    viewer._breakdown_inc = lambda name, amount=1: calls.append(("inc", name, amount))
+    viewer._has_fresh_source_frame = lambda now: calls.append(("fresh", now)) or False
+    viewer._poll_source_frame = lambda upload=False: calls.append(("poll", upload))
+    viewer._has_renderable_source_frame = lambda: True
+
+    pipeline = OpenXRFramePipeline(viewer)
+    pipeline.timing = SimpleNamespace(
+        begin_frame=lambda *, breakdown_enabled: calls.append(("timing", breakdown_enabled))
+        or (SimpleNamespace(should_render=True, predicted_display_time=123), 1.5)
+    )
+    pipeline.input = SimpleNamespace(
+        sync_actions=lambda: calls.append(("sync",)),
+        update_controller_frame=lambda *, display_time, dt: calls.append(("input", display_time, dt))
+        or "controller_input",
+    )
+    pipeline.gate = SimpleNamespace(
+        handle_ready_or_stall=lambda **kwargs: calls.append(("gate", kwargs)) or (False, False),
+        enter_idle_if_needed=lambda _idle: pytest.fail("non-idle frame should not enter idle"),
+    )
+    pipeline.renderer = SimpleNamespace(
+        render_frame=lambda **kwargs: calls.append(("render", kwargs)) or (False, False, True)
+    )
+    pipeline.frame_submitter = SimpleNamespace(
+        submit=lambda layers, **kwargs: calls.append(("submit", layers, kwargs))
+    )
+    pipeline.effect_submitter = SimpleNamespace(
+        flush_after_submit=lambda **kwargs: calls.append(("effect", kwargs)) or True
+    )
+
+    assert pipeline.render_frame(
+        now=10.0,
+        dt=0.25,
+        default_fov="fov",
+        default_proj="proj",
+        default_proj_d3d="proj_d3d",
+    ) is True
+
+    assert calls[0] == ("inc", "openxr_loop", 1)
+    assert ("poll", False) in calls
+    names = [call[0] for call in calls]
+    assert names.index("timing") < names.index("sync") < names.index("input")
+    assert names.index("gate") < names.index("render") < names.index("submit") < names.index("effect")
+    render_call = next(call for call in calls if call[0] == "render")
+    assert render_call[1]["display_time"] == 123
+    assert render_call[1]["default_proj_d3d"] == "proj_d3d"
+    effect_call = next(call for call in calls if call[0] == "effect")
+    assert effect_call[1] == {"should_render": True, "screen_frame_uploaded": False}
 
 
 def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch):
@@ -1605,11 +1668,12 @@ def test_view_pose_tracker_owns_locate_cache_and_startup_screen(monkeypatch):
 
 def test_active_openxr_presenter_delegates_view_pose_tracking():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
     frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
     view_pose_tracker = (SRC / "xr_viewer" / "view_pose_tracker.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
 
-    assert "OpenXRFrameRenderer(self)" in run_body
+    assert "OpenXRFrameRenderer(viewer)" in frame_pipeline
     assert "from .view_pose_tracker import ViewPoseTracker" in frame_renderer
     assert "ViewPoseTracker(viewer)" in frame_renderer
     assert "self.view_tracker.locate_views(" in frame_renderer
@@ -1624,21 +1688,22 @@ def test_active_openxr_presenter_delegates_view_pose_tracking():
 
 
 def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
-    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
-    submit_tail = run_body.rsplit("frame_submitter.submit(", 1)[1].split(
-        "if loop_perf_log_enabled:", 1
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    submit_tail = frame_pipeline.rsplit("self.frame_submitter.submit(", 1)[1].split(
+        "if perf_log_enabled:", 1
     )[0]
 
-    assert "EffectSubmitter" in implementation
-    assert "effect_submitter.flush_after_submit(" in submit_tail
+    assert "EffectSubmitter" in frame_pipeline
+    assert "self.effect_submitter.flush_after_submit(" in submit_tail
     assert "should_render=frame_state.should_render" in submit_tail
     assert "screen_frame_uploaded=screen_frame_uploaded" in submit_tail
     assert "if not screen_frame_uploaded or" not in submit_tail
     frame_submitter_text = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
     assert "openxr_submit_frame" in frame_submitter_text
-    assert run_body.index("frame_submitter.submit(") < run_body.index("effect_submitter.flush_after_submit(")
-    assert "effect_submitter.flush_after_submit(" in submit_tail
+    assert frame_pipeline.index("self.frame_submitter.submit(") < frame_pipeline.index(
+        "self.effect_submitter.flush_after_submit("
+    )
+    assert "self.effect_submitter.flush_after_submit(" in submit_tail
 
 
 def test_frame_submitter_owns_end_frame_metrics(monkeypatch):
@@ -1731,12 +1796,12 @@ def test_effect_submitter_flushes_only_after_rendered_reused_screen_frames(monke
 
 def test_active_openxr_presenter_does_not_lazy_load_environment_assets():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
     preview_block = run_body.split("if self._preview_only_mode:", 1)[1].split("self._poll_xr_events()", 1)[0]
-    active_tail = run_body.rsplit("frame_submitter.submit(", 1)[1]
 
     assert "self._ensure_env_model_initialized(\"Preview-only\")" in preview_block
-    assert "self._ensure_env_model_initialized(\"Lazy\")" not in active_tail
+    assert "self._ensure_env_model_initialized(\"Lazy\")" not in frame_pipeline
 
 
 def test_runtime_direct_upload_failure_reuses_previous_frame_without_cpu_readback():
@@ -1859,7 +1924,9 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     render_idx = render_frame.index("self.projection_presenter.render_projection(")
     append_idx = render_frame.index("self.screen_presenter.append_frame_layers(")
     assert poll_idx < locate_idx < prepare_idx < render_idx < append_idx
-    assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in implementation
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    assert "from .openxr_frame_pipeline import OpenXRFramePipeline" in implementation
+    assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in frame_pipeline
     assert "ScreenLayerPresenter" not in implementation
     assert "ProjectionLayerPresenter" not in implementation
     assert "ViewPoseTracker" not in implementation

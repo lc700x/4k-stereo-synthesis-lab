@@ -1,0 +1,126 @@
+import time
+
+from .effect_submitter import EffectSubmitter
+from .frame_submitter import FrameSubmitter
+from .openxr_frame_gate import OpenXRFrameGate
+from .openxr_frame_input import OpenXRFrameInput
+from .openxr_frame_renderer import OpenXRFrameRenderer
+from .openxr_frame_timing import OpenXRFrameTiming
+
+
+class OpenXRFramePipeline:
+    def __init__(self, viewer):
+        self.viewer = viewer
+        self.timing = OpenXRFrameTiming(viewer)
+        self.input = OpenXRFrameInput(viewer)
+        self.frame_submitter = FrameSubmitter(viewer)
+        self.gate = OpenXRFrameGate(viewer, self.frame_submitter)
+        self.renderer = OpenXRFrameRenderer(viewer)
+        self.effect_submitter = EffectSubmitter(viewer)
+
+    def render_frame(self, *, now, dt, default_fov, default_proj, default_proj_d3d):
+        viewer = self.viewer
+        perf_log_enabled = bool(getattr(viewer, '_openxr_perf_log', False))
+        breakdown_enabled = callable(getattr(viewer, '_fps_breakdown_add_time', None))
+        trace_enabled = perf_log_enabled or breakdown_enabled
+        t0 = time.perf_counter() if trace_enabled else 0.0
+        last_mark = t0
+        marks = []
+        viewer._breakdown_inc('openxr_loop')
+
+        def mark(label):
+            nonlocal last_mark
+            if not trace_enabled:
+                return
+            t_mark = time.perf_counter()
+            elapsed_s = t_mark - last_mark
+            if perf_log_enabled:
+                marks.append((label, elapsed_s * 1000.0))
+            if breakdown_enabled:
+                viewer._breakdown_add_time(f'openxr_{label}', elapsed_s)
+            last_mark = t_mark
+
+        if viewer._session_ready_pending or not viewer._has_fresh_source_frame(now):
+            viewer._poll_source_frame(upload=False)
+            mark('poll_no_upload')
+
+        frame_state, submit_start = self.timing.begin_frame(
+            breakdown_enabled=breakdown_enabled
+        )
+        mark('wait_frame')
+        mark('begin_frame')
+
+        self.input.sync_actions()
+        mark('sync_actions')
+        controller_mark = self.input.update_controller_frame(
+            display_time=frame_state.predicted_display_time,
+            dt=dt,
+        )
+        mark('controller_pose')
+        mark(controller_mark)
+
+        composition_layers = []
+        skip_render, session_idle_timeout = self.gate.handle_ready_or_stall(
+            frame_state=frame_state,
+            now=now,
+            composition_layers=composition_layers,
+            submit_start=submit_start,
+        )
+        if skip_render:
+            mark('end_frame')
+            return False
+
+        screen_frame_uploaded = False
+        if frame_state.should_render:
+            screen_frame_uploaded, view_pose_adjusted, rendered_projection = self.renderer.render_frame(
+                composition_layers=composition_layers,
+                display_time=frame_state.predicted_display_time,
+                default_fov=default_fov,
+                default_proj=default_proj,
+                default_proj_d3d=default_proj_d3d,
+            )
+            mark('poll_upload')
+            mark('locate_views')
+            if view_pose_adjusted:
+                mark('view_pose_adjust')
+            mark('quad_update')
+            mark('render_eyes' if rendered_projection else 'render_no_layers')
+            mark('layers')
+
+        self.frame_submitter.submit(
+            composition_layers,
+            display_time=frame_state.predicted_display_time,
+            submit_start=submit_start,
+        )
+        mark('end_frame')
+        self.effect_submitter.flush_after_submit(
+            should_render=frame_state.should_render,
+            screen_frame_uploaded=screen_frame_uploaded,
+        )
+        if perf_log_enabled:
+            self._log_perf(frame_state, marks, t0)
+
+        if session_idle_timeout:
+            self.gate.enter_idle_if_needed(session_idle_timeout)
+            return False
+        return True
+
+    def _log_perf(self, frame_state, marks, t0):
+        viewer = self.viewer
+        loop_total_ms = (time.perf_counter() - t0) * 1000.0
+        loop_log_now = time.perf_counter()
+        loop_last_log = float(getattr(viewer, '_xr_loop_perf_last_log', 0.0) or 0.0)
+        if loop_total_ms < 25.0 and (loop_log_now - loop_last_log) < 2.0:
+            return
+        viewer._xr_loop_perf_last_log = loop_log_now
+        loop_parts = ' '.join(f'{label}={ms:.1f}' for label, ms in marks if ms >= 0.05)
+        print(
+            '[OpenXRViewer] loop segments '
+            f'total_ms={loop_total_ms:.1f} '
+            f'fps={float(getattr(viewer, "actual_fps", 0.0)):.1f} '
+            f'should_render={bool(getattr(frame_state, "should_render", False))} '
+            f'runtime_direct={bool(getattr(viewer, "_runtime_direct_source", False))} '
+            f'fresh={bool(viewer._has_fresh_source_frame(time.perf_counter()))} '
+            f'renderable={bool(viewer._has_renderable_source_frame())} '
+            f'{loop_parts}'
+        )

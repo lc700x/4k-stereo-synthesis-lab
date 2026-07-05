@@ -149,12 +149,7 @@ from .core_source_state import CoreSourceStateMixin
 from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
-from .effect_submitter import EffectSubmitter
-from .frame_submitter import FrameSubmitter
-from .openxr_frame_gate import OpenXRFrameGate
-from .openxr_frame_input import OpenXRFrameInput
-from .openxr_frame_renderer import OpenXRFrameRenderer
-from .openxr_frame_timing import OpenXRFrameTiming
+from .openxr_frame_pipeline import OpenXRFramePipeline
 from .filters import *
 
 class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
@@ -4378,132 +4373,17 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 time.sleep(0.01)
                 continue
 
-            loop_perf_log_enabled = bool(getattr(self, '_openxr_perf_log', False))
-            loop_breakdown_enabled = callable(getattr(self, '_fps_breakdown_add_time', None))
-            loop_trace_enabled = loop_perf_log_enabled or loop_breakdown_enabled
-            loop_t0 = time.perf_counter() if loop_trace_enabled else 0.0
-            loop_last = loop_t0
-            loop_marks = []
-            self._breakdown_inc('openxr_loop')
-
-            def _loop_mark(label):
-                nonlocal loop_last
-                if not loop_trace_enabled:
-                    return
-                t_mark = time.perf_counter()
-                elapsed_s = t_mark - loop_last
-                if loop_perf_log_enabled:
-                    loop_marks.append((label, elapsed_s * 1000.0))
-                if loop_breakdown_enabled:
-                    self._breakdown_add_time(f'openxr_{label}', elapsed_s)
-                loop_last = t_mark
-
-            # Only pre-drain while waiting for the first renderable source or
-            # session readiness. The active presenter drains latest after xrBeginFrame.
-            if self._session_ready_pending or not self._has_fresh_source_frame(now):
-                self._poll_source_frame(upload=False)
-                if loop_trace_enabled:
-                    _loop_mark('poll_no_upload')
-
-            frame_timing = getattr(self, '_openxr_frame_timing', None)
-            if frame_timing is None:
-                frame_timing = self._openxr_frame_timing = OpenXRFrameTiming(self)
-            frame_state, submit_start = frame_timing.begin_frame(
-                breakdown_enabled=loop_breakdown_enabled
-            )
-            if loop_trace_enabled:
-                _loop_mark('wait_frame')
-                _loop_mark('begin_frame')
-
-            frame_input = getattr(self, '_openxr_frame_input', None)
-            if frame_input is None:
-                frame_input = self._openxr_frame_input = OpenXRFrameInput(self)
-            frame_input.sync_actions()
-            if loop_trace_enabled:
-                _loop_mark('sync_actions')
-            controller_mark = frame_input.update_controller_frame(
-                display_time=frame_state.predicted_display_time,
-                dt=dt,
-            )
-            if loop_trace_enabled:
-                _loop_mark('controller_pose')
-                _loop_mark(controller_mark)
-
-            composition_layers = []
-            frame_submitter = getattr(self, '_frame_submitter', None)
-            if frame_submitter is None:
-                frame_submitter = self._frame_submitter = FrameSubmitter(self)
-            frame_gate = getattr(self, '_openxr_frame_gate', None)
-            if frame_gate is None:
-                frame_gate = self._openxr_frame_gate = OpenXRFrameGate(self, frame_submitter)
-
-            skip_render, session_idle_timeout = frame_gate.handle_ready_or_stall(
-                frame_state=frame_state,
+            frame_pipeline = getattr(self, '_openxr_frame_pipeline', None)
+            if frame_pipeline is None:
+                frame_pipeline = self._openxr_frame_pipeline = OpenXRFramePipeline(self)
+            update_fps = frame_pipeline.render_frame(
                 now=now,
-                composition_layers=composition_layers,
-                submit_start=submit_start,
+                dt=dt,
+                default_fov=_default_fov,
+                default_proj=_default_proj,
+                default_proj_d3d=_default_proj_d3d,
             )
-            if skip_render:
-                if loop_trace_enabled:
-                    _loop_mark('end_frame')
-                continue
-
-            screen_frame_uploaded = False
-            if frame_state.should_render:
-                frame_renderer = getattr(self, '_openxr_frame_renderer', None)
-                if frame_renderer is None:
-                    frame_renderer = OpenXRFrameRenderer(self)
-                    self._openxr_frame_renderer = frame_renderer
-                screen_frame_uploaded, view_pose_adjusted, rendered_projection = frame_renderer.render_frame(
-                    composition_layers=composition_layers,
-                    display_time=frame_state.predicted_display_time,
-                    default_fov=_default_fov,
-                    default_proj=_default_proj,
-                    default_proj_d3d=_default_proj_d3d,
-                )
-                if loop_trace_enabled:
-                    _loop_mark('poll_upload')
-                    _loop_mark('locate_views')
-                    if view_pose_adjusted:
-                        _loop_mark('view_pose_adjust')
-                    _loop_mark('quad_update')
-                    _loop_mark('render_eyes' if rendered_projection else 'render_no_layers')
-                    _loop_mark('layers')
-
-            frame_submitter.submit(
-                composition_layers,
-                display_time=frame_state.predicted_display_time,
-                submit_start=submit_start,
-            )
-            if loop_trace_enabled:
-                _loop_mark('end_frame')
-            effect_submitter = getattr(self, '_effect_submitter', None)
-            if effect_submitter is None:
-                effect_submitter = self._effect_submitter = EffectSubmitter(self)
-            effect_submitter.flush_after_submit(
-                should_render=frame_state.should_render,
-                screen_frame_uploaded=screen_frame_uploaded,
-            )
-            if loop_perf_log_enabled:
-                loop_total_ms = (time.perf_counter() - loop_t0) * 1000.0
-                loop_log_now = time.perf_counter()
-                loop_last_log = float(getattr(self, '_xr_loop_perf_last_log', 0.0) or 0.0)
-                if loop_total_ms >= 25.0 or (loop_log_now - loop_last_log) >= 2.0:
-                    self._xr_loop_perf_last_log = loop_log_now
-                    loop_parts = ' '.join(f'{label}={ms:.1f}' for label, ms in loop_marks if ms >= 0.05)
-                    print(
-                        '[OpenXRViewer] loop segments '
-                        f'total_ms={loop_total_ms:.1f} '
-                        f'fps={float(getattr(self, "actual_fps", 0.0)):.1f} '
-                        f'should_render={bool(getattr(frame_state, "should_render", False))} '
-                        f'runtime_direct={bool(getattr(self, "_runtime_direct_source", False))} '
-                        f'fresh={bool(self._has_fresh_source_frame(time.perf_counter()))} '
-                        f'renderable={bool(self._has_renderable_source_frame())} '
-                        f'{loop_parts}'
-                    )
-
-            if session_idle_timeout:
-                frame_gate.enter_idle_if_needed(session_idle_timeout)
+            if not update_fps:
                 continue
 
             # Timestamp-ring FPS: (N-1) frames / (last_ts - first_ts) -exact, O(1)

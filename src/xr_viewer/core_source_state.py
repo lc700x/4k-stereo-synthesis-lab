@@ -465,6 +465,12 @@ class CoreSourceStateMixin:
         upload_elapsed_ms = upload_elapsed * 1000.0
         if budget_ms > 0.0:
             self._openxr_screen_upload_budget_skip_armed = upload_elapsed_ms > budget_ms
+        if not self._has_renderable_source_frame():
+            self._pending_source_frame = pending_frame
+            self._breakdown_inc("openxr_screen_upload_not_renderable")
+            self._breakdown_add_time("openxr_upload", upload_elapsed)
+            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+            return False
         presented = bridge.mark_presented(pending_frame)
         self._record_screen_frame_bridge_age(bridge)
         self._record_screen_frame_source_latency(presented.source_timestamp)
@@ -520,13 +526,13 @@ class CoreSourceStateMixin:
             pass
 
     def _has_renderable_source_frame(self):
-        if self._runtime_direct_source:
+        if getattr(self, '_runtime_direct_source', False):
             if getattr(self, '_use_d3d11', False):
                 renderer = getattr(self, '_d3d11_native_renderer', None)
                 if renderer is not None and renderer.has_frame:
                     return True
-            return bool(getattr(self, '_runtime_eye_has_frame', False)) and all(self._runtime_eye_textures)
-        return self.color_tex is not None and self.depth_tex is not None
+            return bool(getattr(self, '_runtime_eye_has_frame', False)) and all(getattr(self, '_runtime_eye_textures', ()))
+        return getattr(self, 'color_tex', None) is not None and getattr(self, 'depth_tex', None) is not None
 
     def _should_show_source_border(self, now=None):
         if getattr(self, "_hard_idle_active", False):

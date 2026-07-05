@@ -4640,56 +4640,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         )
 
                     elif self._interop_mode == 'nv_dx':
-                        # NV_DX_interop2: render directly into swapchain textures
-                        nv_interop_failed = False
-                        for eye_index in range(2):
-                            swapchain = self._xr_swapchains[eye_index]
-                            img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-                            self._wait_swapchain_image(swapchain)
-                            released = False
-                            try:
-                                sc_image = self._swapchain_images[eye_index][img_index]
-                                sc_w, sc_h = self._swapchain_sizes[eye_index]
-                                view = views[eye_index] if views and views[eye_index] else None
-                                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                                proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
-
-                                mgl_fbo, raw_fbo = self._get_or_create_nv_interop_fbo(
-                                    eye_index, img_index, sc_image.texture, sc_w, sc_h,
-                                )
-                                # Lock the registered D3D11 texture for GL access
-                                _, _, dx_obj = self._nv_dx_objects[(eye_index, img_index)]
-                                _d3d_interop._wglDXLockObjectsNV(self._nv_dx_device, 1, ctypes.byref(dx_obj))
-                                try:
-                                    self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)
-                                finally:
-                                    _d3d_interop._wglDXUnlockObjectsNV(self._nv_dx_device, 1, ctypes.byref(dx_obj))
-
-                                xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                                released = True
-                                eye_layer_views.append(xr.CompositionLayerProjectionView(
-                                    pose=view.pose if view else xr.Posef(),
-                                    fov=view.fov   if view else _default_fov,
-                                    sub_image=xr.SwapchainSubImage(
-                                        swapchain=swapchain,
-                                        image_rect=xr.Rect2Di(
-                                            offset=xr.Offset2Di(x=0, y=0),
-                                            extent=xr.Extent2Di(width=sc_w, height=sc_h),
-                                        ),
-                                    ),
-                                ))
-                            except Exception as e:
-                                if not released:
-                                    try:
-                                        xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                                    except Exception:
-                                        pass
-                                self._disable_nv_interop_after_failure(e)
-                                eye_layer_views = []
-                                nv_interop_failed = True
-                                break
-                        if nv_interop_failed:
-                            pass
+                        projection_presenter = getattr(self, '_projection_layer_presenter', None)
+                        if projection_presenter is None:
+                            projection_presenter = ProjectionLayerPresenter(self)
+                            self._projection_layer_presenter = projection_presenter
+                        eye_layer_views = projection_presenter.render_nv_dx_interop(
+                            views,
+                            _default_fov,
+                            _default_proj,
+                        )
 
                     elif updated_quad_eyes:
                         self._breakdown_inc('openxr_projection_pbo_skipped_for_quad')

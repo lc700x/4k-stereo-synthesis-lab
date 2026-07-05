@@ -1486,6 +1486,15 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "def render_d3d11_native(" in projection_presenter
     assert "eye_sign * screen_disparity_uv" in projection_presenter
 
+    nv_dx_block = implementation.rsplit("elif self._interop_mode == 'nv_dx':", 1)[1].split(
+        "elif updated_quad_eyes:", 1
+    )[0]
+    assert "projection_presenter.render_nv_dx_interop(" in nv_dx_block
+    assert "_wglDXLockObjectsNV" not in nv_dx_block
+    assert "CompositionLayerProjectionView" not in nv_dx_block
+    assert "def render_nv_dx_interop(" in projection_presenter
+    assert "_wglDXLockObjectsNV" in projection_presenter
+
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin

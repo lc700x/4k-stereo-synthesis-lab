@@ -1,3 +1,5 @@
+import ctypes
+
 import glfw
 import numpy as np
 from OpenGL.GL import (
@@ -11,6 +13,7 @@ from OpenGL.GL import (
     glReadBuffer,
 )
 
+from . import d3d_interop as _d3d_interop
 from .xr_math import _fov_to_proj_mat4, _fov_to_proj_mat4_d3d, _pose_to_view_mat4
 
 try:
@@ -91,6 +94,44 @@ class ProjectionLayerPresenter:
                     pass
                 viewer._d3d11_native_renderer = None
                 viewer._texture_size = None
+                return []
+        return eye_layer_views
+
+    def render_nv_dx_interop(self, views, default_fov, default_proj):
+        viewer = self.viewer
+        eye_layer_views = []
+        for eye_index in range(2):
+            swapchain = viewer._xr_swapchains[eye_index]
+            img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
+            viewer._wait_swapchain_image(swapchain)
+            released = False
+            try:
+                sc_image = viewer._swapchain_images[eye_index][img_index]
+                sc_w, sc_h = viewer._swapchain_sizes[eye_index]
+                view = views[eye_index] if views and views[eye_index] else None
+                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
+                proj_mat = _fov_to_proj_mat4(view.fov) if view else default_proj
+
+                mgl_fbo, _raw_fbo = viewer._get_or_create_nv_interop_fbo(
+                    eye_index, img_index, sc_image.texture, sc_w, sc_h,
+                )
+                _, _, dx_obj = viewer._nv_dx_objects[(eye_index, img_index)]
+                _d3d_interop._wglDXLockObjectsNV(viewer._nv_dx_device, 1, ctypes.byref(dx_obj))
+                try:
+                    viewer._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)
+                finally:
+                    _d3d_interop._wglDXUnlockObjectsNV(viewer._nv_dx_device, 1, ctypes.byref(dx_obj))
+
+                xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                released = True
+                eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
+            except Exception as exc:
+                if not released:
+                    try:
+                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                    except Exception:
+                        pass
+                viewer._disable_nv_interop_after_failure(exc)
                 return []
         return eye_layer_views
 

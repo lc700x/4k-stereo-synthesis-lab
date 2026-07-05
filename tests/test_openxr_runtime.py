@@ -2611,6 +2611,65 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert ("openxr_quad_layer_failed", 1) in inc_calls
 
 
+def test_screen_layer_presenter_quad_failure_produces_no_screen_layer():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    viewer._update_quad_layer_swapchains = lambda force=False: [0]
+    viewer._make_quad_layer = lambda _eye_index: None
+    viewer._background_layer_renderer = SimpleNamespace(
+        make_background_layers=lambda: ([], False),
+        _frame_background_layers=[],
+        panorama_ready=lambda: False,
+        native_background_available=lambda: False,
+    )
+    viewer._keyboard_visible = False
+    viewer._keyboard_tex = None
+    viewer._aim_mat_l = None
+    viewer._aim_mat_r = None
+    viewer._grip_mat_l = None
+    viewer._grip_mat_r = None
+    viewer._border_alpha = 0.0
+    viewer._depth_osd_tex = None
+    viewer._screen_osd_tex = None
+    viewer._preset_osd_tex = None
+    viewer._seat_adjust_osd_tex = None
+    viewer._brand_osd_tex = None
+    viewer._hand_fps_visible = False
+    viewer._overlay_tex = None
+    viewer._team_fps_visible = False
+    viewer._team_status_tex = None
+    viewer._calibration_mode = False
+    viewer._fps_overlay_visible = False
+    viewer._help_tex = None
+    viewer._team_status_visible = False
+    viewer._team_help_visible = False
+    viewer._team_help_tex = None
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    presenter = ScreenLayerPresenter(viewer)
+
+    quad_layers, quad_layer_headers, updated, render_projection_layer, background_layer_headers = presenter.prepare_frame_layers(
+        screen_frame_uploaded=True
+    )
+
+    assert quad_layers == []
+    assert quad_layer_headers == []
+    assert updated == []
+    assert render_projection_layer is False
+    assert background_layer_headers == []
+    assert presenter.quad_screen_unavailable_reason() == "layer_build_failed_RuntimeError"
+    assert ("openxr_quad_layer_failed", 1) in inc_calls
+    assert ("openxr_projection_layer_skipped", 1) in inc_calls
+
+
 def test_quad_layer_failure_reason_does_not_enable_projection_screen():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
     from xr_viewer.screen_layer_presenter import ScreenLayerPresenter

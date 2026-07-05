@@ -223,6 +223,7 @@ class FPSBreakdown:
             f"d3d11_pbo={rate('openxr_d3d11_pbo_readback'):.1f} "
             f"xr_locate={avg_ms('openxr_locate_views'):.2f}ms "
             f"xr_render={avg_ms('openxr_render_eyes'):.2f}ms "
+            f"proj_skip={rate('openxr_projection_layer_skipped'):.1f} "
             f"projection_failed={rate('openxr_projection_render_failed'):.1f} "
             f"overlay_failed={rate('openxr_overlay_render_failed'):.1f} "
             f"controller_failed={rate('openxr_controller_render_failed'):.1f} "

@@ -58,6 +58,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_screen_quality_failed", 1)
     breakdown.inc("openxr_quad_layer_failed", 1)
     breakdown.inc("openxr_quad_reused_screen_frame", 2)
+    breakdown.inc("openxr_projection_layer_skipped", 2)
     breakdown.inc("openxr_projection_render_failed", 1)
     breakdown.inc("openxr_overlay_render_failed", 2)
     breakdown.inc("openxr_controller_render_failed", 3)
@@ -173,6 +174,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "xr_pred=22.00ms" in output
     assert "xr_submit=11.00ms" in output
     assert "xr_render=4.00ms" in output
+    assert "proj_skip=2.0" in output
     assert "projection_failed=1.0" in output
     assert "overlay_failed=2.0" in output
     assert "controller_failed=3.0" in output

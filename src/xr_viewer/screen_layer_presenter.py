@@ -21,8 +21,12 @@ class ScreenLayerPresenter:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')
         return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer
 
-    def append_frame_layers(self, composition_layers, *, projection_layer=None, quad_layer_headers=()):
-        if projection_layer is not None:
+    def append_frame_layers(self, composition_layers, *, projection_views=(), projection_space=None, quad_layer_headers=()):
+        if projection_views:
+            projection_layer = xr.CompositionLayerProjection(
+                space=projection_space,
+                views=projection_views,
+            )
             composition_layers.append(
                 ctypes.cast(
                     ctypes.pointer(projection_layer),

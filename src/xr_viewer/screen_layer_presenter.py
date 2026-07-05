@@ -1,5 +1,7 @@
 import ctypes
 
+from .background_presenter import BackgroundPresenter
+
 try:
     import xr
 except ImportError:
@@ -20,7 +22,10 @@ class ScreenLayerPresenter:
         if not viewer._quad_layer_screen_presentable():
             return True
         background_presenter = getattr(viewer, '_background_presenter', None)
-        if background_presenter is not None and background_presenter.projection_fallback_needed():
+        if background_presenter is None:
+            background_presenter = BackgroundPresenter(viewer)
+            viewer._background_presenter = background_presenter
+        if background_presenter.projection_fallback_needed():
             return True
         if viewer._keyboard_visible and viewer._keyboard_tex is not None:
             return True

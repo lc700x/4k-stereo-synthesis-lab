@@ -1132,6 +1132,10 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     assert viewer._quad_layer_unavailable_reason() == "inactive"
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
+    viewer._xr_quad_layer_failed = True
+    assert viewer._quad_layer_unavailable_reason() == "failed"
+    assert viewer._quad_layer_can_replace_projection_screen() is False
+
 
 def test_quad_layer_update_requires_both_eyes_for_quad_submit():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin

@@ -84,10 +84,10 @@ class CoreQuadLayerMixin:
     def _quad_layer_unavailable_reason(self):
         if not getattr(self, '_xr_quad_layer_enabled', False):
             return "disabled"
-        if not getattr(self, '_xr_quad_layer_active', False):
-            return "inactive"
         if getattr(self, '_xr_quad_layer_failed', False):
             return "failed"
+        if not getattr(self, '_xr_quad_layer_active', False):
+            return "inactive"
         if getattr(self, '_screen_curved', False):
             return "curved_screen"
         if not getattr(self, '_runtime_direct_source', False):

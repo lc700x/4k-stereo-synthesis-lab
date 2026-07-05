@@ -4935,9 +4935,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)
             if not screen_frame_uploaded or not callable(should_submit_effect_source) or should_submit_effect_source():
                 self._flush_runtime_effect_submit()
-            # Keep asset initialization off the active screen presenter path.
-            if not self._has_renderable_source_frame():
-                self._ensure_env_model_initialized("Lazy")
             if loop_perf_log_enabled:
                 loop_total_ms = (time.perf_counter() - loop_t0) * 1000.0
                 loop_log_now = time.perf_counter()

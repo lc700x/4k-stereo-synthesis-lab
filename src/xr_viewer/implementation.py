@@ -246,8 +246,17 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             0.0,
             1000.0,
         )
+        self._openxr_background_upload_budget_ms = _float_option(
+            kwargs,
+            'openxr_background_upload_budget_ms',
+            'D2S_OPENXR_BACKGROUND_UPLOAD_BUDGET_MS',
+            4.0,
+            0.0,
+            1000.0,
+        )
         self._openxr_screen_upload_budget_skip_armed = False
         self._openxr_effect_submit_budget_skip_armed = False
+        self._openxr_background_upload_budget_skip_armed = False
         self._runtime_direct_enabled = str(
             kwargs.get('openxr_runtime_direct', os.environ.get('D2S_OPENXR_RUNTIME_DIRECT', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')

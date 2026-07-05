@@ -944,6 +944,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "self._runtime_effect_submit_scheduler().latest_safe_glow()" in effects
     assert "self._runtime_effect_submit_scheduler().latest_safe_downsample(" in effects
     assert "_openxr_effect_submit_budget_skip_armed" in runtime_eye
+    assert "_openxr_background_upload_budget_skip_armed" in implementation
     assert "self._runtime_effect_result_state = pool.state" not in runtime_eye
     assert "self.state = 'idle'" in scheduler_text
     assert "self.state = 'writing'" in scheduler_text
@@ -1327,6 +1328,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_background_layer_upload",
         "openxr_background_layer_upload_failed",
         "openxr_background_upload",
+        "openxr_background_upload_budget_skip",
         "openxr_background_layer_failed",
         "openxr_effect_source_promote_reuse",
         "openxr_wall_light_mask_loaded",
@@ -1362,6 +1364,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "bg_path=layer:{rate('openxr_background_layer')" in breakdown
     assert "bg_upload={avg_ms('openxr_background_upload')" in breakdown
     assert "upload:{rate('openxr_background_layer_upload')" in breakdown
+    assert "budget_skip:{rate('openxr_background_upload_budget_skip')" in breakdown
     assert "upload_failed:{rate('openxr_background_layer_upload_failed')" in breakdown
     assert "fallback:{rate('openxr_background_projection_fallback')" in breakdown
     assert "layer_failed:{rate('openxr_background_layer_failed')" in breakdown
@@ -1376,10 +1379,12 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "D2S_OPENXR_PANORAMA_BACKGROUND" in implementation
     assert "D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS" in implementation
     assert "D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS" in implementation
+    assert "D2S_OPENXR_BACKGROUND_UPLOAD_BUDGET_MS" in implementation
     assert "'D2S_OPENXR_ASYNC_EFFECTS', '1'" in implementation
     assert "'D2S_OPENXR_PANORAMA_BACKGROUND', '1'" in implementation
     assert "'D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS',\n            4.0" in implementation
     assert "'D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS',\n            4.0" in implementation
+    assert "'D2S_OPENXR_BACKGROUND_UPLOAD_BUDGET_MS',\n            4.0" in implementation
     assert "_xr_quad_layer_enabled" not in implementation
     assert "_openxr_screen_quad_enabled" not in implementation
     assert "kwargs.get('xr_quad_layer_enabled'" not in implementation

@@ -97,7 +97,8 @@ External Unity/Blender bake or packaged panorama asset
 
 - 异步 present 是固定主路径；运行参数只允许限制预算或关闭软效果，不允许把旧同步显示器路径作为常规回退目标：
   - `D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS`：screen texture 上传预算，超预算下一帧复用上一张 screen texture。
-  - `D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS`：effect source submit 预算，超预算下一帧复用 latest safe effect texture。
+  - `D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS`：effect source submit + downsample prewarm 预算，超预算下一帧复用 latest safe effect texture。
+  - `D2S_OPENXR_BACKGROUND_UPLOAD_BUDGET_MS`：native panorama/cubemap 背景层上传预算，超预算下一帧复用旧背景或 projection fallback。
 - GUI/OpenXR config 不再暴露“回到旧显示器路径”的普通开关。
 - 在 `FPSBreakdown` 中新增指标：
   - `openxr_upload`

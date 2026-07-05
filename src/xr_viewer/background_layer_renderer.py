@@ -172,6 +172,10 @@ class BackgroundLayerRenderer:
         if tex is None:
             return False
         self.viewer._background_equirect_pending_tex = None
+        if bool(getattr(self.viewer, '_openxr_background_upload_budget_skip_armed', False)):
+            self.viewer._openxr_background_upload_budget_skip_armed = False
+            self.viewer._breakdown_inc('openxr_background_upload_budget_skip')
+            return False
         start = time.perf_counter()
         source_key = self._source_key(tex)
         try:
@@ -183,7 +187,11 @@ class BackgroundLayerRenderer:
             self.viewer._breakdown_inc('openxr_background_layer_upload_failed')
             return True
         finally:
-            self.viewer._breakdown_add_time('openxr_background_upload', time.perf_counter() - start)
+            elapsed = time.perf_counter() - start
+            self.viewer._breakdown_add_time('openxr_background_upload', elapsed)
+            budget_ms = float(getattr(self.viewer, '_openxr_background_upload_budget_ms', 0.0) or 0.0)
+            if budget_ms > 0.0:
+                self.viewer._openxr_background_upload_budget_skip_armed = (elapsed * 1000.0) > budget_ms
         return True
 
     def make_background_layers(self):

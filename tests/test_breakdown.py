@@ -69,6 +69,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_d3d11_pbo_readback", 1)
     breakdown.inc("openxr_background_layer", 1)
     breakdown.inc("openxr_background_layer_upload", 1)
+    breakdown.inc("openxr_background_upload_budget_skip", 1)
     breakdown.inc("openxr_background_layer_upload_failed", 2)
     breakdown.inc("openxr_background_projection_fallback", 2)
     breakdown.inc("openxr_background_layer_failed", 3)
@@ -196,7 +197,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "quad_unavail=missing_swapchain:1.0,not_runtime_direct:2.0" in output
     assert "background=5.00ms" in output
     assert "bg_upload=8.00ms" in output
-    assert "bg_path=layer:1.0,upload:1.0,upload_failed:2.0,fallback:2.0,layer_failed:3.0,panorama:2.0,env:1.0,env_failed:4.0,idle:3.0" in output
+    assert "bg_path=layer:1.0,upload:1.0,budget_skip:1.0,upload_failed:2.0,fallback:2.0,layer_failed:3.0,panorama:2.0,env:1.0,env_failed:4.0,idle:3.0" in output
     assert "layer_count=5.0" in output
     assert "xr_end=6.00ms" in output
     assert "rt_gpu_total=30.00ms" in output

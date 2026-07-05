@@ -237,6 +237,7 @@ class FPSBreakdown:
             f"bg_upload={avg_ms('openxr_background_upload'):.2f}ms "
             f"bg_path=layer:{rate('openxr_background_layer'):.1f},"
             f"upload:{rate('openxr_background_layer_upload'):.1f},"
+            f"budget_skip:{rate('openxr_background_upload_budget_skip'):.1f},"
             f"upload_failed:{rate('openxr_background_layer_upload_failed'):.1f},"
             f"fallback:{rate('openxr_background_projection_fallback'):.1f},"
             f"layer_failed:{rate('openxr_background_layer_failed'):.1f},"

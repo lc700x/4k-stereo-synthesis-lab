@@ -858,6 +858,29 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     assert headers == []
     assert projection_fallback is True
     assert viewer._background_equirect_pending_tex is next_tex
+
+    viewer._openxr_background_upload_budget_ms = 0.001
+    viewer._openxr_background_upload_budget_skip_armed = False
+    slow_tex = type("Tex", (), {"glo": 43, "size": (1024, 512)})()
+    viewer._background_equirect_pending_tex = slow_tex
+    uploads.clear()
+
+    def _slow_upload(value):
+        uploads.append(value)
+        import time
+        time.sleep(0.001)
+
+    monkeypatch.setattr(renderer, "_upload_equirect_texture", _slow_upload)
+    assert renderer.flush_pending_upload_after_submit() is True
+    assert viewer._openxr_background_upload_budget_skip_armed is True
+
+    skipped_tex = type("Tex", (), {"glo": 44, "size": (1024, 512)})()
+    viewer._background_equirect_pending_tex = skipped_tex
+    assert renderer.flush_pending_upload_after_submit() is False
+    assert viewer._openxr_background_upload_budget_skip_armed is False
+    assert uploads == [slow_tex]
+    assert ("openxr_background_upload_budget_skip", 1) in inc_calls
+
     viewer._panorama_texture_ready = lambda: tex
     viewer._background_equirect_pending_tex = None
     viewer._background_equirect_failed_key = None

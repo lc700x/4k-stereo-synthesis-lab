@@ -1327,7 +1327,7 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
     pre_wait = run_body.split("# Wait for the runtime to signal frame timing.", 1)[0]
     wait_to_upload = run_body.split("# Wait for the runtime to signal frame timing.", 1)[1].split(
-        "# Head-tracking pose for this frame", 1
+        "view_tracker = getattr(self, '_view_pose_tracker', None)", 1
     )[0]
 
     assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_wait
@@ -1338,6 +1338,117 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     assert wait_to_upload.index("xr.begin_frame") < wait_to_upload.index(
         "screen_frame_uploaded = self._poll_source_frame(upload=True)"
     )
+
+
+def test_view_pose_tracker_owns_locate_cache_and_startup_screen(monkeypatch):
+    monkeypatch.chdir(SRC)
+    import xr_viewer.view_pose_tracker as view_pose_tracker
+    from xr_viewer.view_pose_tracker import ViewPoseTracker
+
+    class FakeXr:
+        class ViewConfigurationType:
+            PRIMARY_STEREO = "primary"
+
+        class ViewLocateInfo:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+    locate_calls = []
+    first_views = [object(), object()]
+    second_views = [object(), object()]
+
+    def locate_views(session, info):
+        locate_calls.append((session, info.kwargs))
+        return object(), first_views if len(locate_calls) == 1 else second_views
+
+    FakeXr.locate_views = staticmethod(locate_views)
+    monkeypatch.setattr(view_pose_tracker, "xr", FakeXr)
+
+    class Viewer:
+        _xr_session = "session"
+        _xr_space = "space"
+
+        def __init__(self):
+            self._screen_eye_init = False
+            self._head_pos_w = None
+            self._head_fwd_w = None
+            self._initial_head_y = 0.0
+            self.adjust_calls = []
+            self.aim_calls = []
+            self.grip_calls = []
+            self.reset_calls = []
+
+        def _apply_profile_view_pose_to_xr_space(self, views):
+            self.adjust_calls.append(views)
+            return True
+
+        def _update_aim_poses(self, display_time):
+            self.aim_calls.append(display_time)
+
+        def _update_grip_poses(self, display_time):
+            self.grip_calls.append(display_time)
+
+        def _head_model_mat4_from_views(self, views):
+            assert views is second_views
+
+            class Matrix:
+                values = {
+                    (0, 2): -0.25,
+                    (1, 2): -0.50,
+                    (2, 2): -0.75,
+                    (0, 3): 1.5,
+                    (1, 3): 2.5,
+                    (2, 3): 3.5,
+                }
+
+                def __getitem__(self, key):
+                    return self.values[key]
+
+            return Matrix()
+
+        def _reset_screen_to_default(self, show_border=False):
+            self.reset_calls.append(show_border)
+
+    viewer = Viewer()
+    views, adjusted = ViewPoseTracker(viewer).locate_views(display_time=123)
+
+    assert views is second_views
+    assert adjusted is True
+    assert len(locate_calls) == 2
+    assert locate_calls[0][0] == "session"
+    assert locate_calls[0][1]["display_time"] == 123
+    assert locate_calls[0][1]["space"] == "space"
+    assert viewer.adjust_calls == [first_views]
+    assert viewer.aim_calls == [123]
+    assert viewer.grip_calls == [123]
+    assert viewer._last_located_views is second_views
+    assert viewer._head_pos_w == (1.5, 2.5, 3.5)
+    assert viewer._head_fwd_w == (0.25, 0.5, 0.75)
+    assert viewer._initial_head_y == 2.5
+    assert viewer.reset_calls == [False]
+    assert viewer._screen_eye_init is True
+
+
+def test_active_openxr_presenter_delegates_view_pose_tracking():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    view_pose_tracker = (SRC / "xr_viewer" / "view_pose_tracker.py").read_text(encoding="utf-8")
+    run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    frame_block = run_body.split("# Drain depth_q non-blocking", 1)[1].split(
+        "quad_update_start = time.perf_counter()", 1
+    )[0]
+
+    assert "from .view_pose_tracker import ViewPoseTracker" in implementation
+    assert "view_tracker = getattr(self, '_view_pose_tracker', None)" in frame_block
+    assert "ViewPoseTracker(self)" in frame_block
+    assert "view_tracker.locate_views(" in frame_block
+    assert "display_time=frame_state.predicted_display_time" in frame_block
+    assert "xr.locate_views(" not in frame_block
+    assert "_head_model_mat4_from_views" not in frame_block
+    assert "_reset_screen_to_default(show_border=False)" not in frame_block
+    assert "class ViewPoseTracker" in view_pose_tracker
+    assert "xr.locate_views(" in view_pose_tracker
+    assert "viewer._last_located_views = views" in view_pose_tracker
+    assert "viewer._reset_screen_to_default(show_border=False)" in view_pose_tracker
 
 
 def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
@@ -1504,7 +1615,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     frame_block = implementation.split("# Drain depth_q non-blocking", 1)[1].split(
         "frame_submitter.submit(", 1
     )[0]
-    render_tail = implementation.split("# On the first valid frame", 1)[1].split(
+    render_tail = implementation.split("view_tracker = getattr(self, '_view_pose_tracker', None)", 1)[1].split(
         "frame_submitter.submit(", 1
     )[0]
     poll_idx = frame_block.index("screen_frame_uploaded = self._poll_source_frame(upload=True)")

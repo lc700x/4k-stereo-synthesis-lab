@@ -153,6 +153,7 @@ from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
 from .projection_layer_presenter import ProjectionLayerPresenter
 from .screen_layer_presenter import ScreenLayerPresenter
+from .view_pose_tracker import ViewPoseTracker
 from .filters import *
 
 class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
@@ -4530,69 +4531,17 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 if loop_trace_enabled:
                     _loop_mark('poll_upload')
 
-                # Head-tracking pose for this frame
-                try:
-                    view_state, views = xr.locate_views(
-                        self._xr_session,
-                        xr.ViewLocateInfo(
-                            view_configuration_type=xr.ViewConfigurationType.PRIMARY_STEREO,
-                            display_time=frame_state.predicted_display_time,
-                            space=self._xr_space,
-                        ),
-                    )
-                except Exception:
-                    views = [None, None]
+                view_tracker = getattr(self, '_view_pose_tracker', None)
+                if view_tracker is None:
+                    view_tracker = ViewPoseTracker(self)
+                    self._view_pose_tracker = view_tracker
+                views, view_pose_adjusted = view_tracker.locate_views(
+                    display_time=frame_state.predicted_display_time,
+                )
                 if loop_trace_enabled:
                     _loop_mark('locate_views')
-
-                if self._apply_profile_view_pose_to_xr_space(views):
-                    try:
-                        _view_state, views = xr.locate_views(
-                            self._xr_session,
-                            xr.ViewLocateInfo(
-                                view_configuration_type=xr.ViewConfigurationType.PRIMARY_STEREO,
-                                display_time=frame_state.predicted_display_time,
-                                space=self._xr_space,
-                            ),
-                        )
-                    except Exception:
-                        views = [None, None]
-                    self._update_aim_poses(frame_state.predicted_display_time)
-                    self._update_grip_poses(frame_state.predicted_display_time)
-                    if loop_trace_enabled:
+                    if view_pose_adjusted:
                         _loop_mark('view_pose_adjust')
-
-                # Cache head pose for the next frame's input handlers (left-stick
-                # orbit pivot + keyboard anchoring). One-frame stale is imperceptible
-                # at 90 Hz and avoids needing a second xr.locate_views call.
-                if views and views[0] is not None and views[1] is not None:
-                    try:
-                        self._last_located_views = views
-                        head_mat = self._head_model_mat4_from_views(views)
-                        self._head_pos_w = (
-                            float(head_mat[0, 3]),
-                            float(head_mat[1, 3]),
-                            float(head_mat[2, 3]),
-                        )
-                        # Forward = -Z column of the head rotation matrix.
-                        self._head_fwd_w = (
-                            float(-head_mat[0, 2]),
-                            float(-head_mat[1, 2]),
-                            float(-head_mat[2, 2]),
-                        )
-                    except Exception:
-                        pass
-
-                # On the first valid frame, place the screen in front of the user's
-                # current gaze -identical to pressing Y -so startup matches reset.
-                if not self._screen_eye_init and views and views[0] is not None:
-                    try:
-                        if self._head_pos_w is not None:
-                            self._initial_head_y = float(self._head_pos_w[1])
-                    except Exception:
-                        pass
-                    self._reset_screen_to_default(show_border=False)
-                    self._screen_eye_init = True
 
                 quad_update_start = time.perf_counter()
                 screen_presenter = getattr(self, '_screen_layer_presenter', None)

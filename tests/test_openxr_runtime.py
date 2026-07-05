@@ -1449,6 +1449,7 @@ def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused():
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
     viewer._runtime_direct_source = True
+    viewer._runtime_eye_has_frame = True
     viewer._quad_swapchains = {0: object(), 1: object()}
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)

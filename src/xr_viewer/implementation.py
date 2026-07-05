@@ -4401,12 +4401,12 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     self._breakdown_add_time(f'openxr_{label}', elapsed_s)
                 loop_last = t_mark
 
-            # Keep source freshness updated even while the runtime is not yet
-            # asking us to render. Otherwise a READY session that delays
-            # should_render can be misclassified as a source stall.
-            self._poll_source_frame(upload=False)
-            if loop_trace_enabled:
-                _loop_mark('poll_no_upload')
+            # Only pre-drain while waiting for the first renderable source or
+            # session readiness. The active presenter drains latest after xrBeginFrame.
+            if self._session_ready_pending or not self._has_fresh_source_frame(now):
+                self._poll_source_frame(upload=False)
+                if loop_trace_enabled:
+                    _loop_mark('poll_no_upload')
 
             # Wait for the runtime to signal frame timing.
             xr_wait_start = time.perf_counter() if loop_breakdown_enabled else 0.0

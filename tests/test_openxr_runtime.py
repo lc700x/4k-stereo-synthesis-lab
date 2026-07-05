@@ -1171,6 +1171,23 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     assert viewer._projection_layer_needed() is True
 
 
+def test_active_openxr_presenter_drains_source_after_begin_frame():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    pre_wait = run_body.split("# Wait for the runtime to signal frame timing.", 1)[0]
+    wait_to_upload = run_body.split("# Wait for the runtime to signal frame timing.", 1)[1].split(
+        "# Head-tracking pose for this frame", 1
+    )[0]
+
+    assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_wait
+    assert "self._poll_source_frame(upload=False)" in pre_wait
+    assert "xr.begin_frame" in wait_to_upload
+    assert "screen_frame_uploaded = self._poll_source_frame(upload=True)" in wait_to_upload
+    assert wait_to_upload.index("xr.begin_frame") < wait_to_upload.index(
+        "screen_frame_uploaded = self._poll_source_frame(upload=True)"
+    )
+
+
 def test_no_renderable_openxr_frame_does_not_sleep_after_submit():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     block = implementation.split("self._breakdown_inc('openxr_no_renderable')", 1)[1].split(

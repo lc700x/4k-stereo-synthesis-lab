@@ -377,15 +377,18 @@ class CoreSourceStateMixin:
         if submitted is False:
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
             return
+        promote_ready = getattr(self, "_promote_runtime_effect_ready_texture", None)
+        if callable(promote_ready):
+            try:
+                promote_ready()
+            except Exception as exc:
+                print(f"[OpenXRViewer] Runtime effect source promote failed: {type(exc).__name__}: {exc}")
+                self._breakdown_inc("openxr_effect_source_promote_failed")
         self._pending_runtime_effect_source = None
 
     def _prewarm_runtime_effect_downsample(self):
         source_tex = getattr(self, "_runtime_effect_safe_source_tex", None)
         source_size = getattr(self, "_runtime_effect_safe_source_size", None)
-        promote_ready = getattr(self, "_promote_runtime_effect_ready_texture", None)
-        if callable(promote_ready):
-            source_tex = promote_ready()
-            source_size = getattr(self, "_runtime_effect_safe_source_size", None)
         if source_tex is None or source_size is None:
             return
         mode = str(getattr(self, "_glow_mode", "") or "").strip().lower()

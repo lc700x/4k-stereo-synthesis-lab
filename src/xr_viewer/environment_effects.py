@@ -166,24 +166,6 @@ class EnvironmentEffectsMixin:
             if getattr(self, '_screen_effect_source_cache_key', None) == cache_key:
                 self._breakdown_inc("openxr_screen_effect_source_reuse")
                 return getattr(self, '_screen_effect_source_cache_value', value)
-            promote_ready = getattr(self, '_promote_runtime_effect_ready_texture', None)
-            if callable(promote_ready):
-                try:
-                    promote_ready()
-                except Exception as exc:
-                    print(f"[OpenXRViewer] Runtime effect source promote failed: {type(exc).__name__}: {exc}")
-                    self._breakdown_inc("openxr_effect_source_promote_failed")
-            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
-            value = (
-                source_tex,
-                getattr(self, '_runtime_effect_safe_source_size', None),
-            )
-            cache_key = (
-                frame_id,
-                int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
-                int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
-                tuple(value[1]) if value[1] is not None else None,
-            )
             self._record_screen_effect_safe_age(source_tex)
             self._screen_effect_source_cache_key = cache_key
             self._screen_effect_source_cache_frame = frame_id

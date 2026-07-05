@@ -176,12 +176,12 @@ def test_environment_light_bind_failure_disables_uniform(monkeypatch):
     assert viewer._cl_uniform_frame == -5
 
 
-def test_runtime_effect_source_promote_failure_reuses_existing_safe_texture(monkeypatch):
+def test_runtime_effect_consumers_only_read_existing_safe_texture(monkeypatch):
     safe_tex = object()
     inc_calls = []
 
     def _fail_promote():
-        raise RuntimeError("promote failed")
+        raise RuntimeError("consumer should not promote")
 
     for viewer in (_make_default_viewer(monkeypatch), _make_no_room_viewer(monkeypatch)):
         viewer._frame_count = 7
@@ -206,7 +206,7 @@ def test_runtime_effect_source_promote_failure_reuses_existing_safe_texture(monk
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     assert viewer._screen_light_source_texture()[0] is safe_tex
-    assert inc_calls.count(("openxr_effect_source_promote_failed", 1)) == 3
+    assert ("openxr_effect_source_promote_failed", 1) not in inc_calls
 
 
 def test_screen_light_source_lookup_failure_reuses_safe_texture(monkeypatch):
@@ -218,7 +218,6 @@ def test_screen_light_source_lookup_failure_reuses_safe_texture(monkeypatch):
     viewer._runtime_effect_safe_source_tex = safe_tex
     viewer._runtime_effect_safe_source_size = (16, 9)
     viewer._runtime_effect_safe_source_frame_id = 7
-    viewer._promote_runtime_effect_ready_texture = lambda: None
     viewer._record_screen_effect_safe_age = lambda _source_tex: None
     viewer._cached_glow_downsample_texture = lambda *_args: (_ for _ in ()).throw(RuntimeError("cache failed"))
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
@@ -1024,12 +1023,12 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
     assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
     assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
     assert "_runtime_effect_safe_source_tex" in source_func
-    assert "_promote_runtime_effect_ready_texture" in source_func
+    assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
     assert "def _screen_effect_source_texture(self):" in base_text
     assert "_runtime_effect_safe_source_tex" in base_text
-    assert "_promote_runtime_effect_ready_texture" in base_text
+    assert "_promote_runtime_effect_ready_texture" not in base_text
     assert "_screen_effect_source_texture()" in no_room_glow
     assert "if getattr(self, '_runtime_direct_source', False):" in no_room_glow
     assert "_cached_glow_downsample_texture(source_tex, source_size)" in no_room_glow
@@ -1061,7 +1060,7 @@ def test_screen_effect_source_texture_is_cached_per_frame(monkeypatch):
 
     assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (source_tex, (1280, 720))
     assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (source_tex, (1280, 720))
-    assert viewer._promote_count == 1
+    assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
 
@@ -1093,7 +1092,7 @@ def test_screen_effect_source_cache_refreshes_when_safe_source_changes(monkeypat
     viewer._runtime_effect_safe_source_frame_id = 5
     assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (next_tex, (1280, 720))
 
-    assert viewer._promote_count == 2
+    assert viewer._promote_count == 0
     assert viewer._age_count == 2
 
 
@@ -1121,7 +1120,7 @@ def test_no_room_screen_effect_source_texture_uses_safe_runtime_source(monkeypat
 
     assert viewer._screen_effect_source_texture() == (source_tex, (640, 360))
     assert viewer._screen_effect_source_texture() == (source_tex, (640, 360))
-    assert viewer._promote_count == 1
+    assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
 
@@ -1222,7 +1221,7 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
 
     assert "_runtime_effect_safe_source_tex" in source_func
     assert "_runtime_effect_safe_source_size" in source_func
-    assert "_promote_runtime_effect_ready_texture" in source_func
+    assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_record_screen_effect_safe_age" in source_func
     assert "_prepare_glow_downsample_texture" in source_func
     assert "_prepare_glow_downsample_texture" not in runtime_direct_block
@@ -1263,7 +1262,7 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
 
     assert viewer._screen_light_source_texture() == (light_tex, (96, 54))
     assert viewer._screen_light_source_texture() == (light_tex, (96, 54))
-    assert viewer._promote_count == 1
+    assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert viewer._prepare_count == 0
     assert ("openxr_screen_light_downsample_source", 1) in inc_calls
@@ -1300,7 +1299,7 @@ def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatc
     viewer._runtime_effect_safe_source_frame_id = 4
     assert viewer._screen_light_source_texture() == (next_tex, (1920, 1080))
 
-    assert viewer._promote_count == 2
+    assert viewer._promote_count == 0
     assert viewer._age_count == 2
     assert viewer._prepare_count == 0
 
@@ -1350,6 +1349,7 @@ def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
     pipeline_text = (SRC / "stereo_runtime" / "pipeline.py").read_text(encoding="utf-8")
     core_text = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
     effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    scheduler_text = (SRC / "xr_viewer" / "effect_scheduler.py").read_text(encoding="utf-8")
     uploader_text = (SRC / "viewer" / "gl_texture_uploader.py").read_text(encoding="utf-8")
 
     assert "source_rgb: torch.Tensor | None = None" in runtime_text
@@ -1358,7 +1358,7 @@ def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
     assert "def _try_update_runtime_effect_source_texture_gpu" in core_text
     assert "CudaGlTextureUploader" in core_text
     assert "ensure_staging(self.ctx, w, h)" in core_text
-    assert "ctx.texture((w, h), 4, dtype='f1')" in core_text
+    assert "ctx.texture((w, h), 4, dtype='f1')" in scheduler_text
     gpu_upload_func = core_text.split("def _try_update_runtime_effect_source_texture_gpu", 1)[1].split("def _update_runtime_effect_source_texture", 1)[0]
     assert "torch.cuda.current_stream(device_index).synchronize()" not in gpu_upload_func
     assert "ready_event.synchronize()" not in core_text

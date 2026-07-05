@@ -2,7 +2,6 @@ import ctypes
 import logging
 import time
 
-import moderngl
 import numpy as np
 from OpenGL.GL import (
     glBindBuffer,
@@ -26,6 +25,7 @@ from OpenGL.GL import (
 from viewer.viewer import BACKEND
 from viewer.gl_texture_uploader import CudaGlTextureUploader
 from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_operation, warn_cpu_transfer
+from .effect_scheduler import AsyncEffectResultPool, EffectScheduler
 
 try:
     from viewer.viewer import CUDART_GL
@@ -34,100 +34,6 @@ except ImportError:
 
 
 LOGGER = logging.getLogger(__name__)
-
-
-class AsyncEffectResultPool:
-    def __init__(self):
-        self.staging_tex = None
-        self.staging_size = None
-        self.ready_tex = None
-        self.ready_size = None
-        self.ready_frame_id = 0
-        self.safe_tex = None
-        self.safe_size = None
-        self.spare_tex = None
-        self.spare_size = None
-        self.safe_frame_id = 0
-        self.state = 'idle'
-
-    def release(self):
-        released = set()
-        for tex in (self.staging_tex, self.ready_tex, self.safe_tex, self.spare_tex):
-            if tex is not None and id(tex) not in released:
-                released.add(id(tex))
-                try:
-                    tex.release()
-                except Exception:
-                    pass
-        self.staging_tex = None
-        self.staging_size = None
-        self.ready_tex = None
-        self.ready_size = None
-        self.ready_frame_id = 0
-        self.safe_tex = None
-        self.safe_size = None
-        self.spare_tex = None
-        self.spare_size = None
-        self.safe_frame_id = 0
-        self.state = 'idle'
-
-    def ensure_staging(self, ctx, w, h):
-        if self.staging_size == (w, h) and self.staging_tex is not None:
-            self.state = 'writing'
-            return self.staging_tex
-        if self.staging_tex is not None:
-            try:
-                self.staging_tex.release()
-            except Exception:
-                pass
-        tex = ctx.texture((w, h), 4, dtype='f1')
-        tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
-        self.staging_tex = tex
-        self.staging_size = (w, h)
-        self.state = 'writing'
-        return tex
-
-    def mark_ready(self, w, h, frame_id):
-        old_ready_tex = self.ready_tex
-        old_ready_size = self.ready_size
-        if old_ready_tex is not None and old_ready_tex is not self.staging_tex:
-            if self.spare_tex is None:
-                self.spare_tex = old_ready_tex
-                self.spare_size = old_ready_size
-            else:
-                try:
-                    old_ready_tex.release()
-                except Exception:
-                    pass
-        self.ready_tex = self.staging_tex
-        self.ready_size = (w, h)
-        self.ready_frame_id = int(frame_id or 0)
-        self.staging_tex = None
-        self.staging_size = None
-        self.state = 'ready'
-
-    def promote_ready(self):
-        if self.ready_tex is None:
-            self.state = 'safe' if self.safe_tex is not None else 'idle'
-            return False
-        old_safe_tex = self.safe_tex
-        old_safe_size = self.safe_size
-        self.safe_tex = self.ready_tex
-        self.safe_size = self.ready_size
-        self.safe_frame_id = self.ready_frame_id
-        self.ready_tex = None
-        self.ready_size = None
-        self.ready_frame_id = 0
-        self.staging_tex = self.spare_tex
-        self.staging_size = self.spare_size
-        self.spare_tex = old_safe_tex
-        self.spare_size = old_safe_size
-        self.state = 'safe'
-        return True
-
-    def publish(self, w, h, frame_id):
-        self.mark_ready(w, h, frame_id)
-        return True
 
 
 def _runtime_shader_render_width(value) -> int:
@@ -297,18 +203,23 @@ class CoreRuntimeEyeMixin:
             except Exception:
                 pass
         self._runtime_effect_source_texture_uploader = None
-        self._runtime_effect_pool().release()
+        self._runtime_effect_scheduler().release()
         self._sync_runtime_effect_pool_attrs()
 
+    def _runtime_effect_scheduler(self):
+        scheduler = getattr(self, '_runtime_effect_scheduler_obj', None)
+        if scheduler is None:
+            pool = getattr(self, '_runtime_effect_result_pool', None)
+            scheduler = EffectScheduler(pool)
+            self._runtime_effect_scheduler_obj = scheduler
+            self._runtime_effect_result_pool = scheduler.pool
+        return scheduler
+
     def _runtime_effect_pool(self):
-        pool = getattr(self, '_runtime_effect_result_pool', None)
-        if pool is None:
-            pool = AsyncEffectResultPool()
-            self._runtime_effect_result_pool = pool
-        return pool
+        return self._runtime_effect_scheduler().pool
 
     def _sync_runtime_effect_pool_attrs(self):
-        pool = self._runtime_effect_pool()
+        pool = self._runtime_effect_scheduler().pool
         self._runtime_effect_source_staging_tex = pool.staging_tex
         self._runtime_effect_source_staging_size = pool.staging_size
         self._runtime_effect_ready_source_tex = pool.ready_tex
@@ -338,27 +249,26 @@ class CoreRuntimeEyeMixin:
         )
 
     def _ensure_runtime_effect_staging_texture(self, w, h):
-        tex = self._runtime_effect_pool().ensure_staging(self.ctx, w, h)
+        tex = self._runtime_effect_scheduler().ensure_staging(self.ctx, w, h)
         self._sync_runtime_effect_pool_attrs()
         return tex
 
     def _publish_runtime_effect_staging_texture(self, w, h):
-        pool = self._runtime_effect_pool()
-        pool.publish(w, h, getattr(self, '_frame_count', 0))
+        self._runtime_effect_scheduler().publish_completed(w, h, getattr(self, '_frame_count', 0))
         self._sync_runtime_effect_pool_attrs()
         self._breakdown_inc("openxr_effect_source_ready_publish")
 
     def _promote_runtime_effect_ready_texture(self):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)
-        pool = self._runtime_effect_pool()
+        scheduler = self._runtime_effect_scheduler()
         if getattr(self, '_runtime_effect_promote_frame', -1) == frame_id:
             self._breakdown_inc("openxr_effect_source_promote_reuse")
-            return pool.safe_tex
+            return scheduler.latest_safe()[0]
         self._runtime_effect_promote_frame = frame_id
-        if pool.promote_ready():
+        if scheduler.poll_completed():
             self._sync_runtime_effect_pool_attrs()
             self._breakdown_inc("openxr_effect_source_safe_publish")
-        return pool.safe_tex
+        return scheduler.latest_safe()[0]
 
     def _try_update_runtime_effect_source_texture_gpu(self, frame, w, h):
         if not self._runtime_eye_gpu_enabled or CUDART_GL is None or BACKEND not in ("CUDA", "HIP"):

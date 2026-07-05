@@ -145,6 +145,7 @@ class OpenXRFramePipeline:
         )
         if skip_render:
             mark('end_frame')
+            self.flush_background_after_submit()
             return False
 
         screen_frame_uploaded = False
@@ -170,9 +171,7 @@ class OpenXRFramePipeline:
             submit_start=submit_start,
         )
         mark('end_frame')
-        background_renderer = getattr(viewer, '_background_layer_renderer', None)
-        if background_renderer is not None:
-            background_renderer.flush_pending_upload_after_submit()
+        self.flush_background_after_submit()
         self.effect_submitter.flush_after_submit(
             should_render=frame_state.should_render,
             screen_frame_uploaded=screen_frame_uploaded,
@@ -185,6 +184,11 @@ class OpenXRFramePipeline:
             return False
         self.record_presented_frame()
         return True
+
+    def flush_background_after_submit(self):
+        background_renderer = getattr(self.viewer, '_background_layer_renderer', None)
+        if background_renderer is not None:
+            background_renderer.flush_pending_upload_after_submit()
 
     def record_presented_frame(self):
         viewer = self.viewer

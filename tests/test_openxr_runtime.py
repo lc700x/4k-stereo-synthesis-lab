@@ -2036,6 +2036,11 @@ def test_preview_only_frame_does_not_flush_soft_effect_submit():
 
 
 def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    skip_block = frame_pipeline.split("if skip_render:", 1)[1].split("screen_frame_uploaded = False", 1)[0]
+    assert "self.flush_background_after_submit()" in skip_block
+    assert "self.effect_submitter.flush_after_submit(" not in skip_block
+
     from xr_viewer.openxr_frame_gate import OpenXRFrameGate
 
     class Submitter:

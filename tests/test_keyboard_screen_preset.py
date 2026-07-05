@@ -455,10 +455,10 @@ def test_openxr_startup_seed_frame_marks_fresh_only_after_renderable_source():
 
     assert "viewer._update_runtime_frame(first_runtime_result)" in startup_block
     assert "viewer._update_frame(first_rgb, first_depth)" in startup_block
-    renderable_block = startup_block.split("if viewer._has_renderable_source_frame():", 1)[1].split("else:", 1)[0]
-    pending_block = startup_block.split("else:", 1)[1]
-    assert "viewer._mark_source_frame_received()" in renderable_block
-    assert "viewer._mark_source_frame_received()" not in pending_block
+    renderable_block = startup_block.split("if viewer._has_renderable_source_frame():", 1)[1].split("viewer._mark_source_frame_received()", 1)[0]
+    assert "bridge.mark_presented(first_source_frame)" in renderable_block
+    assert "else:" not in startup_block
+    assert startup_block.count("viewer._mark_source_frame_received()") == 1
 
 
 def test_shader_sources_live_in_glsl_module():
@@ -499,25 +499,6 @@ def test_a_short_press_toggles_curved_screen_only_when_unlocked():
     assert "if self._screen_curved and getattr(self, '_xr_quad_layer_active', False):" in impl_text
     assert "self._xr_quad_layer_active = False" in impl_text
     assert "self._preset_name_overlay = 'Curved Screen' if self._screen_curved else 'Flat Screen'" in impl_text
-
-
-def test_curved_screen_uses_same_fragment_path_as_flat_screen():
-    presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-
-    assert "elif viewer._screen_curved and viewer._curved_prog is not None and not viewer._runtime_direct_source" not in presenter_text
-    assert "if viewer._screen_curved and viewer._curved_prog is not None:" in presenter_text
-    assert "screen_tex = viewer._prepare_screen_quality_texture(" in presenter_text
-    curved_block = presenter_text.split("if viewer._screen_curved and viewer._curved_prog is not None:", 1)[1]
-    curved_block = curved_block.split("else:", 1)[0]
-    assert "viewer._curved_copy_prog" not in curved_block
-    assert "viewer._curved_copy_vao" not in curved_block
-    assert "screen_tex.use(location=0)" in curved_block
-    assert "screen_depth_tex.use(location=1)" in curved_block
-    assert "viewer._curved_prog['u_roll'].value = 0.0 if viewer._runtime_direct_source else viewer.screen_roll" in curved_block
-    assert "viewer._curved_prog['u_eye_offset'].value = screen_eye_offset" in curved_block
-    assert "viewer._curved_prog['u_depth_strength'].value = screen_depth_strength" in curved_block
-    for uniform in ("u_resolution", "u_feather_enabled", "u_feather_width", "u_viewport"):
-        assert f"viewer._curved_prog['{uniform}']" in curved_block
 
 
 

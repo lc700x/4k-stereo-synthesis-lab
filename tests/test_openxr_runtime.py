@@ -2397,12 +2397,20 @@ def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
 
 def test_quad_layer_presented_state_resets_when_swapchains_reset():
     cleanup = (SRC / "xr_viewer" / "core_cleanup.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     opengl = (SRC / "xr_viewer" / "core_openxr_opengl.py").read_text(encoding="utf-8")
     d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
 
     assert "self._quad_swapchain_presented_eyes = set()" in cleanup
     assert "self._quad_swapchain_presented_eyes = set()" in opengl
     assert "self._quad_swapchain_presented_eyes = set()" in d3d11
+    assert "self._background_equirect_failed_key = None" in implementation
+    assert "self._background_equirect_pending_tex = None" in implementation
+    assert "self._background_equirect_failed_key = None" in cleanup
+    assert "self._background_equirect_pending_tex = None" in cleanup
+    assert cleanup.index("self._background_equirect_uploaded_key = None") < cleanup.index(
+        "self._quad_swapchain_images.clear()"
+    )
     assert cleanup.index("self._quad_swapchain_array_size.clear()") < cleanup.index(
         "self._quad_swapchain_presented_eyes = set()"
     )

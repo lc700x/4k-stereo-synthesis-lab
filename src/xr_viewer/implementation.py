@@ -580,6 +580,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._background_equirect_size = None
         self._background_equirect_fbo_cache = {}
         self._background_equirect_uploaded_key = None
+        self._background_equirect_failed_key = None
+        self._background_equirect_pending_tex = None
         self._fbo_cache = {}            # {(eye_index, image_index): (raw_id, mgl_fbo)}
         self._depth_rb_cache = {}       # {(eye_index, image_index): depth_rb}
         self._session_running = False

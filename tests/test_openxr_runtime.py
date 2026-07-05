@@ -886,7 +886,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "openxr_effect_source_reused_safe" in runtime_eye
     assert "openxr_effect_source_ready_publish" in runtime_eye
     assert "D2S_OPENXR_EFFECT_SOURCE_INTERVAL" in runtime_eye
-    assert "openxr_effect_source_interval_skip" in runtime_eye
+    assert "openxr_effect_source_interval_skip" in submitter_text
     assert "openxr_effect_submit" in runtime_eye
     assert "openxr_effect_submit_budget_skip" in runtime_eye
     assert "openxr_effect_submit_overwrite" in source_state
@@ -937,6 +937,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "publish_completed(w, h, getattr(self, '_frame_count', 0))" in publish_block
     assert "poll_completed()" not in publish_block
     assert "promote_ready_once" in flush_block
+    assert "openxr_effect_source_interval_skip" not in update_block
     assert "def _flush_runtime_effect_submit" not in source_state
     assert "self._release_runtime_effect_source_texture()" not in update_block.split(
         "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1

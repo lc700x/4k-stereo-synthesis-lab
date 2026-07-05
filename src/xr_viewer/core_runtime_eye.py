@@ -326,9 +326,6 @@ class CoreRuntimeEyeMixin:
         if frame is None:
             self._breakdown_inc("openxr_effect_source_reused_safe")
             return
-        if not self._should_submit_runtime_effect_source():
-            self._breakdown_inc("openxr_effect_source_interval_skip")
-            return
         h, w = self._runtime_eye_shape_hw(frame)
         if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):
             return

@@ -4576,10 +4576,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     # swapchain images. Legacy interop/PBO paths remain
                     # fallback-only.
 
-                    if self._quad_layer_can_replace_projection_screen():
-                        self._breakdown_inc("openxr_projection_screen_skipped")
-                    elif (
-                        self._d3d11_native_renderer is not None
+                    quad_replaces_projection_screen = self._quad_layer_can_replace_projection_screen()
+                    if (
+                        not quad_replaces_projection_screen
+                        and self._d3d11_native_renderer is not None
                         and self._d3d11_native_renderer.has_frame
                     ):
                         # Native D3D11 renderer: draw directly into OpenXR D3D11 swapchain images.

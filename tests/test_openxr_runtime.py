@@ -1044,9 +1044,10 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
         "if self._use_d3d11:", 1
     )[1]
-    assert "if self._quad_layer_can_replace_projection_screen():" in d3d11_native_block
-    assert "openxr_projection_screen_skipped" in d3d11_native_block
-    assert d3d11_native_block.index("if self._quad_layer_can_replace_projection_screen():") < d3d11_native_block.index(
+    assert "quad_replaces_projection_screen = self._quad_layer_can_replace_projection_screen()" in d3d11_native_block
+    assert "not quad_replaces_projection_screen" in d3d11_native_block
+    assert "openxr_projection_screen_skipped" not in d3d11_native_block
+    assert d3d11_native_block.index("not quad_replaces_projection_screen") < d3d11_native_block.index(
         "self._d3d11_native_renderer is not None"
     )
 

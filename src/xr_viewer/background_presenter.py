@@ -18,7 +18,12 @@ class BackgroundPresenter:
                 rendered = True
                 mgl_fbo.use()
                 glClear(GL_DEPTH_BUFFER_BIT)
-        if enabled and getattr(viewer, '_env_model_visible', False) and getattr(viewer, '_env_model_prims', None):
+        if (
+            enabled
+            and not getattr(viewer, '_panorama_background_path', None)
+            and getattr(viewer, '_env_model_visible', False)
+            and getattr(viewer, '_env_model_prims', None)
+        ):
             if eye_index == 0:
                 viewer._breakdown_inc('openxr_background_env_model')
             rendered = True

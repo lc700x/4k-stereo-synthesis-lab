@@ -478,35 +478,39 @@ def test_panorama_environment_skips_glb_initialization(monkeypatch):
 
 def test_openxr_loop_uses_fast_env_model_initializer():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    pipeline_text = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    renderer_text = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
 
     assert "def _ensure_env_model_initialized" in impl_text
-    assert "_ensure_env_model_initialized(\"Preview-only\")" in run_body
-    assert "_init_env_model()" not in run_body
+    assert "_ensure_env_model_initialized(\"Preview-only\")" in pipeline_text
+    assert "_init_env_model()" not in pipeline_text
 
-    quad_idx = run_body.index("screen_presenter.prepare_frame_layers(screen_frame_uploaded=screen_frame_uploaded)")
-    submit_idx = run_body.index("frame_submitter.submit(", quad_idx)
-    flush_idx = run_body.index("effect_submitter.flush_after_submit(", submit_idx)
+    poll_idx = renderer_text.index("viewer._poll_source_frame(upload=True)")
+    quad_idx = renderer_text.index("self.screen_presenter.prepare_frame_layers(screen_frame_uploaded=screen_frame_uploaded)")
+    projection_idx = renderer_text.index("self.projection_presenter.render_projection(")
+    submit_idx = pipeline_text.index("self.frame_submitter.submit(")
+    flush_idx = pipeline_text.index("self.effect_submitter.flush_after_submit(", submit_idx)
 
-    assert quad_idx < submit_idx < flush_idx
-    assert "_ensure_env_model_initialized(\"Lazy\")" not in run_body
+    assert poll_idx < quad_idx < projection_idx
+    assert submit_idx < flush_idx
+    assert "_ensure_env_model_initialized(\"Lazy\")" not in pipeline_text
 
 
 def test_openxr_no_fresh_but_renderable_source_continues_to_screen_present():
-    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
-    stale_block = run_body.split("if not self._has_fresh_source_frame(now):", 1)[1].split(
-        "if frame_state.should_render:", 1
+    pipeline_text = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
+    stale_block = pipeline_text.split("if viewer._session_ready_pending or not viewer._has_fresh_source_frame(now):", 1)[1].split(
+        "frame_state, submit_start = self.timing.begin_frame", 1
     )[0]
-    no_renderable_block = stale_block.split("if not self._has_renderable_source_frame():", 1)[1]
+    gate_text = (SRC / "xr_viewer" / "openxr_frame_gate.py").read_text(encoding="utf-8")
 
-    assert "self._pause_xr_output_for_source_stall()" in stale_block
-    assert "if not self._has_renderable_source_frame():" in stale_block
-    assert "frame_submitter.submit(" in no_renderable_block
-    assert "continue" in no_renderable_block
+    assert "viewer._poll_source_frame(upload=False)" in stale_block
+    assert "_pause_xr_output_for_source_stall" in source_state
+    assert "if not viewer._has_renderable_source_frame():" in gate_text
+    assert "self.frame_submitter.submit(" in gate_text
 
-    stale_idx = run_body.index("if not self._has_fresh_source_frame(now):")
-    poll_upload_idx = run_body.index("self._poll_source_frame(upload=True)")
+    stale_idx = pipeline_text.index("if viewer._session_ready_pending or not viewer._has_fresh_source_frame(now):")
+    poll_upload_idx = pipeline_text.index("self.renderer.render_frame(")
     assert stale_idx < poll_upload_idx
 
 
@@ -621,9 +625,41 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
 
     assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
     assert "draw_projection_screen = not self._quad_layer_screen_presentable()" in render_eye
-    assert "enabled=draw_projection_screen" in render_eye
-    assert "if enabled and getattr(viewer, '_env_model_visible', False)" in background_presenter
+    assert "enabled=draw_projection_screen or bool(getattr(self, '_panorama_background_path', None))" in render_eye
+    assert "and not getattr(viewer, '_panorama_background_path', None)" in background_presenter
     assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" in background_presenter
+
+
+def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._quad_layer_screen_presentable = lambda: True
+    viewer._panorama_background_path = "room.hdr"
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+    viewer._keyboard_visible = False
+    viewer._keyboard_tex = None
+    viewer._aim_mat_l = None
+    viewer._aim_mat_r = None
+    viewer._grip_mat_l = None
+    viewer._grip_mat_r = None
+    viewer._border_alpha = 0.0
+    viewer._depth_osd_tex = None
+    viewer._screen_osd_tex = None
+    viewer._preset_osd_tex = None
+    viewer._seat_adjust_osd_tex = None
+    viewer._brand_osd_tex = None
+    viewer._hand_fps_visible = False
+    viewer._overlay_tex = None
+    viewer._team_fps_visible = False
+    viewer._team_status_tex = None
+    viewer._calibration_mode = False
+    viewer._fps_overlay_visible = False
+    viewer._help_tex = None
+    viewer._team_status_visible = False
+    viewer._team_help_visible = False
+    viewer._team_help_tex = None
+
+    assert viewer._projection_layer_needed() is True
 
 
 def test_background_presenter_skips_background_when_projection_screen_is_not_used(monkeypatch):
@@ -663,12 +699,11 @@ def test_background_presenter_skips_background_when_projection_screen_is_not_use
 
 
 def test_quad_layer_build_failure_happens_before_projection_fallback_render():
-    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
 
-    quad_build_idx = run_body.index("screen_presenter.make_quad_layers(")
-    render_idx = run_body.index("self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat", quad_build_idx)
-    append_idx = run_body.index("for quad_layer_header in quad_layer_headers:", render_idx)
+    quad_build_idx = frame_renderer.index("self.screen_presenter.prepare_frame_layers(")
+    render_idx = frame_renderer.index("self.projection_presenter.render_projection(", quad_build_idx)
+    append_idx = frame_renderer.index("self.screen_presenter.append_frame_layers(", render_idx)
     presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
 
     assert "viewer._xr_quad_layer_failed = True" in presenter_text
@@ -1067,7 +1102,7 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
 
     assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
     assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
-    assert "_runtime_effect_latest_safe()" in source_func
+    assert "_runtime_effect_submit_scheduler().latest_safe_glow()" in source_func
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
@@ -1220,7 +1255,8 @@ def test_glow_downsample_cache_is_shared_across_eyes():
     assert "source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)" in key_func
     assert "_cached_glow_downsample_texture(source_tex, source_size)" in prepare_func
     assert "if getattr(self, '_runtime_direct_source', False):" in shell_func
-    assert "_cached_glow_downsample_texture(source_tex, source_size)" in shell_func
+    assert "latest_safe_downsample(" in shell_func
+    assert "_cached_glow_downsample_texture" in shell_func
     assert "else:\n            glow_tex = self._prepare_glow_downsample_texture" in shell_func
     assert "except Exception as exc:" in prepare_func
     assert "openxr_glow_downsample_failed" in prepare_func
@@ -1257,10 +1293,10 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
         "source_tex = getattr(self, 'color_tex'", 1
     )[0]
 
-    assert "_runtime_effect_latest_safe()" in source_func
+    assert "scheduler.latest_safe_light_probe()" in source_func
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_record_screen_effect_safe_age" in source_func
-    assert "_prepare_glow_downsample_texture" in source_func
+    assert "latest_safe_downsample(" in source_func
     assert "_prepare_glow_downsample_texture" not in runtime_direct_block
     assert "_cached_glow_downsample_texture" in runtime_direct_block
     assert "_glow_ds_size" in source_func

@@ -4932,7 +4932,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _loop_mark('end_frame')
             if loop_breakdown_enabled:
                 self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
-            if not screen_frame_uploaded:
+            should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)
+            if not screen_frame_uploaded or not callable(should_submit_effect_source) or should_submit_effect_source():
                 self._flush_runtime_effect_submit()
             # Keep asset initialization off the active screen presenter path.
             if not self._has_renderable_source_frame():

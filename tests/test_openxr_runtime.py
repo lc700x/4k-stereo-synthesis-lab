@@ -1495,6 +1495,16 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "def render_nv_dx_interop(" in projection_presenter
     assert "_wglDXLockObjectsNV" in projection_presenter
 
+    pbo_block = implementation.rsplit("elif updated_quad_eyes:", 1)[1].split(
+        "else:\n                    projection_presenter = getattr(self, '_projection_layer_presenter', None)", 1
+    )[0]
+    assert "openxr_projection_pbo_skipped_for_quad" in pbo_block
+    assert "_submit_pbo_readback" not in pbo_block
+    assert "_upload_pbo_to_d3d11" not in pbo_block
+    assert "def render_d3d11_pbo(" in projection_presenter
+    assert "_submit_pbo_readback" in projection_presenter
+    assert "_upload_pbo_to_d3d11" in projection_presenter
+
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin

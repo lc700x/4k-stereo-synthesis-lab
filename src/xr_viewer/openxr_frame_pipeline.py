@@ -1,5 +1,7 @@
 import time
 
+import glfw
+
 from .xr_math import _fov_to_proj_mat4, _fov_to_proj_mat4_d3d
 from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
@@ -23,6 +25,7 @@ class OpenXRFramePipeline:
         self.gate = OpenXRFrameGate(viewer, self.frame_submitter)
         self.renderer = OpenXRFrameRenderer(viewer)
         self.effect_submitter = EffectSubmitter(viewer)
+        self.last_input_t = time.perf_counter()
         self.default_fov = xr.Fovf(
             angle_left=-0.785, angle_right=0.785,
             angle_up=0.785,   angle_down=-0.785,
@@ -56,6 +59,43 @@ class OpenXRFramePipeline:
             viewer._mark_source_frame_received()
         else:
             viewer._pending_source_frame = first_source_frame
+
+    def begin_loop_frame(self):
+        viewer = self.viewer
+        now = time.perf_counter()
+        dt = now - self.last_input_t
+        self.last_input_t = now
+        viewer._frame_now = now
+        viewer._last_frame_dt = dt
+        viewer._frame_count += 1
+        viewer._publish_runtime_config()
+        glfw.poll_events()
+        viewer._poll_frosted_glow_hotkeys()
+        return now, dt
+
+    def handle_preview_only(self, now):
+        viewer = self.viewer
+        if not viewer._preview_only_mode:
+            return False
+        viewer._refresh_headset_wait_inference_timeout(now)
+        viewer._ensure_env_model_initialized("Preview-only")
+        if viewer._waiting_retry_notice_pending:
+            print(
+                f"[OpenXRViewer] Waiting for VR headset connect... "
+                f"(retry in {viewer._openxr_no_headset_retry_interval:.1f}s)"
+            )
+            viewer._waiting_retry_notice_pending = False
+        viewer._try_restore_openxr(now)
+        time.sleep(viewer._headset_wait_idle_sleep if viewer._hard_idle_active else 0.1)
+        return True
+
+    def begin_active_session_frame(self):
+        viewer = self.viewer
+        viewer._poll_xr_events()
+        if viewer._session_running:
+            return True
+        time.sleep(0.01)
+        return False
 
     def render_frame(self, *, now, dt):
         viewer = self.viewer

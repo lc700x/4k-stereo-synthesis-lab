@@ -4316,40 +4316,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             first_frame_ts=first_frame_ts,
         )
 
-        last_input_t = time.perf_counter()
-
         while (
             not glfw.window_should_close(self.window)
             and not shutdown_event.is_set()
         ):
-            now = time.perf_counter()
-            self._frame_now = now   # shared per-frame timestamp (overlays/input reuse)
-            dt = now - last_input_t
-            last_input_t = now
-            self._last_frame_dt = dt
-            self._frame_count += 1
-            self._publish_runtime_config()
-
-            glfw.poll_events()
-            self._poll_frosted_glow_hotkeys()
-            if self._preview_only_mode:
-                self._refresh_headset_wait_inference_timeout(now)
-                self._ensure_env_model_initialized("Preview-only")
-                if self._waiting_retry_notice_pending:
-                    print(
-                        f"[OpenXRViewer] Waiting for VR headset connect... "
-                        f"(retry in {self._openxr_no_headset_retry_interval:.1f}s)"
-                    )
-                    self._waiting_retry_notice_pending = False
-                self._try_restore_openxr(now)
-                time.sleep(self._headset_wait_idle_sleep if self._hard_idle_active else 0.1)
+            now, dt = frame_pipeline.begin_loop_frame()
+            if frame_pipeline.handle_preview_only(now):
                 continue
-            self._poll_xr_events()
-
-            if not self._session_running:
-                time.sleep(0.01)
+            if not frame_pipeline.begin_active_session_frame():
                 continue
-
             frame_pipeline.render_frame(now=now, dt=dt)
 
         self.cleanup()

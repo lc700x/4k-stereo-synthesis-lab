@@ -152,6 +152,7 @@ class CoreCleanupMixin:
         self._quad_swapchain_images.clear()
         self._quad_swapchain_sizes.clear()
         self._quad_swapchain_array_size.clear()
+        self._quad_swapchain_presented_eyes = set()
         self._swapchain_images.clear()
         self._swapchain_sizes.clear()
 

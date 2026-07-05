@@ -175,6 +175,7 @@ class CoreOpenXRD3D11Mixin:
 
         if self._xr_quad_layer_enabled and view_configs and self._d3d11_native_renderer is not None:
             try:
+                self._quad_swapchain_presented_eyes = set()
                 src_w, src_h = self.frame_size
                 max_w = max(int(getattr(v, 'max_image_rect_width', src_w) or src_w) for v in view_configs)
                 max_h = max(int(getattr(v, 'max_image_rect_height', src_h) or src_h) for v in view_configs)

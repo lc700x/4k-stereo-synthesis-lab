@@ -302,22 +302,29 @@ class CoreQuadLayerMixin:
         if getattr(self, '_quad_layer_pose_state_key', None) == key:
             return self._quad_layer_pose_state_value
         q = self._screen_pose_quat_xyzw()
-        cp = math.cos(self.screen_pitch)
-        sp = math.sin(self.screen_pitch)
-        sy = math.sin(self.screen_yaw)
-        cy = math.cos(self.screen_yaw)
-        normal = np.array([cp * sy, -sp, cp * cy], dtype=np.float64)
-        pos = np.array([
-            float(self.screen_pan_x),
-            float(self.screen_pan_y),
-            float(-self.screen_distance),
-        ], dtype=np.float64)
+        screen_basis = getattr(self, '_screen_basis', None)
+        if callable(screen_basis):
+            screen_height, screen_pos, _r_ax, _u_ax, normal = screen_basis()
+            pos = np.array(screen_pos, dtype=np.float64)
+            normal = np.array(normal, dtype=np.float64)
+        else:
+            screen_height = self.screen_height
+            cp = math.cos(self.screen_pitch)
+            sp = math.sin(self.screen_pitch)
+            sy = math.sin(self.screen_yaw)
+            cy = math.cos(self.screen_yaw)
+            normal = np.array([cp * sy, -sp, cp * cy], dtype=np.float64)
+            pos = np.array([
+                float(self.screen_pan_x),
+                float(self.screen_pan_y),
+                float(-self.screen_distance),
+            ], dtype=np.float64)
         if offset != 0.0:
             pos = pos - normal * offset
             if not self._xr_quad_layer_debug_logged:
                 print(f"[OpenXRViewer] Quad layer debug offset active: {offset:.3f}m toward viewer")
                 self._xr_quad_layer_debug_logged = True
-        value = (q, pos, (float(self.screen_width), float(self.screen_height)))
+        value = (q, pos, (float(self.screen_width), float(screen_height)))
         self._quad_layer_pose_state_key = key
         self._quad_layer_pose_state_value = value
         return value

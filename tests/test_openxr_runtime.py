@@ -10,6 +10,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 from xr_viewer.openxr_runtime import (
     OpenXRRuntimeCallbacks,
@@ -2620,6 +2621,47 @@ def test_quad_layer_pose_state_is_cached_per_frame():
     assert third is not first
     assert viewer.quat_calls == 2
     assert tuple(first[1]) == (0.4, 0.5, -2.0)
+
+
+def test_quad_layer_pose_state_uses_logical_screen_basis():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    class Viewer(CoreQuadLayerMixin):
+        def _ensure_screen_dimensions(self):
+            self.screen_height = 1.35
+
+        def _screen_pose_quat_xyzw(self):
+            return 0.0, 0.0, 0.0, 1.0
+
+        def _screen_basis(self):
+            self.basis_calls += 1
+            return (
+                1.25,
+                np.array([1.0, 2.0, -3.0], dtype=np.float64),
+                np.array([1.0, 0.0, 0.0], dtype=np.float64),
+                np.array([0.0, 1.0, 0.0], dtype=np.float64),
+                np.array([0.0, 0.0, 1.0], dtype=np.float64),
+            )
+
+    viewer = Viewer()
+    viewer.basis_calls = 0
+    viewer._frame_count = 1
+    viewer.screen_yaw = 0.1
+    viewer.screen_pitch = 0.2
+    viewer.screen_roll = 0.3
+    viewer.screen_pan_x = 9.0
+    viewer.screen_pan_y = 9.0
+    viewer.screen_distance = 9.0
+    viewer.screen_width = 2.5
+    viewer.screen_height = 1.35
+    viewer._xr_quad_layer_debug_offset = 0.0
+    viewer._xr_quad_layer_debug_logged = False
+
+    _quat, pos, size = viewer._quad_layer_pose_state()
+
+    assert viewer.basis_calls == 1
+    assert tuple(pos) == (1.0, 2.0, -3.0)
+    assert size == (2.5, 1.25)
 
 
 def test_quad_layer_debug_offset_defaults_to_screen_plane():

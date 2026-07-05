@@ -483,12 +483,13 @@ def test_openxr_loop_uses_fast_env_model_initializer():
     assert "_ensure_env_model_initialized(\"Preview-only\")" in run_body
     assert "_init_env_model()" not in run_body
 
-    quad_idx = run_body.index("updated_quad_eyes = self._update_quad_layer_swapchains()")
-    lazy_idx = run_body.index("_ensure_env_model_initialized(\"Lazy\")")
+    quad_idx = run_body.index("updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)")
     submit_idx = run_body.index("_submit_openxr_frame(composition_layers)", quad_idx)
     flush_idx = run_body.index("self._flush_runtime_effect_submit()", submit_idx)
+    lazy_guard_idx = run_body.index("if not self._has_renderable_source_frame():", flush_idx)
+    lazy_idx = run_body.index("_ensure_env_model_initialized(\"Lazy\")", lazy_guard_idx)
 
-    assert quad_idx < submit_idx < flush_idx < lazy_idx
+    assert quad_idx < submit_idx < flush_idx < lazy_guard_idx < lazy_idx
 
 
 def test_openxr_no_fresh_but_renderable_source_continues_to_screen_present():

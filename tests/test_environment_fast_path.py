@@ -33,6 +33,7 @@ def _set_runtime_effect_safe(viewer, tex, size, frame_id):
 
         scheduler = EffectScheduler()
         viewer._runtime_effect_scheduler = lambda: scheduler
+        viewer._runtime_effect_submit_scheduler = lambda: scheduler
         viewer._runtime_effect_latest_safe = scheduler.latest_safe
     pool = viewer._runtime_effect_scheduler().pool
     pool.safe_tex = tex
@@ -1198,7 +1199,8 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
     assert "def _screen_effect_source_texture(self):" in base_text
-    assert "_runtime_effect_latest_safe()" in base_text
+    assert "_runtime_effect_submit_scheduler().latest_safe_glow()" in base_text
+    assert "_runtime_effect_latest_safe()" not in base_text.split("def _screen_effect_source_texture", 1)[1].split("def _render_screen_background_effects", 1)[0]
     assert "_promote_runtime_effect_ready_texture" not in base_text
     assert "_screen_effect_source_texture()" in no_room_glow
     assert "if getattr(self, '_runtime_direct_source', False):" in no_room_glow

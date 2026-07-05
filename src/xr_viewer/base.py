@@ -79,7 +79,7 @@ class ScreenEffectsMixin:
     def _screen_effect_source_texture(self):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)
         if getattr(self, '_runtime_direct_source', False):
-            source_tex, source_size, source_frame_id = self._runtime_effect_latest_safe()
+            source_tex, source_size, source_frame_id = self._runtime_effect_submit_scheduler().latest_safe_glow()
             cache_key = (
                 frame_id,
                 int(source_frame_id or 0),
@@ -91,7 +91,7 @@ class ScreenEffectsMixin:
                 return getattr(self, '_screen_effect_source_cache_value', (source_tex, source_size))
             record_age = getattr(self, '_record_screen_effect_safe_age', None)
             if callable(record_age):
-                record_age(source_tex)
+                record_age(source_tex, source_frame_id)
             value = (source_tex, source_size)
             self._screen_effect_source_cache_key = cache_key
             self._screen_effect_source_cache_frame = frame_id

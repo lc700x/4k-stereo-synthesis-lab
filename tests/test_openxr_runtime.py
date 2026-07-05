@@ -559,6 +559,42 @@ def test_openxr_upload_keeps_pending_until_frame_is_renderable():
     assert "openxr_upload" in [name for name, _seconds in time_calls]
 
 
+def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
+    from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    runtime_result = SimpleNamespace(left_eye=object(), right_eye=object(), depth=object())
+    pending_frame = (runtime_result, 10.0)
+    viewer = Viewer()
+    viewer.depth_q = queue.Queue()
+    viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
+    viewer._openxr_screen_frame_bridge.latest_frame = pending_frame
+    viewer._openxr_screen_frame_bridge.latest_frame_id = 1
+    viewer._pending_source_frame = pending_frame
+    viewer._openxr_screen_upload_budget_ms = 0.0
+    viewer._openxr_screen_upload_budget_skip_armed = False
+    viewer._runtime_direct_source = True
+    viewer._runtime_eye_has_frame = True
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._sbs_ts_ring = []
+    viewer._fps_breakdown_inc = lambda name, amount=1: None
+    viewer._fps_breakdown_add_time = lambda name, seconds: None
+    viewer._fps_breakdown_add_value = lambda name, value: None
+
+    def _update_runtime_frame(_result):
+        viewer._runtime_eye_reused_previous_frame = True
+        return None
+
+    viewer._update_runtime_frame = _update_runtime_frame
+
+    assert viewer._poll_source_frame(upload=True) is False
+
+    assert viewer._pending_source_frame is pending_frame
+    assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
+
+
 def test_openxr_effect_submit_is_timed_outside_screen_upload():
     from xr_viewer.core_source_state import CoreSourceStateMixin
 

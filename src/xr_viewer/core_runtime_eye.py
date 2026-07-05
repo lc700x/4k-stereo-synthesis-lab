@@ -765,6 +765,7 @@ class CoreRuntimeEyeMixin:
         return True
 
     def _update_runtime_frame(self, runtime_result):
+        self._runtime_eye_reused_previous_frame = False
         debug_info = getattr(runtime_result, 'debug_info', {}) or {}
         output_format = getattr(runtime_result, 'output_format', None) or debug_info.get('runtime_output_format')
         if output_format == 'openxr_rgb_depth':
@@ -827,6 +828,7 @@ class CoreRuntimeEyeMixin:
             if not getattr(self, '_runtime_eye_has_frame', False):
                 self._runtime_direct_source = False
                 return None
+            self._runtime_eye_reused_previous_frame = True
         else:
             self._runtime_eye_has_frame = True
             self._log_runtime_eye_stats_once(runtime_result, upload_path='gpu_gl')

@@ -2221,7 +2221,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             proj_mat,
             vp_mat,
             eye_index=eye_index,
-            enabled=draw_projection_screen or background_presenter.projection_fallback_needed(),
+            projection_screen_enabled=draw_projection_screen,
         )
         if perf_enabled:
             _mark_perf('env')

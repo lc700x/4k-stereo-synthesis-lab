@@ -10,11 +10,12 @@ class BackgroundPresenter:
     def projection_fallback_needed(self):
         return bool(getattr(self.viewer, '_panorama_background_path', None))
 
-    def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, enabled):
+    def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, projection_screen_enabled):
         viewer = self.viewer
         start = time.perf_counter()
         rendered = False
         has_panorama = self.projection_fallback_needed()
+        enabled = bool(projection_screen_enabled or has_panorama)
         if enabled and has_panorama:
             if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):
                 if eye_index == 0:

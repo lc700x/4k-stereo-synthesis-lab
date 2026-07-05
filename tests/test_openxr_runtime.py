@@ -2017,8 +2017,10 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
         "if perf_enabled:", 1
     )[0]
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
-    assert "enabled=draw_projection_screen or background_presenter.projection_fallback_needed()" in background_gate
+    assert "projection_screen_enabled=draw_projection_screen" in background_gate
+    assert "background_presenter.projection_fallback_needed()" not in background_gate
     assert "def projection_fallback_needed" in background_presenter
+    assert "enabled = bool(projection_screen_enabled or has_panorama)" in background_presenter
     assert "if enabled and has_panorama:" in background_presenter
     layer_append_block = render_frame.split("self.screen_presenter.append_frame_layers(", 1)[1]
     assert "projection_views=eye_layer_views" in layer_append_block

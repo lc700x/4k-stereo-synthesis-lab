@@ -1159,7 +1159,7 @@ def test_effect_scheduler_owns_safe_downsample_lookup(monkeypatch):
 
     scheduler = EffectScheduler()
     staging = scheduler.submit_screen_frame(Ctx(), 8, 4)
-    downsampled = object()
+    downsampled = SimpleNamespace(size=(2, 1))
     calls = []
     scheduler.publish_completed(8, 4, 21)
     scheduler.poll_completed()
@@ -1169,7 +1169,7 @@ def test_effect_scheduler_owns_safe_downsample_lookup(monkeypatch):
     )
 
     assert calls == [(staging, (8, 4))]
-    assert result == (downsampled, None, 21)
+    assert result == (downsampled, (2, 1), 21)
 
 
 def test_effect_scheduler_downsample_lookup_rejects_prepare_callback(monkeypatch):

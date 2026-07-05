@@ -174,7 +174,7 @@ class EffectScheduler:
             return None, None, source_frame_id
         tex = cached_downsample(source_tex, source_size)
         if tex is not None:
-            return tex, None, source_frame_id
+            return tex, getattr(tex, 'size', None), source_frame_id
         return None, None, source_frame_id
 
     def latest_safe_glow(self):

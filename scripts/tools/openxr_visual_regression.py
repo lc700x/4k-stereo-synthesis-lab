@@ -19,10 +19,7 @@ def main() -> int:
     parser.add_argument("--rgb", type=Path, default=None, help="Optional source_rgb.png from D2S_OPENXR_RGB_DEPTH_DUMP_DIR.")
     parser.add_argument("--depth", type=Path, default=None, help="Optional prepared_depth.png from D2S_OPENXR_RGB_DEPTH_DUMP_DIR.")
     parser.add_argument("--out", type=Path, default=ROOT / "outputs" / "visual_regression" / "openxr_rgb_depth")
-    parser.add_argument("--ipd", type=float, default=0.064)
-    parser.add_argument("--stereo-scale", type=float, default=0.5)
-    parser.add_argument("--depth-ratio", type=float, default=2.0)
-    parser.add_argument("--shader-depth-strength", type=float, default=0.1)
+    parser.add_argument("--max-disparity-px", type=float, default=96.0)
     parser.add_argument("--convergence", type=float, default=0.0)
     parser.add_argument("--screen-roll", type=float, default=0.0)
     parser.add_argument("--shader-resolution-mode", choices=["source", "swapchain"], default="source")
@@ -31,10 +28,7 @@ def main() -> int:
     args = parser.parse_args()
 
     params = OpenXRViewerShaderParams(
-        ipd=args.ipd,
-        stereo_scale=args.stereo_scale,
-        depth_ratio=args.depth_ratio,
-        shader_depth_strength=args.shader_depth_strength,
+        max_disparity_px=args.max_disparity_px,
         convergence=args.convergence,
         screen_roll=args.screen_roll,
         shader_resolution_mode=args.shader_resolution_mode,

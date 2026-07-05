@@ -195,7 +195,7 @@ External Unity/Blender bake or packaged panorama asset
 
 验收：
 
-- 外部导出的 mono/SBS panorama 背景在转头时无明显方向错误。
+- 外部导出的 mono/SBS panorama 背景按 OpenXR view pose 正确采样和合成，无明显方向错误。
 - SBS panorama 在左右眼采样正确，不出现左右眼串图或半幅拉伸。
 - environment profile 改变后可重新加载对应 panorama/cubemap 和 mask，并热切换。
 - GLB 自动 bake 不是验收项；复杂 GLB 房间若未提供 panorama 资产，只走兼容/预览路径，不作为最终异步背景目标。

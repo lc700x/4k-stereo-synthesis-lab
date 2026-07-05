@@ -13,6 +13,17 @@ class EffectSubmitter:
         if callable(callback):
             callback(name, amount)
 
+    def _run_worker_after_submit(self):
+        if bool(getattr(self.viewer, "_openxr_effect_worker_disabled", False)):
+            self._breakdown_inc("openxr_effect_worker_disabled")
+            return
+        try:
+            self.worker.prewarm_after_submit()
+        except Exception as exc:
+            self.viewer._openxr_effect_worker_disabled = True
+            print(f"[OpenXRViewer] Runtime effect worker failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_effect_worker_failed")
+
     def flush_after_submit(self, *, should_render, screen_frame_uploaded):
         if not should_render:
             return False
@@ -63,7 +74,7 @@ class EffectSubmitter:
         if status == "skipped":
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
         elif status == "submitted":
-            self.worker.prewarm_after_submit()
+            self._run_worker_after_submit()
         budget_ms = float(getattr(viewer, "_openxr_effect_submit_budget_ms", 0.0) or 0.0)
         if budget_ms > 0.0:
             viewer._openxr_effect_submit_budget_skip_armed = ((time.perf_counter() - submit_start) * 1000.0) > budget_ms

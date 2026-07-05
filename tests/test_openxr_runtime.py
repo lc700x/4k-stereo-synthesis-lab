@@ -766,6 +766,40 @@ def test_runtime_effect_submit_flush_prewarms_downsample_after_submit():
     assert prewarm_calls == [True]
 
 
+def test_runtime_effect_worker_failure_does_not_escape_submitter():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_submitter import EffectSubmitter
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    class Worker:
+        def __init__(self):
+            self.calls = 0
+
+        def prewarm_after_submit(self):
+            self.calls += 1
+            raise RuntimeError("worker failed")
+
+    viewer = Viewer()
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._runtime_effect_submit_scheduler().queue_source(object())
+    viewer._submit_runtime_effect_source_texture = lambda _value: None
+    submitter = EffectSubmitter(viewer)
+    worker = Worker()
+    submitter.worker = worker
+
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    assert viewer._openxr_effect_worker_disabled is True
+    assert ("openxr_effect_worker_failed", 1) in inc_calls
+
+    viewer._runtime_effect_submit_scheduler().queue_source(object())
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    assert worker.calls == 1
+    assert ("openxr_effect_worker_disabled", 1) in inc_calls
+
+
 def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_worker import EffectWorker
@@ -1010,6 +1044,9 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "openxr_effect_source_safe_publish" in submitter_text
     assert "class EffectWorker" in worker_text
     assert "prewarm_after_submit" in submitter_text
+    assert "_run_worker_after_submit" in submitter_text
+    assert "openxr_effect_worker_failed" in submitter_text
+    assert "_openxr_effect_worker_disabled" in submitter_text
     assert "D2S_OPENXR_EFFECT_WORKER_INTERVAL" in worker_text
     assert "openxr_effect_worker_interval_skip" in worker_text
     assert "_prewarm_runtime_effect_downsample" not in source_state

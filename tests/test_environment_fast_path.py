@@ -803,11 +803,34 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     assert any(name == "openxr_background_upload" for name, _seconds in time_calls)
     assert ("openxr_background_layer", 1) in inc_calls
 
-    viewer._background_equirect_pending_tex = tex
+    fail_tex = type("Tex", (), {"glo": 41, "size": (1024, 512)})()
+    viewer._panorama_texture_ready = lambda: fail_tex
+    viewer._background_equirect_pending_tex = fail_tex
     monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda _value: (_ for _ in ()).throw(RuntimeError("upload failed")))
     assert renderer.flush_pending_upload_after_submit() is True
     assert viewer._background_equirect_pending_tex is None
     assert ("openxr_background_layer_upload_failed", 1) in inc_calls
+    failed_key = renderer._source_key(fail_tex)
+    assert viewer._background_equirect_failed_key == failed_key
+
+    headers, projection_fallback = renderer.make_background_layers()
+
+    assert headers == []
+    assert projection_fallback is True
+    assert viewer._background_equirect_pending_tex is None
+    assert ("openxr_background_layer_upload_suppressed", 1) in inc_calls
+
+    next_tex = type("Tex", (), {"glo": 42, "size": (1024, 512)})()
+    viewer._panorama_texture_ready = lambda: next_tex
+    headers, projection_fallback = renderer.make_background_layers()
+
+    assert headers == []
+    assert projection_fallback is True
+    assert viewer._background_equirect_pending_tex is next_tex
+    viewer._panorama_texture_ready = lambda: tex
+    viewer._background_equirect_pending_tex = None
+    viewer._background_equirect_failed_key = None
+    viewer._background_equirect_uploaded_key = renderer._source_key(tex)
 
     viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 1, (0.5, 0.5), (0.25, 0.25))
     renderer = BackgroundLayerRenderer(viewer)

@@ -153,6 +153,9 @@ class BackgroundLayerRenderer:
             return None
         source_key = self._source_key(tex)
         if self.viewer._background_equirect_uploaded_key != source_key:
+            if getattr(self.viewer, '_background_equirect_failed_key', None) == source_key:
+                self.viewer._breakdown_inc('openxr_background_layer_upload_suppressed')
+                return None
             self.viewer._background_equirect_pending_tex = tex
             return None
         width, height = self.viewer._background_equirect_size
@@ -170,10 +173,13 @@ class BackgroundLayerRenderer:
             return False
         self.viewer._background_equirect_pending_tex = None
         start = time.perf_counter()
+        source_key = self._source_key(tex)
         try:
             self._upload_equirect_texture(tex)
+            self.viewer._background_equirect_failed_key = None
         except Exception as exc:
             print(f"[OpenXRViewer] Background equirect upload failed: {type(exc).__name__}: {exc}")
+            self.viewer._background_equirect_failed_key = source_key
             self.viewer._breakdown_inc('openxr_background_layer_upload_failed')
             return True
         finally:

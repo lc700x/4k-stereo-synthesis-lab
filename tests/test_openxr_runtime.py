@@ -909,7 +909,7 @@ def test_effect_worker_interval_allows_due_downsample_publish():
     assert scheduler.latest_safe_downsample() == (downsampled, (32, 18), 6)
 
 
-def test_effect_worker_publishes_light_probe_when_screen_light_needs_it():
+def test_effect_worker_publishes_light_probe_without_polluting_glow_downsample():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_worker import EffectWorker
 
@@ -932,7 +932,7 @@ def test_effect_worker_publishes_light_probe_when_screen_light_needs_it():
 
     EffectWorker(viewer).prewarm_after_submit()
 
-    assert scheduler.latest_safe_downsample() == (downsampled, (32, 18), 6)
+    assert scheduler.latest_safe_downsample() == (None, None, 6)
     assert scheduler.latest_safe_light_probe() == (downsampled, (32, 18), 6)
 
 

@@ -60,7 +60,8 @@ class EffectWorker:
         viewer._runtime_effect_downsample_failed_key = None
         if tex is not None:
             size = getattr(tex, 'size', None)
-            scheduler.publish_downsample(tex, size, source_frame_id)
+            if glow_needs_downsample:
+                scheduler.publish_downsample(tex, size, source_frame_id)
             if light_needs_downsample:
                 scheduler.publish_light_probe(tex, size, source_frame_id)
             viewer._breakdown_inc("openxr_effect_downsample_prewarm")

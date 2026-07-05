@@ -1205,15 +1205,20 @@ def test_runtime_direct_upload_failure_reuses_previous_frame_without_cpu_readbac
     assert "_runtime_eye_has_frame" in renderable_block
 
 
-def test_no_renderable_openxr_frame_does_not_sleep_after_submit():
+def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    block = implementation.split("self._breakdown_inc('openxr_no_renderable')", 1)[1].split(
+    session_ready_idle = implementation.split("if self._session_ready_pending:", 1)[1].split(
+        "if not self._has_fresh_source_frame(now):", 1
+    )[0]
+    no_renderable = implementation.split("self._breakdown_inc('openxr_no_renderable')", 1)[1].split(
         "if frame_state.should_render:", 1
     )[0]
 
-    assert "_submit_openxr_frame(composition_layers)" in block
-    assert "self._flush_runtime_effect_submit()" in block
-    assert "time.sleep" not in block
+    assert "_submit_openxr_frame(composition_layers)" in session_ready_idle
+    assert "_submit_openxr_frame(composition_layers)" in no_renderable
+    assert "self._flush_runtime_effect_submit()" not in session_ready_idle
+    assert "self._flush_runtime_effect_submit()" not in no_renderable
+    assert "time.sleep" not in no_renderable
 
 
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
@@ -1376,6 +1381,7 @@ def test_quad_layer_update_requires_both_eyes_for_quad_submit():
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
     viewer._runtime_direct_source = True
+    viewer._runtime_eye_has_frame = True
     viewer._quad_swapchains = {0: object(), 1: object()}
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)

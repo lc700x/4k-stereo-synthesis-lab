@@ -4510,7 +4510,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         _loop_mark('end_frame')
                     if loop_breakdown_enabled:
                         self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
-                    self._flush_runtime_effect_submit()
                     if session_idle_timeout:
                         if not self._hard_idle_active:
                             print(
@@ -4533,7 +4532,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         _loop_mark('end_frame')
                     if loop_breakdown_enabled:
                         self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
-                    self._flush_runtime_effect_submit()
                     continue
 
             screen_frame_uploaded = False

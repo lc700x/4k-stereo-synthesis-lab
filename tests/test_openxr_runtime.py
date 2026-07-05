@@ -2660,6 +2660,8 @@ def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
     assert "self._quad_swapchains[eye_index] = swapchain" in d3d11
     assert "Quad layer D3D11 swapchains" in d3d11
     assert "and self._d3d11_native_renderer is not None" in d3d11
+    assert "native path feeds runtime eyes into Quad layer D3D11 swapchains" in d3d11
+    assert "display body never returns" in d3d11
     assert "renderer.has_frame and renderer.runtime_eye_size is not None" in core_quad
     assert "source_tex.render_runtime_eye(sc_image.texture, quad_w, quad_h, eye_index" in core_quad
 

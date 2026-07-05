@@ -24,8 +24,8 @@ class CoreOpenXRD3D11Mixin:
     def _init_openxr_d3d11(self, quiet=False):
         """Create or resume an OpenXR session backed by a D3D11 device.
 
-        The native path renders directly into OpenXR D3D11 swapchain images.
-        NV_DX interop is only for projection overlays; without it projection is
+        The native path feeds runtime eyes into Quad layer D3D11 swapchains.
+        Projection overlays use NV_DX interop only; without it projection is
         skipped instead of reintroducing D3D11 PBO readback.
         """
         if self._xr_backend not in (None, 'd3d11'):
@@ -167,8 +167,9 @@ class CoreOpenXRD3D11Mixin:
             self._swapchain_images[eye_index] = images
             self._swapchain_sizes[eye_index]  = (sc_w, sc_h)
 
-        # 9. Prefer native D3D11 rendering. It avoids OpenGL -> D3D11 cross-API
-        # transfer entirely; projection overlay uses NV_DX interop or is skipped.
+        # 9. Prefer native D3D11 for runtime eye -> Quad layer upload. Projection
+        # overlays use NV_DX interop or are skipped; display body never returns
+        # to a projection swapchain path.
         if self._d3d11_native_requested:
             try:
                 from .d3d11_native_renderer import D3D11NativeRenderer

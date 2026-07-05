@@ -2122,8 +2122,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             return True
         if getattr(self, '_panorama_background_path', None):
             return True
-        if getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', None):
-            return True
         if self._keyboard_visible and self._keyboard_tex is not None:
             return True
         if self._aim_mat_l is not None or self._aim_mat_r is not None:

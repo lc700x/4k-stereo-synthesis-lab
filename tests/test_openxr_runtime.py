@@ -1166,6 +1166,12 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
 
     assert viewer._projection_layer_needed() is False
 
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+    assert viewer._projection_layer_needed() is False
+    viewer._env_model_visible = False
+    viewer._env_model_prims = []
+
     viewer._preview_active = False
     assert viewer._projection_layer_needed() is False
 

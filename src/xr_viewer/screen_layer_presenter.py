@@ -108,6 +108,14 @@ class ScreenLayerPresenter:
             return None
         return self.viewer._quad_layer_unavailable_reason()
 
+    def projection_screen_source_ready(self, eye_index):
+        viewer = self.viewer
+        if not self.projection_screen_needed():
+            return True
+        if viewer._runtime_direct_source:
+            return viewer._runtime_eye_textures[eye_index] is not None
+        return getattr(viewer, 'color_tex', None) is not None and getattr(viewer, 'depth_tex', None) is not None
+
     def projection_layer_needed(self):
         viewer = self.viewer
         if self.projection_screen_needed():
@@ -152,6 +160,9 @@ class ScreenLayerPresenter:
         self._frame_quad_layers = quad_layers
         self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()
         self.viewer._openxr_projection_screen_unavailable_reason = self.projection_screen_unavailable_reason()
+        self.viewer._openxr_projection_screen_source_ready = tuple(
+            self.projection_screen_source_ready(eye_index) for eye_index in range(2)
+        )
         render_projection_layer = self.projection_layer_needed()
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')

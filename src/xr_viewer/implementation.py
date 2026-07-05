@@ -2184,13 +2184,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         draw_projection_screen = bool(getattr(self, '_openxr_draw_projection_screen', True))
         quad_unavailable_reason = getattr(self, '_openxr_projection_screen_unavailable_reason', None) or 'unknown'
         if draw_projection_screen:
-            if self._runtime_direct_source:
-                if self._runtime_eye_textures[eye_index] is None:
-                    if perf_enabled:
-                        _mark_perf('no_source')
-                    self.ctx.screen.use()
-                    return
-            elif self.color_tex is None or self.depth_tex is None:
+            source_ready = getattr(self, '_openxr_projection_screen_source_ready', None)
+            if source_ready is None:
+                source_ready = tuple(
+                    self._runtime_eye_textures[i] is not None for i in range(2)
+                ) if self._runtime_direct_source else (
+                    self.color_tex is not None and self.depth_tex is not None,
+                    self.color_tex is not None and self.depth_tex is not None,
+                )
+            if not source_ready[eye_index]:
                 if perf_enabled:
                     _mark_perf('no_source')
                 self.ctx.screen.use()

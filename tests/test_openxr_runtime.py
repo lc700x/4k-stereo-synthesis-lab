@@ -2010,7 +2010,9 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()" in screen_presenter_text
     source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
     assert "if draw_projection_screen:" in source_gate
-    assert "self._runtime_eye_textures[eye_index] is None" in source_gate
+    assert "_openxr_projection_screen_source_ready" in source_gate
+    assert "self._runtime_eye_textures[eye_index] is None" not in source_gate
+    assert "self.viewer._openxr_projection_screen_source_ready" in screen_presenter_text
     background_gate = render_eye_block.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1
     )[0]
@@ -2289,6 +2291,10 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     viewer._team_status_visible = False
     viewer._team_help_visible = False
     viewer._team_help_tex = None
+    viewer._runtime_direct_source = True
+    viewer._runtime_eye_textures = [object(), None]
+    viewer.color_tex = object()
+    viewer.depth_tex = object()
 
     left_layer = ctypes.c_int(1)
     right_layer = ctypes.c_int(2)
@@ -2309,6 +2315,8 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert len(quad_layer_headers) == 2
     assert updated == [0, 1]
     assert render_projection_layer is False
+    assert viewer._openxr_draw_projection_screen is False
+    assert viewer._openxr_projection_screen_source_ready == (True, True)
     assert ("openxr_projection_layer_skipped", 1) in inc_calls
     assert viewer._xr_quad_layer_active is True
     assert viewer._xr_quad_layer_failed is False
@@ -2326,6 +2334,15 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert len(composition_layers) == 3
     assert composition_layers[1:] == quad_layer_headers
     assert presenter._frame_projection_layer is not None
+
+    viewer.render_projection_layer = True
+    assert presenter.projection_screen_source_ready(0) is True
+    assert presenter.projection_screen_source_ready(1) is False
+    viewer._runtime_direct_source = False
+    assert presenter.projection_screen_source_ready(0) is True
+    viewer.depth_tex = None
+    assert presenter.projection_screen_source_ready(0) is False
+    viewer.render_projection_layer = False
 
     viewer._make_quad_layer = lambda _eye_index: None
     quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])

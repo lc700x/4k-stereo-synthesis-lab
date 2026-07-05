@@ -684,7 +684,24 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     from xr_viewer.background_layer_renderer import BackgroundLayerRenderer
     from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
-    monkeypatch.setattr(layer_module.xr, "CompositionLayerBaseHeader", ctypes.c_int)
+    class _FakeLayer(ctypes.Structure):
+        _fields_ = [("dummy", ctypes.c_int)]
+
+        def __init__(self, **kwargs):
+            super().__init__(7)
+            self.kwargs = kwargs
+
+    class _FakeXR:
+        CompositionLayerBaseHeader = ctypes.c_int
+        EyeVisibility = type("EyeVisibility", (), {"BOTH": "both"})
+        Posef = staticmethod(lambda: "pose")
+        Offset2Di = staticmethod(lambda **kwargs: kwargs)
+        Extent2Di = staticmethod(lambda **kwargs: kwargs)
+        Rect2Di = staticmethod(lambda **kwargs: kwargs)
+        SwapchainSubImage = staticmethod(lambda **kwargs: kwargs)
+        CompositionLayerEquirect2KHR = _FakeLayer
+
+    monkeypatch.setattr(layer_module, "xr", _FakeXR)
 
     class Viewer:
         pass
@@ -701,15 +718,26 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     assert projection_fallback is True
     assert ("openxr_background_projection_fallback", 1) in inc_calls
 
-    background_layer = ctypes.c_int(7)
+    tex = object()
+    viewer._panorama_texture_ready = lambda: tex
     viewer._openxr_equirect_background_supported = True
-    viewer._make_equirect_background_layer = lambda: background_layer
+    viewer._background_equirect_swapchain = "swapchain"
+    viewer._background_equirect_size = (1024, 512)
+    viewer._xr_space = "space"
     renderer = BackgroundLayerRenderer(viewer)
+    uploads = []
+    monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda value: uploads.append(value))
     headers, projection_fallback = renderer.make_background_layers()
 
     assert len(headers) == 1
     assert projection_fallback is False
-    assert renderer._frame_background_layers == [background_layer]
+    assert renderer._frame_background_layers[0].dummy == 7
+    assert renderer._frame_background_layers[0].kwargs["sub_image"]["swapchain"] == "swapchain"
+    assert renderer._frame_background_layers[0].kwargs["sub_image"]["image_rect"]["extent"] == {
+        "width": 1024,
+        "height": 512,
+    }
+    assert uploads == [tex]
     assert ("openxr_background_layer", 1) in inc_calls
 
     presenter = ScreenLayerPresenter(viewer)

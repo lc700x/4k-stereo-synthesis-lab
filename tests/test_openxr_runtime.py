@@ -191,6 +191,24 @@ def test_openxr_frame_pipeline_seeds_screen_bridge_with_renderable_bootstrap_fra
     )
 
 
+def test_openxr_optional_extensions_filters_runtime_extensions(monkeypatch):
+    import xr_viewer.implementation_support as support
+
+    fake_xr = SimpleNamespace(
+        enumerate_instance_extension_properties=lambda: [
+            SimpleNamespace(extension_name=b"XR_KHR_composition_layer_equirect2"),
+            SimpleNamespace(extension_name="XR_UNUSED"),
+        ]
+    )
+    monkeypatch.setattr(support, "xr", fake_xr)
+
+    assert support._openxr_optional_extensions(
+        "XR_KHR_composition_layer_equirect2",
+        "XR_MISSING",
+        None,
+    ) == ["XR_KHR_composition_layer_equirect2"]
+
+
 def test_run_openxr_mode_bootstraps_without_waiting_for_first_runtime_frame(monkeypatch):
     calls = []
     callback_calls = []
@@ -1208,6 +1226,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_background_idle",
         "openxr_background_projection_fallback",
         "openxr_background_layer",
+        "openxr_background_layer_upload",
         "openxr_background_layer_failed",
         "openxr_effect_source_promote_reuse",
         "openxr_wall_light_mask_loaded",
@@ -1241,6 +1260,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "screen_quality_failed={rate('openxr_screen_quality_failed')" in breakdown
     assert "fx_ds_failed={rate('openxr_glow_downsample_failed')" in breakdown
     assert "bg_path=layer:{rate('openxr_background_layer')" in breakdown
+    assert "upload:{rate('openxr_background_layer_upload')" in breakdown
     assert "fallback:{rate('openxr_background_projection_fallback')" in breakdown
     assert "layer_failed:{rate('openxr_background_layer_failed')" in breakdown
     assert "panorama:{rate('openxr_background_panorama')" in breakdown

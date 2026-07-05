@@ -15,7 +15,7 @@ from .d3d_interop import (
     _DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
     _create_d3d11_device,
 )
-from .implementation_support import _openxr_app_api_version
+from .implementation_support import _openxr_app_api_version, _openxr_optional_extensions
 
 
 class CoreOpenXRD3D11Mixin:
@@ -38,9 +38,17 @@ class CoreOpenXRD3D11Mixin:
                 engine_version=1,
                 api_version=_openxr_app_api_version(),
             )
+            enabled_extensions = [xr.KHR_D3D11_ENABLE_EXTENSION_NAME]
+            enabled_extensions += _openxr_optional_extensions(
+                getattr(xr, 'KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME', None),
+            )
+            self._openxr_equirect_background_supported = (
+                getattr(xr, 'KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME', None) in enabled_extensions
+                and hasattr(xr, 'CompositionLayerEquirect2KHR')
+            )
             create_info = xr.InstanceCreateInfo(
                 application_info=app_info,
-                enabled_extension_names=[xr.KHR_D3D11_ENABLE_EXTENSION_NAME],
+                enabled_extension_names=enabled_extensions,
             )
             self._xr_instance = xr.create_instance(create_info)
             self._xr_backend = 'd3d11'

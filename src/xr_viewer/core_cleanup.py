@@ -69,6 +69,21 @@ class CoreCleanupMixin:
                 pass
         self._quad_fbo_cache.clear()
 
+        background_raw_ids = []
+        for mgl_fbo, raw_id, _w, _h in getattr(self, '_background_equirect_fbo_cache', {}).values():
+            try:
+                mgl_fbo.release()
+            except Exception:
+                pass
+            background_raw_ids.append(raw_id)
+        if background_raw_ids:
+            try:
+                glDeleteFramebuffers(len(background_raw_ids), background_raw_ids)
+            except Exception:
+                pass
+        if hasattr(self, '_background_equirect_fbo_cache'):
+            self._background_equirect_fbo_cache.clear()
+
         depth_rbs = list(self._depth_rb_cache.values())
         if depth_rbs:
             try:
@@ -149,6 +164,15 @@ class CoreCleanupMixin:
             except Exception:
                 pass
         self._quad_swapchains.clear()
+        if getattr(self, '_background_equirect_swapchain', None) is not None:
+            try:
+                xr.destroy_swapchain(self._background_equirect_swapchain)
+            except Exception:
+                pass
+        self._background_equirect_swapchain = None
+        self._background_equirect_images = []
+        self._background_equirect_size = None
+        self._background_equirect_uploaded_key = None
         self._quad_swapchain_images.clear()
         self._quad_swapchain_sizes.clear()
         self._quad_swapchain_array_size.clear()

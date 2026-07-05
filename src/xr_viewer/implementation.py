@@ -581,6 +581,12 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._quad_swapchain_sizes = {}
         self._quad_swapchain_array_size = {}
         self._quad_fbo_cache = {}
+        self._openxr_equirect_background_supported = False
+        self._background_equirect_swapchain = None
+        self._background_equirect_images = []
+        self._background_equirect_size = None
+        self._background_equirect_fbo_cache = {}
+        self._background_equirect_uploaded_key = None
         self._fbo_cache = {}            # {(eye_index, image_index): (raw_id, mgl_fbo)}
         self._depth_rb_cache = {}       # {(eye_index, image_index): depth_rb}
         self._session_running = False
@@ -4235,7 +4241,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             except Exception:
                 pass
         self._xr_swapchains.clear()
-
         for space_attr in ("_aim_space_l", "_aim_space_r", "_grip_space_l", "_grip_space_r", "_xr_space"):
             sp = getattr(self, space_attr, None)
             if sp:

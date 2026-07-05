@@ -10,7 +10,7 @@ try:
 except ImportError:
     xr = None
 
-from .implementation_support import _openxr_app_api_version
+from .implementation_support import _openxr_app_api_version, _openxr_optional_extensions
 
 _GL_SRGB8_ALPHA8 = 0x8C43
 
@@ -30,9 +30,17 @@ class CoreOpenXROpenGLMixin:
                 engine_version=1,
                 api_version=_openxr_app_api_version(),
             )
+            enabled_extensions = [xr.KHR_OPENGL_ENABLE_EXTENSION_NAME]
+            enabled_extensions += _openxr_optional_extensions(
+                getattr(xr, 'KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME', None),
+            )
+            self._openxr_equirect_background_supported = (
+                getattr(xr, 'KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME', None) in enabled_extensions
+                and hasattr(xr, 'CompositionLayerEquirect2KHR')
+            )
             create_info = xr.InstanceCreateInfo(
                 application_info=app_info,
-                enabled_extension_names=[xr.KHR_OPENGL_ENABLE_EXTENSION_NAME],
+                enabled_extension_names=enabled_extensions,
             )
             self._xr_instance = xr.create_instance(create_info)
             self._xr_backend = 'opengl'
@@ -132,6 +140,39 @@ class CoreOpenXROpenGLMixin:
             self._xr_swapchains[eye_index] = swapchain
             self._swapchain_images[eye_index] = images
             self._swapchain_sizes[eye_index] = (sc_w, sc_h)
+
+        if self._openxr_equirect_background_supported and not getattr(self, '_use_d3d11', False):
+            try:
+                pano_tex = getattr(self, '_panorama_tex', None)
+                pano_size = getattr(pano_tex, 'size', None) or (4096, 2048)
+                pano_w = max(16, int(pano_size[0])) & ~1
+                pano_h = max(16, int(pano_size[1])) & ~1
+                sc_info = xr.SwapchainCreateInfo(
+                    usage_flags=(
+                        xr.SwapchainUsageFlags.COLOR_ATTACHMENT_BIT |
+                        xr.SwapchainUsageFlags.SAMPLED_BIT
+                    ),
+                    format=_GL_SRGB8_ALPHA8,
+                    sample_count=1,
+                    width=pano_w,
+                    height=pano_h,
+                    face_count=1,
+                    array_size=1,
+                    mip_count=1,
+                )
+                self._background_equirect_swapchain = xr.create_swapchain(self._xr_session, sc_info)
+                self._background_equirect_images = xr.enumerate_swapchain_images(
+                    self._background_equirect_swapchain,
+                    xr.SwapchainImageOpenGLKHR,
+                )
+                self._background_equirect_size = (pano_w, pano_h)
+                print(f"[OpenXRViewer] Equirect background swapchain: {pano_w}x{pano_h} active=True")
+            except Exception as exc:
+                self._openxr_equirect_background_supported = False
+                self._background_equirect_swapchain = None
+                self._background_equirect_images = []
+                self._background_equirect_size = None
+                print(f"[OpenXRViewer] Equirect background layer unavailable: {type(exc).__name__}: {exc}")
 
         if self._xr_quad_layer_enabled and view_configs:
             try:

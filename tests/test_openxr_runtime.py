@@ -1180,7 +1180,10 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     viewer._aim_mat_l = None
 
     viewer._panorama_background_path = "room.hdr"
+    assert viewer._projection_layer_needed() is False
+    viewer._aim_mat_l = object()
     assert viewer._projection_layer_needed() is True
+    viewer._aim_mat_l = None
     viewer._panorama_background_path = None
 
     viewer._quad_layer_unavailable_reason = lambda: "inactive"

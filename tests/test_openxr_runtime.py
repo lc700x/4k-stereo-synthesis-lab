@@ -1921,6 +1921,7 @@ def test_effect_submitter_flushes_after_rendered_frames(monkeypatch):
             self.allowed = True
             self.scheduler = EffectScheduler()
             self.submitted = []
+            self.inc_calls = []
 
         def _should_submit_runtime_effect_source(self):
             return self.allowed
@@ -1930,6 +1931,9 @@ def test_effect_submitter_flushes_after_rendered_frames(monkeypatch):
 
         def _submit_runtime_effect_source_texture(self, source):
             self.submitted.append(source)
+
+        def _breakdown_inc(self, name, amount=1):
+            self.inc_calls.append((name, amount))
 
     viewer = Viewer()
     submitter = EffectSubmitter(viewer)
@@ -1946,11 +1950,10 @@ def test_effect_submitter_flushes_after_rendered_frames(monkeypatch):
     viewer.scheduler.queue_source(source)
     viewer.allowed = False
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
-    assert viewer.scheduler.pending_source is source
-    viewer.allowed = True
-    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
-    assert viewer.submitted[-1] is source
     assert viewer.scheduler.pending_source is None
+    assert viewer.submitted[-1] is not source
+    assert ("openxr_effect_source_interval_skip", 1) in viewer.inc_calls
+    assert ("openxr_effect_source_reused_safe", 1) in viewer.inc_calls
 
 
 def test_active_openxr_presenter_does_not_lazy_load_environment_assets():

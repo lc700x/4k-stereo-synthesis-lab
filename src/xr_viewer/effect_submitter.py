@@ -11,11 +11,14 @@ class EffectSubmitter:
         if not should_render:
             return False
         viewer = self.viewer
-        should_submit = getattr(viewer, "_should_submit_runtime_effect_source", None)
-        if callable(should_submit) and not should_submit():
-            return False
         scheduler = viewer._runtime_effect_submit_scheduler()
         if scheduler.pending_source is None:
+            return False
+        should_submit = getattr(viewer, "_should_submit_runtime_effect_source", None)
+        if callable(should_submit) and not should_submit():
+            scheduler.clear_pending_source()
+            self._breakdown_inc("openxr_effect_source_interval_skip")
+            self._breakdown_inc("openxr_effect_source_reused_safe")
             return False
         if bool(getattr(viewer, "_openxr_effect_submit_budget_skip_armed", False)):
             viewer._openxr_effect_submit_budget_skip_armed = False

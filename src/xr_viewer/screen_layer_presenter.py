@@ -356,11 +356,11 @@ class ScreenLayerPresenter:
         if background_renderer is None:
             background_renderer = BackgroundLayerRenderer(self.viewer)
             self.viewer._background_layer_renderer = background_renderer
-        background_layer_headers, background_projection_fallback = background_renderer.make_background_layers()
-        self._frame_background_layers = list(background_renderer._frame_background_layers)
         updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
         quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
         self._frame_quad_layers = quad_layers
+        background_layer_headers, background_projection_fallback = background_renderer.make_background_layers()
+        self._frame_background_layers = list(background_renderer._frame_background_layers)
         self.prepare_projection_frame_state()
         render_projection_layer = self.projection_layer_needed() or background_projection_fallback
         if not render_projection_layer:

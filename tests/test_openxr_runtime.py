@@ -2189,6 +2189,8 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "source_ready = self._openxr_projection_screen_source_ready" in source_gate
     assert "getattr(self, '_openxr_projection_screen_source_ready'" not in source_gate
     assert "self._runtime_eye_textures[eye_index] is None" not in source_gate
+    prepare_frame_layers = screen_presenter_text.split("def prepare_frame_layers", 1)[1].split("def append_frame_layers", 1)[0]
+    assert prepare_frame_layers.index("self.update_or_reuse(") < prepare_frame_layers.index("background_renderer.make_background_layers()")
     assert "def prepare_projection_frame_state" in screen_presenter_text
     assert "self.viewer._openxr_projection_screen_source_ready" in screen_presenter_text
     assert "self.viewer._openxr_projection_screen_effects_enabled" in screen_presenter_text

@@ -1191,8 +1191,8 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
     base_text = (SRC / "xr_viewer" / "base.py").read_text(encoding="utf-8")
     no_room_glow = base_text.split("def _render_glow", 1)[1].split("def _render_shadow", 1)[0]
 
-    assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
-    assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
+    assert "def _screen_effect_source_texture(self):" in effects_text
+    assert "allow_runtime_eye" not in effects_text
     assert "_runtime_effect_submit_scheduler().latest_safe_glow()" in source_func
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_runtime_eye_textures" not in source_func
@@ -1228,8 +1228,8 @@ def test_screen_effect_source_texture_is_cached_per_frame(monkeypatch):
     viewer._promote_runtime_effect_ready_texture = _promote
     viewer._record_screen_effect_safe_age = _record_age
 
-    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (source_tex, (1280, 720))
-    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (source_tex, (1280, 720))
+    assert viewer._screen_effect_source_texture() == (source_tex, (1280, 720))
+    assert viewer._screen_effect_source_texture() == (source_tex, (1280, 720))
     assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
@@ -1255,9 +1255,9 @@ def test_screen_effect_source_cache_refreshes_when_safe_source_changes(monkeypat
     viewer._promote_runtime_effect_ready_texture = _promote
     viewer._record_screen_effect_safe_age = _record_age
 
-    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (first_tex, (1280, 720))
+    assert viewer._screen_effect_source_texture() == (first_tex, (1280, 720))
     _set_runtime_effect_safe(viewer, next_tex, (1280, 720), 5)
-    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (next_tex, (1280, 720))
+    assert viewer._screen_effect_source_texture() == (next_tex, (1280, 720))
 
     assert viewer._promote_count == 0
     assert viewer._age_count == 2
@@ -1531,7 +1531,8 @@ def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
     assert "self._release_runtime_effect_source_texture()" in update_func
     image_upload = uploader_text.split("def _upload_image", 1)[1].split("def _ensure_pbos", 1)[0]
     assert "glFlush()" not in image_upload
-    assert "_screen_effect_source_texture(allow_runtime_eye=False)" in effects_text
+    assert "_screen_effect_source_texture()" in effects_text
+    assert "allow_runtime_eye" not in effects_text
 
 
 def test_screen_glow_shader_uses_region_color_grid():

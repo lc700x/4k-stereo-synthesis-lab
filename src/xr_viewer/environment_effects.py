@@ -151,7 +151,7 @@ class EnvironmentEffectsMixin:
             except Exception:
                 self._breakdown_inc("openxr_effect_ready_age_record_failed")
 
-    def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
+    def _screen_effect_source_texture(self):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)
         if getattr(self, '_runtime_direct_source', False):
             source_tex, source_size, source_frame_id = self._runtime_effect_submit_scheduler().latest_safe_glow()
@@ -194,7 +194,7 @@ class EnvironmentEffectsMixin:
         if getattr(self, '_glow_prog', None) is None or getattr(self, '_glow_vao', None) is None:
             return
 
-        source_tex, source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
+        source_tex, source_size = self._screen_effect_source_texture()
         screen_long = max(self.screen_width, self.screen_height)
         glow_scale = screen_long / max(float(getattr(self, '_glow_ref_screen', 2.4)), 1e-6)
         glow_width = float(getattr(self, '_glow_width_m', 0.50)) * glow_scale
@@ -257,7 +257,7 @@ class EnvironmentEffectsMixin:
             return
         if getattr(self, '_frosted_glow_prog', None) is None or getattr(self, '_frosted_glow_vao', None) is None:
             return
-        source_tex, _source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
+        source_tex, _source_size = self._screen_effect_source_texture()
         if source_tex is None:
             return
 
@@ -321,7 +321,7 @@ class EnvironmentEffectsMixin:
         ):
             return
 
-        source_tex, _source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
+        source_tex, _source_size = self._screen_effect_source_texture()
         if source_tex is None:
             return
         if mgl_fbo is not None:
@@ -375,7 +375,7 @@ class EnvironmentEffectsMixin:
         if getattr(self, '_glow_shell_prog', None) is None or getattr(self, '_glow_shell_vao', None) is None:
             return
 
-        source_tex, source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
+        source_tex, source_size = self._screen_effect_source_texture()
         if getattr(self, '_runtime_direct_source', False):
             glow_tex, _glow_size, _glow_frame_id = self._runtime_effect_submit_scheduler().latest_safe_downsample(
                 cached_downsample=getattr(self, '_cached_glow_downsample_texture', None)

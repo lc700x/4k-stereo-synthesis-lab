@@ -184,7 +184,11 @@ class EnvironmentRendererMixin:
             self._cl_light_state_key = None
             self._cl_uniform_frame = -5
             return
-        self._bind_screen_light_source_texture()
+        if self._bind_screen_light_source_texture() is None:
+            self._env_prog['u_screen_light_enabled'].value = 0
+            self._cl_light_state_key = None
+            self._cl_uniform_frame = -5
+            return
         fc = getattr(self, '_frame_count', 0)
         pose_key = (
             self.screen_yaw, self.screen_pitch, self.screen_roll,

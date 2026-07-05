@@ -155,6 +155,27 @@ def test_screen_light_bind_failure_disables_effect_without_raising(monkeypatch):
     assert ("openxr_screen_light_bind_failed", 1) in inc_calls
 
 
+def test_environment_light_bind_failure_disables_uniform(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+
+    class Uniform:
+        def __init__(self):
+            self.value = None
+
+    viewer._env_prog = {"u_screen_light_enabled": Uniform()}
+    viewer.screen_height = 9.0
+    viewer._screen_light_intensity = 1.0
+    viewer._bind_screen_light_source_texture = lambda: None
+    viewer._cl_light_state_key = object()
+    viewer._cl_uniform_frame = 10
+
+    viewer._apply_cinema_light_uniforms()
+
+    assert viewer._env_prog["u_screen_light_enabled"].value == 0
+    assert viewer._cl_light_state_key is None
+    assert viewer._cl_uniform_frame == -5
+
+
 def test_runtime_effect_source_promote_failure_reuses_existing_safe_texture(monkeypatch):
     safe_tex = object()
     inc_calls = []

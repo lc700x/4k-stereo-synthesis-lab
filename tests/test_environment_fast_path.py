@@ -873,6 +873,9 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
     assert "_runtime_effect_safe_source_tex" in base_text
     assert "_promote_runtime_effect_ready_texture" in base_text
     assert "_screen_effect_source_texture()" in no_room_glow
+    assert "if getattr(self, '_runtime_direct_source', False):" in no_room_glow
+    assert "_cached_glow_downsample_texture(source_tex, source_size)" in no_room_glow
+    assert "else:\n            glow_tex = self._prepare_glow_downsample_texture" in no_room_glow
     assert "getattr(self, 'color_tex', None)" not in no_room_glow
 
 

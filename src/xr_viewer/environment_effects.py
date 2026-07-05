@@ -134,10 +134,12 @@ class EnvironmentEffectsMixin:
             return True
         return should_show_source_border()
 
-    def _record_screen_effect_safe_age(self, source_tex):
+    def _record_screen_effect_safe_age(self, source_tex, safe_frame_id=None):
         if source_tex is None:
             return
-        safe_frame_id = int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0)
+        if safe_frame_id is None:
+            _tex, _size, safe_frame_id = self._runtime_effect_latest_safe()
+        safe_frame_id = int(safe_frame_id or 0)
         current_frame = int(getattr(self, '_frame_count', 0) or 0)
         if safe_frame_id > 0 and current_frame >= safe_frame_id:
             age_key = (current_frame, safe_frame_id, int(getattr(source_tex, 'glo', 0) or 0))
@@ -152,21 +154,18 @@ class EnvironmentEffectsMixin:
     def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)
         if getattr(self, '_runtime_direct_source', False):
-            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
-            value = (
-                source_tex,
-                getattr(self, '_runtime_effect_safe_source_size', None),
-            )
+            source_tex, source_size, source_frame_id = self._runtime_effect_latest_safe()
+            value = (source_tex, source_size)
             cache_key = (
                 frame_id,
-                int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
+                int(source_frame_id or 0),
                 int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
                 tuple(value[1]) if value[1] is not None else None,
             )
             if getattr(self, '_screen_effect_source_cache_key', None) == cache_key:
                 self._breakdown_inc("openxr_screen_effect_source_reuse")
                 return getattr(self, '_screen_effect_source_cache_value', value)
-            self._record_screen_effect_safe_age(source_tex)
+            self._record_screen_effect_safe_age(source_tex, source_frame_id)
             self._screen_effect_source_cache_key = cache_key
             self._screen_effect_source_cache_frame = frame_id
             self._screen_effect_source_cache_value = value

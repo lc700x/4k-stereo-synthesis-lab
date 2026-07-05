@@ -183,11 +183,11 @@ class CoreScreenQualityMixin:
         out_w = max(2, out_w & ~1)
         out_h = max(2, out_h & ~1)
         source_frame_id = None
-        if (
-            getattr(self, '_runtime_direct_source', False)
-            and source_tex is getattr(self, '_runtime_effect_safe_source_tex', None)
-        ):
-            source_frame_id = int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0)
+        latest_safe = getattr(self, '_runtime_effect_latest_safe', None)
+        if getattr(self, '_runtime_direct_source', False) and callable(latest_safe):
+            safe_tex, _safe_size, safe_frame_id = latest_safe()
+            if source_tex is safe_tex:
+                source_frame_id = int(safe_frame_id or 0)
         cache_key = (
             int(source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)),
             int(getattr(source_tex, 'glo', 0) or 0),

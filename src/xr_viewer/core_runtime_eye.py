@@ -204,7 +204,6 @@ class CoreRuntimeEyeMixin:
                 pass
         self._runtime_effect_source_texture_uploader = None
         self._runtime_effect_scheduler().release()
-        self._sync_runtime_effect_pool_attrs()
 
     def _runtime_effect_scheduler(self):
         scheduler = getattr(self, '_runtime_effect_scheduler_obj', None)
@@ -218,19 +217,8 @@ class CoreRuntimeEyeMixin:
     def _runtime_effect_pool(self):
         return self._runtime_effect_scheduler().pool
 
-    def _sync_runtime_effect_pool_attrs(self):
-        pool = self._runtime_effect_scheduler().pool
-        self._runtime_effect_source_staging_tex = pool.staging_tex
-        self._runtime_effect_source_staging_size = pool.staging_size
-        self._runtime_effect_ready_source_tex = pool.ready_tex
-        self._runtime_effect_ready_source_size = pool.ready_size
-        self._runtime_effect_ready_source_frame_id = pool.ready_frame_id
-        self._runtime_effect_safe_source_tex = pool.safe_tex
-        self._runtime_effect_safe_source_size = pool.safe_size
-        self._runtime_effect_spare_source_tex = pool.spare_tex
-        self._runtime_effect_spare_source_size = pool.spare_size
-        self._runtime_effect_safe_source_frame_id = pool.safe_frame_id
-        self._runtime_effect_result_state = pool.state
+    def _runtime_effect_latest_safe(self):
+        return self._runtime_effect_scheduler().latest_safe()
 
     def _runtime_effects_need_source_texture(self):
         if not getattr(self, '_openxr_async_effects_enabled', True):
@@ -249,13 +237,10 @@ class CoreRuntimeEyeMixin:
         )
 
     def _ensure_runtime_effect_staging_texture(self, w, h):
-        tex = self._runtime_effect_scheduler().ensure_staging(self.ctx, w, h)
-        self._sync_runtime_effect_pool_attrs()
-        return tex
+        return self._runtime_effect_scheduler().ensure_staging(self.ctx, w, h)
 
     def _publish_runtime_effect_staging_texture(self, w, h):
         self._runtime_effect_scheduler().publish_completed(w, h, getattr(self, '_frame_count', 0))
-        self._sync_runtime_effect_pool_attrs()
         self._breakdown_inc("openxr_effect_source_ready_publish")
 
     def _promote_runtime_effect_ready_texture(self):
@@ -266,7 +251,6 @@ class CoreRuntimeEyeMixin:
             return scheduler.latest_safe()[0]
         self._runtime_effect_promote_frame = frame_id
         if scheduler.poll_completed():
-            self._sync_runtime_effect_pool_attrs()
             self._breakdown_inc("openxr_effect_source_safe_publish")
         return scheduler.latest_safe()[0]
 
@@ -300,9 +284,10 @@ class CoreRuntimeEyeMixin:
             self._breakdown_add_time("runtime_effect_source_tensor", time.perf_counter() - tensor_start)
             if source_rgba.shape[:2] != (h, w):
                 raise RuntimeError(f"Runtime effect source tensor size changed during upload: {tuple(source_rgba.shape)}")
+            staging_tex = self._ensure_runtime_effect_staging_texture(w, h)
             upload_start = time.perf_counter()
             upload_path = uploader.upload_rgba(
-                [self._runtime_effect_source_staging_tex],
+                [staging_tex],
                 [source_rgba],
                 w,
                 h,
@@ -359,12 +344,10 @@ class CoreRuntimeEyeMixin:
             self._breakdown_inc("openxr_effect_source_interval_skip")
             return
         h, w = self._runtime_eye_shape_hw(frame)
-        self._ensure_runtime_effect_staging_texture(w, h)
         if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):
             return
         pool = self._runtime_effect_pool()
         pool.state = 'safe' if pool.safe_tex is not None else 'idle'
-        self._sync_runtime_effect_pool_attrs()
         self._breakdown_inc("openxr_effect_source_reused_safe")
 
     def _submit_runtime_effect_source_texture(self, frame):

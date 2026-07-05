@@ -721,8 +721,7 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
 
     viewer = Viewer()
     safe_tex = object()
-    viewer._runtime_effect_safe_source_tex = safe_tex
-    viewer._runtime_effect_safe_source_size = (640, 360)
+    viewer._runtime_effect_latest_safe = lambda: (safe_tex, (640, 360), 3)
     viewer._glow_mode = "veil"
     viewer._glow_intensity_multiplier = 1.0
     viewer._glow_shell_intensity_multiplier = 0.0
@@ -802,7 +801,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" in runtime_eye
-    assert "_runtime_effect_spare_source_tex" in runtime_eye
+    assert "def _runtime_effect_latest_safe" in runtime_eye
+    assert "_runtime_effect_spare_source_tex" not in runtime_eye
     assert "self.ready_tex = self.staging_tex" in scheduler_text
     assert "self.safe_tex = self.ready_tex" in scheduler_text
     assert "self.staging_tex = self.spare_tex" in scheduler_text
@@ -824,7 +824,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "openxr_effect_source_safe_publish" in runtime_eye
     assert "openxr_screen_effect_source_reuse" in effects
     assert "_openxr_effect_submit_budget_skip_armed" in runtime_eye
-    assert "self._runtime_effect_result_state = pool.state" in runtime_eye
+    assert "self._runtime_effect_result_state = pool.state" not in runtime_eye
     assert "self.state = 'idle'" in scheduler_text
     assert "self.state = 'writing'" in scheduler_text
     assert "self.state = 'ready'" in scheduler_text
@@ -836,14 +836,14 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "self._queue_runtime_effect_submit(effect_source_rgb)" in (
         SRC / "xr_viewer" / "core_source_state.py"
     ).read_text(encoding="utf-8")
-    assert "self._flush_runtime_effect_submit()" in implementation
+    assert "effect_submitter.flush_after_submit(" in implementation
     submit_flush_block = implementation.split("_submit_openxr_frame(composition_layers)", 1)[1].split(
         "if loop_perf_log_enabled:", 1
     )[0]
     assert submit_flush_block.index("openxr_submit_frame") < submit_flush_block.index(
-        "self._flush_runtime_effect_submit()"
+        "effect_submitter.flush_after_submit("
     )
-    assert "self._runtime_effect_safe_source_frame_id = pool.safe_frame_id" in runtime_eye
+    assert "self._runtime_effect_safe_source_frame_id = pool.safe_frame_id" not in runtime_eye
     assert "self.ready_frame_id = int(frame_id or 0)" in scheduler_text
     assert "self.safe_frame_id = self.ready_frame_id" in scheduler_text
     update_block = runtime_eye.split("def _update_runtime_effect_source_texture", 1)[1].split(
@@ -855,14 +855,15 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     promote_block = runtime_eye.split("def _promote_runtime_effect_ready_texture", 1)[1].split(
         "def _try_update_runtime_effect_source_texture_gpu", 1
     )[0]
-    assert "self._ensure_runtime_effect_staging_texture(w, h)" in update_block
+    assert "staging_tex = self._ensure_runtime_effect_staging_texture(w, h)" in runtime_eye
     assert "publish_completed(w, h, getattr(self, '_frame_count', 0))" in publish_block
     assert "poll_completed()" not in publish_block
     assert "poll_completed()" in promote_block
     assert "self._release_runtime_effect_source_texture()" not in update_block.split(
         "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1
     )[1]
-    assert "getattr(self, '_runtime_effect_safe_source_tex', None)" in effects
+    assert "self._runtime_effect_latest_safe()" in effects
+    assert "getattr(self, '_runtime_effect_safe_source_tex', None)" not in effects
     assert "openxr_effect_ready_age_frames" in effects
     assert "_promote_runtime_effect_ready_texture" not in effects
     assert "_promote_runtime_effect_ready_texture" not in environment_renderer
@@ -1016,8 +1017,6 @@ def test_runtime_effect_ready_promotes_once_per_frame(monkeypatch):
     )
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
-    viewer._sync_runtime_effect_pool_attrs = lambda: None
-
     def _promote_ready():
         viewer._runtime_effect_result_pool.promote_calls += 1
         viewer._runtime_effect_result_pool.safe_tex = ready_tex

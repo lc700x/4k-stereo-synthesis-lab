@@ -405,8 +405,10 @@ class CoreSourceStateMixin:
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
 
     def _prewarm_runtime_effect_downsample(self):
-        source_tex = getattr(self, "_runtime_effect_safe_source_tex", None)
-        source_size = getattr(self, "_runtime_effect_safe_source_size", None)
+        latest_safe = getattr(self, "_runtime_effect_latest_safe", None)
+        if not callable(latest_safe):
+            return
+        source_tex, source_size, _source_frame_id = latest_safe()
         if source_tex is None or source_size is None:
             return
         mode = str(getattr(self, "_glow_mode", "") or "").strip().lower()

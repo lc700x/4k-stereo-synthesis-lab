@@ -188,6 +188,7 @@ class EffectScheduler:
             return 'empty'
         submitted = submit_source(source)
         if submitted is False:
+            self.pending_source = None
             return 'skipped'
         if callable(promote_ready):
             promote_ready()

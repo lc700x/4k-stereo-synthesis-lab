@@ -683,7 +683,7 @@ def test_effect_scheduler_owns_latest_only_pending_submit():
 
     scheduler.queue_source(first)
     assert scheduler.flush_pending_source(lambda _value: False) == 'skipped'
-    assert scheduler.pending_source is first
+    assert scheduler.pending_source is None
 
 
 def test_runtime_effect_submit_flushes_after_frame_submit():

@@ -1758,10 +1758,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._source_stalled = True
             return False
 
-        screen_presenter = getattr(self, '_preview_screen_presenter', None)
+        screen_presenter = getattr(self, '_screen_layer_presenter', None)
         if screen_presenter is None:
             screen_presenter = ScreenLayerPresenter(self)
-            self._preview_screen_presenter = screen_presenter
+            self._screen_layer_presenter = screen_presenter
         screen_presenter.prepare_projection_frame_state()
 
         sc_w, sc_h = self._swapchain_sizes[0]
@@ -2189,8 +2189,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             return
 
         draw_projection_screen = bool(self._openxr_draw_projection_screen)
-        draw_projection_screen_effects = bool(self._openxr_projection_screen_effects_enabled)
-        quad_unavailable_reason = self._openxr_projection_screen_unavailable_reason or 'unknown'
         if draw_projection_screen:
             source_ready = self._openxr_projection_screen_source_ready
             if not source_ready[eye_index]:
@@ -2228,176 +2226,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             _mark_perf('env')
 
         if draw_projection_screen:
-            self._breakdown_inc(f"openxr_quad_unavailable_{quad_unavailable_reason}")
-            # Optional screen effects behind the desktop quad (normal viewer only).
-            if draw_projection_screen_effects:
-                self._render_screen_background_effects(mgl_fbo, vp_mat)
-            if perf_enabled:
-                _mark_perf('bgfx')
-
-            # Curved border is currently a full enlarged arc, so it must stay behind
-            # the desktop image. The flat border shader discards its centre and is
-            # drawn later so fullscreen content cannot hide it.
-            if self._screen_curved:
-                self._render_border(mgl_fbo, vp_mat)
-            if perf_enabled:
-                _mark_perf('pre_border')
-
-            # Main screen
-            mgl_fbo.use()
-            eye_sign = -1.0 if eye_index == 0 else 1.0
-            runtime_rgb_depth_max_disparity_px = (
-                0.0 if self._runtime_direct_source else float(getattr(self, '_runtime_rgb_depth_max_disparity_px', 0.0))
-            )
-            runtime_rgb_depth_render_width = (
-                0 if self._runtime_direct_source else int(getattr(self, '_runtime_rgb_depth_render_width', 0) or 0)
-            )
-            if runtime_rgb_depth_render_width <= 0:
-                source_size = self._texture_size or (0, 0)
-                runtime_rgb_depth_render_width = int(source_size[0] or 0)
-            screen_disparity_uv = 0.0
-            if not self._runtime_direct_source and runtime_rgb_depth_render_width > 0:
-                screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)
-            screen_depth_strength = (
-                0.0
-                if self._runtime_direct_source
-                else max(0.0, float(getattr(self, '_runtime_rgb_depth_depth_strength', self.depth_strength) or 0.0))
-            )
-            screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_disparity_uv / 2.0
-            model = self._build_model_mat4()
-            mvp = vp_mat @ model
-            if self._runtime_direct_source:
-                self._log_screen_footprint_once(eye_index, mvp, (sc_w, sc_h))
-                source_tex = self._runtime_eye_textures[eye_index]
-                screen_tex = self._prepare_screen_quality_texture(
-                    source_tex,
-                    self._runtime_eye_texture_size or self._texture_size,
-                    mvp,
-                    (sc_w, sc_h),
-                    f'runtime_eye_{eye_index}',
-                ) or source_tex
-                screen_depth_tex = self._runtime_depth_texture
-            else:
-                screen_tex = self._prepare_screen_quality_texture(
-                    self.color_tex,
-                    self._texture_size,
-                    mvp,
-                    (sc_w, sc_h),
-                    'color',
-                ) or self.color_tex
-                screen_depth_tex = self.depth_tex
-            if perf_enabled:
-                _mark_perf('quality')
-            mgl_fbo.use()
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self.ctx.enable(moderngl.DEPTH_TEST)
-            self.ctx.depth_mask = True
-            self.ctx.disable(moderngl.BLEND)
-            self.ctx.disable(moderngl.CULL_FACE)
-            glFrontFace(GL_CCW)
-
-            screen_source_size = (
-                (self._runtime_eye_texture_size or self._texture_size)
-                if self._runtime_direct_source else self._texture_size
-            )
-            screen_source_size = screen_source_size or (sc_w, sc_h)
-            shader_resolution_mode = str(getattr(self, '_openxr_rgb_depth_shader_resolution', 'source') or 'source')
-            if self._runtime_direct_source or shader_resolution_mode == 'source':
-                shader_resolution = (float(screen_source_size[0]), float(screen_source_size[1]))
-            elif shader_resolution_mode == 'swapchain':
-                shader_resolution = (float(sc_w), float(sc_h))
-            else:
-                shader_resolution = None
-            if not self._runtime_direct_source and not getattr(self, '_openxr_rgb_depth_shader_resolution_logged', False):
-                print(
-                    "[OpenXRViewer] rgb_depth shader:"
-                    f" resolution_mode={shader_resolution_mode}"
-                    f" resolution={shader_resolution if shader_resolution is not None else 'unset'}"
-                    f" feather={int(bool(getattr(self, '_openxr_rgb_depth_feather', False)))}",
-                    f" max_disparity_px={runtime_rgb_depth_max_disparity_px:.3f}"
-                    f" render_width={runtime_rgb_depth_render_width}"
-                    f" disparity_uv={screen_disparity_uv:.6f}"
-                    f" eye_offset_abs={abs(screen_eye_offset):.6f}"
-                    f" depth_strength={screen_depth_strength:.6f}"
-                    f" convergence={float(self.convergence):.6f}",
-                    flush=True,
-                )
-                self._openxr_rgb_depth_shader_resolution_logged = True
-
-            if self._screen_curved and self._curved_prog is not None:
-                if screen_depth_tex is None:
-                    self.ctx.screen.use()
-                    return
-                screen_tex.use(location=0)
-                screen_depth_tex.use(location=1)
-                params = (
-                    self.screen_width,
-                    self.screen_height,
-                    self.screen_distance,
-                    self.screen_pan_x,
-                    self.screen_pan_y,
-                    self.screen_yaw,
-                    self.screen_pitch,
-                    self.screen_roll,
-                )
-                if self._curved_verts_params != params:
-                    arc_verts = self._build_curved_screen_verts()
-                    self._curved_vbo.write(arc_verts.tobytes())
-                    self._curved_verts_params = params
-                self._curved_prog['u_mvp'].write(vp_mat.T.tobytes())
-                runtime_rgb_depth = not self._runtime_direct_source
-                feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)
-                if shader_resolution is not None:
-                    self._curved_prog['u_resolution'].value = shader_resolution
-                self._curved_prog['u_feather_enabled'].value = 1 if feather_enabled else 0
-                self._curved_prog['u_feather_width'].value = 0.02 if feather_enabled else 0.0
-                self._curved_prog['u_viewport'].value = (0.0, 0.0, float(sc_w), float(sc_h))
-                self._curved_prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
-                self._curved_prog['u_eye_offset'].value = screen_eye_offset
-                self._curved_prog['u_depth_strength'].value = screen_depth_strength
-                self._curved_prog['u_convergence'].value = float(self.convergence)
-                self._curved_prog['u_corner_radius'].value = self._corner_radius
-                if draw_projection_screen:
-                    self._curved_vao.render(moderngl.TRIANGLE_STRIP, vertices=(48 + 1) * 2)
-            else:
-                if screen_depth_tex is None:
-                    if draw_projection_screen:
-                        self.ctx.screen.use()
-                        return
-                    screen_depth_tex = screen_tex
-                screen_tex.use(location=0)
-                screen_depth_tex.use(location=1)
-                self.prog['u_mvp'].write(mvp.T.tobytes())
-                runtime_rgb_depth = not self._runtime_direct_source
-                feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)
-                if shader_resolution is not None:
-                    self.prog['u_resolution'].value = shader_resolution
-                self.prog['u_feather_enabled'].value = 1 if feather_enabled else 0
-                self.prog['u_feather_width'].value = 0.02 if feather_enabled else 0.0
-                self.prog['u_viewport'].value = (0.0, 0.0, float(sc_w), float(sc_h))
-                self.prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll
-                self.prog['u_eye_offset'].value = screen_eye_offset
-                self.prog['u_depth_strength'].value = screen_depth_strength
-                self.prog['u_convergence'].value = float(self.convergence)
-                self.prog['u_corner_radius'].value = self._corner_radius
-                if draw_projection_screen:
-                    self.quad_vao.render(moderngl.TRIANGLE_STRIP)
-            if perf_enabled:
-                _mark_perf('screen')
-
-            # Flat border is a foreground guide; render it after the desktop quad
-            # so fullscreen content cannot cover it. Curved border is rendered
-            # behind the screen because its current shader covers the full arc.
-            if not self._screen_curved:
-                self._render_border(mgl_fbo, vp_mat)
-            if perf_enabled:
-                _mark_perf('border')
-
-            # Optional screen effects on/around the desktop quad (normal viewer only).
-            if draw_projection_screen_effects:
-                self._render_screen_foreground_effects(mgl_fbo, vp_mat)
-            if perf_enabled:
-                _mark_perf('fgfx')
+            screen_presenter = self._screen_layer_presenter
+            if not screen_presenter.render_projection_screen(
+                eye_index=eye_index,
+                mgl_fbo=mgl_fbo,
+                vp_mat=vp_mat,
+                swapchain_size=(sc_w, sc_h),
+                mark_perf=_mark_perf if perf_enabled else None,
+            ):
+                return
         else:
             self._breakdown_inc("openxr_projection_screen_skipped")
             if perf_enabled:

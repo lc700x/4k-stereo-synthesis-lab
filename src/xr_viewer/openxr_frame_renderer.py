@@ -10,6 +10,7 @@ class OpenXRFrameRenderer:
         self.viewer = viewer
         self.view_tracker = ViewPoseTracker(viewer)
         self.screen_presenter = ScreenLayerPresenter(viewer)
+        viewer._screen_layer_presenter = self.screen_presenter
         self.projection_presenter = ProjectionLayerPresenter(viewer)
 
     def render_frame(self, *, composition_layers, display_time, default_fov, default_proj, default_proj_d3d):

@@ -170,6 +170,7 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
 
 def test_openxr_frame_pipeline_seeds_screen_bridge_with_renderable_bootstrap_frame():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
     seed_block = frame_pipeline.split("def seed_first_frame", 1)[1].split("def render_frame", 1)[0]
@@ -339,6 +340,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     monkeypatch.chdir(SRC)
     source = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     viewer_source = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
 
@@ -352,7 +354,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     assert "constants[16:20] = np.array([eye_offset, depth_strength, convergence, roll]" in source
     assert "eye_sign * ipd * 0.5" not in source
     assert "self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0" in source
-    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in implementation
+    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in screen_presenter
     assert "roll=viewer.screen_roll" in projection_presenter
     assert "float depth_response = depth - u_convergence;" in viewer_source
     assert "float shift = depth_response;" in viewer_source
@@ -2008,7 +2010,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     render_eye_prefix, render_eye_block = render_eye.split("draw_projection_screen = bool(self._openxr_draw_projection_screen)", 1)
     assert "quad_unavailable_reason == 'missing_source_texture'" not in render_eye_prefix
     assert "not self._quad_layer_screen_presentable()" not in render_eye_prefix
-    assert "_openxr_projection_screen_unavailable_reason" in render_eye_block
+    assert "_openxr_projection_screen_unavailable_reason" in screen_presenter_text
     assert "self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()" in screen_presenter_text
     source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
     assert "if draw_projection_screen:" in source_gate
@@ -2018,6 +2020,10 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "def prepare_projection_frame_state" in screen_presenter_text
     assert "self.viewer._openxr_projection_screen_source_ready" in screen_presenter_text
     assert "self.viewer._openxr_projection_screen_effects_enabled" in screen_presenter_text
+    assert "def render_projection_screen" in screen_presenter_text
+    assert "screen_presenter.render_projection_screen(" in render_eye_block
+    assert "runtime_rgb_depth_max_disparity_px = (" not in render_eye_block
+    assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in screen_presenter_text
     background_gate = render_eye_block.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1
     )[0]

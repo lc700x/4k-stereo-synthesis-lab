@@ -373,6 +373,41 @@ class CoreSourceStateMixin:
         except Exception as exc:
             print(f"[OpenXRViewer] Runtime effect submit failed: {type(exc).__name__}: {exc}")
             self._breakdown_inc("openxr_effect_submit_failed")
+            return
+        try:
+            self._prewarm_runtime_effect_downsample()
+        except Exception as exc:
+            print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_effect_downsample_prewarm_failed")
+
+    def _prewarm_runtime_effect_downsample(self):
+        source_tex = getattr(self, "_runtime_effect_safe_source_tex", None)
+        source_size = getattr(self, "_runtime_effect_safe_source_size", None)
+        promote_ready = getattr(self, "_promote_runtime_effect_ready_texture", None)
+        if callable(promote_ready):
+            source_tex = promote_ready()
+            source_size = getattr(self, "_runtime_effect_safe_source_size", None)
+        if source_tex is None or source_size is None:
+            return
+        mode = str(getattr(self, "_glow_mode", "") or "").strip().lower()
+        glow_needs_downsample = (
+            mode in ("screen", "surround")
+            and (
+                float(getattr(self, "_glow_intensity_multiplier", 0.0) or 0.0) > 0.0
+                or float(getattr(self, "_glow_shell_intensity_multiplier", 0.0) or 0.0) > 0.0
+            )
+        )
+        light_needs_downsample = float(getattr(self, "_screen_light_intensity", 0.0) or 0.0) > 0.0 and (
+            getattr(self, "_panorama_background_path", None)
+            or bool(getattr(self, "_env_model_visible", False) and getattr(self, "_env_model_prims", []))
+        )
+        if not (glow_needs_downsample or light_needs_downsample):
+            return
+        prepare = getattr(self, "_prepare_glow_downsample_texture", None)
+        if not callable(prepare):
+            return
+        if prepare(source_tex, source_size) is not None:
+            self._breakdown_inc("openxr_effect_downsample_prewarm")
 
     def _poll_source_frame(self, upload=False):
         poll_start = time.perf_counter()

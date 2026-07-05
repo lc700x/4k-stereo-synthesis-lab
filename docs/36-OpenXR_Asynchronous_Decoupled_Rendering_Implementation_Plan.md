@@ -228,7 +228,7 @@ External Unity/Blender bake or packaged panorama asset
   - 初始或 worker 失败时使用透明纹理。
 - 先以 OpenGL FBO/低频 pass 实现逻辑正确性；后续按平台升级到 D3D11 compute、D3D12/Vulkan async compute queue。
 - 当前落地：runtime effect source 已抽出轻量 result pool，具备 staging/ready/safe/spare texture 语义和 safe publish 诊断；ready 被 latest-only 新结果覆盖时旧 ready 会转为 spare 复用或释放，避免异步 submit 跟不上时泄漏纹理；独立 worker 仍待拆分。
-- 当前落地：GPU glow/downsample 复用已有 cache key，新增 `fx_ds_render` / `fx_ds_reuse` 诊断，用于确认 soft effect 是否复用旧结果而非每个消费者重复生成；no-room 与 environment glow pass 都隔离异常并恢复 GL 状态，effect 失败不污染 screen submit 后续帧。
+- 当前落地：GPU glow/downsample 复用已有 cache key，新增 `fx_ds_render` / `fx_ds_reuse` 诊断，用于确认 soft effect 是否复用旧结果而非每个消费者重复生成；effect source submit 在 `xrEndFrame` 后预热 glow/light downsample，下一帧 panorama/controller/glow 消费优先复用缓存；no-room 与 environment glow pass 都隔离异常并恢复 GL 状态，effect 失败不污染 screen submit 后续帧。
 - 当前落地：screen light source 同帧缓存已接入，环境光、panorama、controller 反射等多消费者复用同一个 prepared light texture，并记录 `light_reuse`。
 - 当前落地：screen effect source 同帧缓存已接入，Glow/veil/shell 多 pass 复用同一个 safe source lookup，并记录 `fx_source_reuse`。
 - 当前落地：`fx_age` 按每帧每个 safe effect texture 去重记录，避免 Glow、screen light、panorama 等多消费者重复放大 age 样本。

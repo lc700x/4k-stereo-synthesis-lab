@@ -19,8 +19,8 @@ def main() -> None:
     parser.add_argument("--screen-roll-deg", type=float, default=0.0)
     parser.add_argument("--depth-strength", type=float, default=2.0)
     parser.add_argument("--convergence", type=float, default=0.0)
-    parser.add_argument("--ipd", type=float, default=0.064)
-    parser.add_argument("--max-shift-ratio", type=float, default=0.05)
+    parser.add_argument("--max-disparity-px", type=float, default=None)
+    parser.add_argument("--parallax-preset", default="standard")
     args = parser.parse_args()
 
     import torch
@@ -35,8 +35,8 @@ def main() -> None:
     config = OpenXRRenderConfig(
         depth_strength=args.depth_strength,
         convergence=args.convergence,
-        ipd=args.ipd,
-        max_shift_ratio=args.max_shift_ratio,
+        max_disparity_px=args.max_disparity_px,
+        parallax_preset=args.parallax_preset,
         screen_roll=roll_rad,
     )
 

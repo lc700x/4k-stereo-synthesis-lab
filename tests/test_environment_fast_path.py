@@ -491,6 +491,24 @@ def test_openxr_loop_uses_fast_env_model_initializer():
     assert quad_idx < submit_idx < flush_idx < lazy_idx
 
 
+def test_openxr_no_fresh_but_renderable_source_continues_to_screen_present():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    stale_block = run_body.split("if not self._has_fresh_source_frame(now):", 1)[1].split(
+        "if frame_state.should_render:", 1
+    )[0]
+    no_renderable_block = stale_block.split("if not self._has_renderable_source_frame():", 1)[1]
+
+    assert "self._pause_xr_output_for_source_stall()" in stale_block
+    assert "if not self._has_renderable_source_frame():" in stale_block
+    assert "_submit_openxr_frame(composition_layers)" in no_renderable_block
+    assert "continue" in no_renderable_block
+
+    stale_idx = run_body.index("if not self._has_fresh_source_frame(now):")
+    poll_upload_idx = run_body.index("self._poll_source_frame(upload=True)")
+    assert stale_idx < poll_upload_idx
+
+
 def test_env_model_initializer_skips_panorama_background(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._env_model_init_done = False

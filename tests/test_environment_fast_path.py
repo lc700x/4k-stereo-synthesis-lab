@@ -606,6 +606,7 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "_panorama_light_mask_path_from_settings" in render_text
     assert "_panorama_light_mask_path_key" in render_text
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
+    background_layer_renderer = (SRC / "xr_viewer" / "background_layer_renderer.py").read_text(encoding="utf-8")
     eye_background = impl_text.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1
     )[0]
@@ -613,7 +614,8 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "projection_screen_enabled=draw_projection_screen" in eye_background
     assert "background_presenter.projection_fallback_needed()" not in eye_background
     assert "def projection_fallback_needed" in background_presenter
-    assert "ready = getattr(viewer, '_panorama_texture_ready', None)" in background_presenter
+    assert "BackgroundLayerRenderer" in background_presenter
+    assert "ready = getattr(self.viewer, '_panorama_texture_ready', None)" in background_layer_renderer
     assert "enabled = bool(projection_screen_enabled or has_panorama)" in background_presenter
     assert "if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in background_presenter
     assert "viewer._breakdown_inc('openxr_background_panorama')" in background_presenter
@@ -672,7 +674,54 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     viewer._team_help_tex = None
 
     assert ScreenLayerPresenter(viewer).projection_layer_needed() is True
-    assert viewer._background_presenter is not None
+    assert viewer._background_layer_renderer is not None
+
+
+def test_background_layer_renderer_prefers_native_layer_before_projection_and_quad(monkeypatch):
+    monkeypatch.chdir(SRC)
+    import ctypes
+    import xr_viewer.background_layer_renderer as layer_module
+    from xr_viewer.background_layer_renderer import BackgroundLayerRenderer
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    monkeypatch.setattr(layer_module.xr, "CompositionLayerBaseHeader", ctypes.c_int)
+
+    class Viewer:
+        pass
+
+    inc_calls = []
+    viewer = Viewer()
+    viewer._panorama_texture_ready = lambda: object()
+    viewer._openxr_equirect_background_supported = False
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    headers, projection_fallback = BackgroundLayerRenderer(viewer).make_background_layers()
+
+    assert headers == []
+    assert projection_fallback is True
+    assert ("openxr_background_projection_fallback", 1) in inc_calls
+
+    background_layer = ctypes.c_int(7)
+    viewer._openxr_equirect_background_supported = True
+    viewer._make_equirect_background_layer = lambda: background_layer
+    renderer = BackgroundLayerRenderer(viewer)
+    headers, projection_fallback = renderer.make_background_layers()
+
+    assert len(headers) == 1
+    assert projection_fallback is False
+    assert renderer._frame_background_layers == [background_layer]
+    assert ("openxr_background_layer", 1) in inc_calls
+
+    presenter = ScreenLayerPresenter(viewer)
+    composition_layers = []
+    presenter.append_frame_layers(
+        composition_layers,
+        projection_views=[],
+        quad_layer_headers=["quad"],
+        background_layer_headers=["background"],
+    )
+
+    assert composition_layers == ["background", "quad"]
 
 
 def test_background_presenter_skips_background_without_projection_screen_or_panorama(monkeypatch):

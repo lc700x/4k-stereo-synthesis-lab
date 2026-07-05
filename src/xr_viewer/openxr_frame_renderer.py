@@ -19,7 +19,7 @@ class OpenXRFrameRenderer:
         views, view_pose_adjusted = self.view_tracker.locate_views(display_time=display_time)
 
         quad_update_start = time.perf_counter()
-        _quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer = (
+        _quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer, background_layer_headers = (
             self.screen_presenter.prepare_frame_layers(screen_frame_uploaded=screen_frame_uploaded)
         )
         viewer._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
@@ -37,5 +37,6 @@ class OpenXRFrameRenderer:
             projection_views=eye_layer_views,
             projection_space=viewer._xr_space,
             quad_layer_headers=quad_layer_headers,
+            background_layer_headers=background_layer_headers,
         )
         return screen_frame_uploaded, view_pose_adjusted, bool(eye_layer_views)

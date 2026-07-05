@@ -1173,6 +1173,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
+    background_layer_renderer = (SRC / "xr_viewer" / "background_layer_renderer.py").read_text(encoding="utf-8")
     overlay_presenter = (SRC / "xr_viewer" / "overlay_layer_presenter.py").read_text(encoding="utf-8")
     breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
 
@@ -1205,6 +1206,9 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_background_env_model",
         "openxr_background_env_model_failed",
         "openxr_background_idle",
+        "openxr_background_projection_fallback",
+        "openxr_background_layer",
+        "openxr_background_layer_failed",
         "openxr_effect_source_promote_reuse",
         "openxr_wall_light_mask_loaded",
         "openxr_wall_light_mask_missing",
@@ -1227,6 +1231,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
             or name in projection_presenter
             or name in screen_presenter
             or name in background_presenter
+            or name in background_layer_renderer
             or name in overlay_presenter
         )
 
@@ -1235,7 +1240,10 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "fx_promote_reuse={rate('openxr_effect_source_promote_reuse')" in breakdown
     assert "screen_quality_failed={rate('openxr_screen_quality_failed')" in breakdown
     assert "fx_ds_failed={rate('openxr_glow_downsample_failed')" in breakdown
-    assert "bg_path=panorama:{rate('openxr_background_panorama')" in breakdown
+    assert "bg_path=layer:{rate('openxr_background_layer')" in breakdown
+    assert "fallback:{rate('openxr_background_projection_fallback')" in breakdown
+    assert "layer_failed:{rate('openxr_background_layer_failed')" in breakdown
+    assert "panorama:{rate('openxr_background_panorama')" in breakdown
     assert "env_failed:{rate('openxr_background_env_model_failed')" in breakdown
     assert "overlay_failed={rate('openxr_overlay_render_failed')" in breakdown
     assert "controller_failed={rate('openxr_controller_render_failed')" in breakdown
@@ -1642,7 +1650,7 @@ def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():
         poll_screen_frame=lambda: viewer.calls.append(("poll", True)) or True,
         prepare_frame_layers=lambda *, screen_frame_uploaded: viewer.calls.append(
             ("prepare", screen_frame_uploaded)
-        ) or (["quad"], ["quad_header"], [0, 1], True),
+        ) or (["quad"], ["quad_header"], [0, 1], True, ["background_header"]),
         append_frame_layers=lambda layers, **kwargs: viewer.calls.append(
             ("append", layers, kwargs)
         ) or layers.append("layer"),
@@ -1674,6 +1682,7 @@ def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():
     assert viewer.calls[4][0] == "append"
     assert viewer.calls[4][2]["projection_views"] == ["eye_layer"]
     assert viewer.calls[4][2]["projection_space"] == "space"
+    assert viewer.calls[4][2]["background_layer_headers"] == ["background_header"]
     assert viewer.calls[4][2]["quad_layer_headers"] == ["quad_header"]
     assert "openxr_quad_update" in viewer.time_calls
 
@@ -2119,16 +2128,19 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
         "if perf_enabled:", 1
     )[0]
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
+    background_layer_renderer = (SRC / "xr_viewer" / "background_layer_renderer.py").read_text(encoding="utf-8")
     assert "projection_screen_enabled=draw_projection_screen" in background_gate
     assert "background_presenter.projection_fallback_needed()" not in background_gate
     assert "def projection_fallback_needed" in background_presenter
-    assert "ready = getattr(viewer, '_panorama_texture_ready', None)" in background_presenter
+    assert "BackgroundLayerRenderer" in background_presenter
+    assert "ready = getattr(self.viewer, '_panorama_texture_ready', None)" in background_layer_renderer
     assert "enabled = bool(projection_screen_enabled or has_panorama)" in background_presenter
     assert "if enabled and has_panorama:" in background_presenter
     layer_append_block = render_frame.split("self.screen_presenter.append_frame_layers(", 1)[1]
     assert "projection_views=eye_layer_views" in layer_append_block
     assert "projection_space=viewer._xr_space" in layer_append_block
     assert "quad_layer_headers=quad_layer_headers" in layer_append_block
+    assert "background_layer_headers=background_layer_headers" in layer_append_block
     projection_call = render_frame.split("self.projection_presenter.render_projection(", 1)[1].split(
         "self.screen_presenter.append_frame_layers(", 1
     )[0]
@@ -2470,7 +2482,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     viewer._make_quad_layer = _make_quad_layer
     presenter = ScreenLayerPresenter(viewer)
 
-    quad_layers, quad_layer_headers, updated, render_projection_layer = presenter.prepare_frame_layers(
+    quad_layers, quad_layer_headers, updated, render_projection_layer, background_layer_headers = presenter.prepare_frame_layers(
         screen_frame_uploaded=True
     )
 
@@ -2480,6 +2492,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert len(quad_layer_headers) == 2
     assert updated == [0, 1]
     assert render_projection_layer is False
+    assert background_layer_headers == []
     assert viewer._openxr_draw_projection_screen is False
     assert viewer._openxr_projection_screen_source_ready == (True, True)
     assert viewer._openxr_projection_screen_effects_enabled is False
@@ -2496,6 +2509,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
         projection_views=[object()],
         projection_space=object(),
         quad_layer_headers=quad_layer_headers,
+        background_layer_headers=[],
     )
     assert len(composition_layers) == 3
     assert composition_layers[1:] == quad_layer_headers

@@ -2,15 +2,19 @@ import time
 
 from OpenGL.GL import GL_DEPTH_BUFFER_BIT, glClear
 
+from .background_layer_renderer import BackgroundLayerRenderer
+
 
 class BackgroundPresenter:
     def __init__(self, viewer):
         self.viewer = viewer
 
     def projection_fallback_needed(self):
-        viewer = self.viewer
-        ready = getattr(viewer, '_panorama_texture_ready', None)
-        return bool(callable(ready) and ready() is not None)
+        renderer = getattr(self.viewer, '_background_layer_renderer', None)
+        if renderer is None:
+            renderer = BackgroundLayerRenderer(self.viewer)
+            self.viewer._background_layer_renderer = renderer
+        return renderer.panorama_ready() and not renderer.native_background_available()
 
     def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, projection_screen_enabled):
         viewer = self.viewer

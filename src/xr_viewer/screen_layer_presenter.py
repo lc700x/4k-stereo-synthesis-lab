@@ -4,6 +4,7 @@ import time
 import moderngl
 from OpenGL.GL import GL_CCW, glFrontFace
 
+from .background_layer_renderer import BackgroundLayerRenderer
 from .background_presenter import BackgroundPresenter
 
 try:
@@ -15,6 +16,7 @@ except ImportError:
 class ScreenLayerPresenter:
     def __init__(self, viewer):
         self.viewer = viewer
+        self._frame_background_layers = []
         self._frame_projection_layer = None
         self._frame_quad_layers = []
 
@@ -306,11 +308,11 @@ class ScreenLayerPresenter:
         viewer = self.viewer
         if self.projection_screen_needed():
             return True
-        background_presenter = getattr(viewer, '_background_presenter', None)
-        if background_presenter is None:
-            background_presenter = BackgroundPresenter(viewer)
-            viewer._background_presenter = background_presenter
-        if background_presenter.projection_fallback_needed():
+        background_renderer = getattr(viewer, '_background_layer_renderer', None)
+        if background_renderer is None:
+            background_renderer = BackgroundLayerRenderer(viewer)
+            viewer._background_layer_renderer = background_renderer
+        if background_renderer.panorama_ready() and not background_renderer.native_background_available():
             return True
         if viewer._keyboard_visible and viewer._keyboard_tex is not None:
             return True
@@ -347,18 +349,26 @@ class ScreenLayerPresenter:
         self.viewer._openxr_projection_screen_effects_enabled = self.projection_screen_effects_enabled()
 
     def prepare_frame_layers(self, *, screen_frame_uploaded=False):
+        self._frame_background_layers = []
         self._frame_projection_layer = None
         self._frame_quad_layers = []
+        background_renderer = getattr(self.viewer, '_background_layer_renderer', None)
+        if background_renderer is None:
+            background_renderer = BackgroundLayerRenderer(self.viewer)
+            self.viewer._background_layer_renderer = background_renderer
+        background_layer_headers, background_projection_fallback = background_renderer.make_background_layers()
+        self._frame_background_layers = list(background_renderer._frame_background_layers)
         updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
         quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
         self._frame_quad_layers = quad_layers
         self.prepare_projection_frame_state()
-        render_projection_layer = self.projection_layer_needed()
+        render_projection_layer = self.projection_layer_needed() or background_projection_fallback
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')
-        return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer
+        return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer, background_layer_headers
 
-    def append_frame_layers(self, composition_layers, *, projection_views=(), projection_space=None, quad_layer_headers=()):
+    def append_frame_layers(self, composition_layers, *, projection_views=(), projection_space=None, quad_layer_headers=(), background_layer_headers=()):
+        composition_layers.extend(background_layer_headers)
         if projection_views:
             projection_layer = xr.CompositionLayerProjection(
                 space=projection_space,

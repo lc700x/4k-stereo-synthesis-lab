@@ -193,9 +193,6 @@ External Unity/Blender bake or packaged panorama asset
 - 新增 `BackgroundLayerRenderer`：
   - 首选 OpenXR equirect/cubemap layer（若 runtime 支持）。
   - fallback 为 projection layer 内 sky sphere shader。
-- 明确 3DoF 前提：
-  - 只保留头部旋转视差。
-  - 位置移动被忽略或限制在 seated origin 附近。
 - 将动态 controller、laser、overlay 与静态背景分离。
 - 当前落地：panorama shader 支持 `stereo_layout: "sbs"`，左右眼分别采样左/右半幅；`.hdr` panorama 优先上传为半浮点纹理，controller panorama IBL 也按同一 eye 分区采样。
 
@@ -402,7 +399,6 @@ BackgroundPresenter
 | OpenXR runtime 对 Quad/equirect 支持差异 | 某些设备黑屏或层失败 | 能力探测 + projection fallback |
 | Python/OpenGL 难以实现真正 GPU 多队列 | 无法达到最终并行度 | 先实现 no-wait 语义，再引入 D3D11/D3D12/Vulkan 后端 |
 | effect 结果读写冲突 | 闪烁或 GPU hazard | triple buffer + safe index，不读 writing slot |
-| panorama 背景与 6DoF 头动不匹配 | 平移时视差错误 | 明确 3DoF/固定 seated origin；6DoF 后续单独设计 |
 | 诊断口径混乱 | 性能问题误判 | 强制分开 capture/runtime/viewer/screen/effect/submit/present |
 
 ## 9. 第一轮落地建议

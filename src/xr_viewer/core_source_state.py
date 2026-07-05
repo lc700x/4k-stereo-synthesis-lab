@@ -525,6 +525,10 @@ class CoreSourceStateMixin:
 
     def _has_renderable_source_frame(self):
         if self._runtime_direct_source:
+            if getattr(self, '_use_d3d11', False):
+                renderer = getattr(self, '_d3d11_native_renderer', None)
+                if renderer is not None and renderer.has_frame:
+                    return True
             return all(self._runtime_eye_textures)
         return self.color_tex is not None and self.depth_tex is not None
 

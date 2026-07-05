@@ -416,10 +416,19 @@ def test_runtime_direct_renderable_source_does_not_require_depth_texture():
     viewer._runtime_direct_source = True
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_depth_texture = None
+    viewer._use_d3d11 = False
+    viewer._d3d11_native_renderer = None
 
     assert viewer._has_renderable_source_frame()
 
     viewer._runtime_eye_textures[1] = None
+    assert not viewer._has_renderable_source_frame()
+
+    viewer._use_d3d11 = True
+    viewer._d3d11_native_renderer = SimpleNamespace(has_frame=True)
+    assert viewer._has_renderable_source_frame()
+
+    viewer._d3d11_native_renderer.has_frame = False
     assert not viewer._has_renderable_source_frame()
 
 

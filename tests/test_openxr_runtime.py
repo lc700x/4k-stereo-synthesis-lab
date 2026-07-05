@@ -844,11 +844,11 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "self._queue_runtime_effect_submit(effect_source_rgb)" in (
         SRC / "xr_viewer" / "core_source_state.py"
     ).read_text(encoding="utf-8")
+    frame_submitter_text = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
     assert "effect_submitter.flush_after_submit(" in implementation
-    submit_flush_block = implementation.split("_submit_openxr_frame(composition_layers)", 1)[1].split(
-        "if loop_perf_log_enabled:", 1
-    )[0]
-    assert submit_flush_block.index("openxr_submit_frame") < submit_flush_block.index(
+    assert "frame_submitter.submit(" in implementation
+    assert "openxr_submit_frame" in frame_submitter_text
+    assert implementation.index("frame_submitter.submit(") < implementation.index(
         "effect_submitter.flush_after_submit("
     )
     assert "self._runtime_effect_safe_source_frame_id = pool.safe_frame_id" not in runtime_eye
@@ -1249,7 +1249,10 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
     assert "_load_ext_memory_object" not in d3d_interop
     assert "_create_d3d11_shared_texture" not in d3d_interop
     assert "_blit_ext_to_swapchain" not in interop
-    assert "def _submit_openxr_frame(layers):" in implementation
+    frame_submitter = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
+    assert "class FrameSubmitter" in frame_submitter
+    assert "xr.end_frame(" in frame_submitter
+    assert "def _submit_openxr_frame(layers):" not in implementation
 
 
 def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
@@ -1340,7 +1343,7 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
 def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
-    submit_tail = run_body.rsplit("_submit_openxr_frame(composition_layers)", 1)[1].split(
+    submit_tail = run_body.rsplit("frame_submitter.submit(", 1)[1].split(
         "if loop_perf_log_enabled:", 1
     )[0]
 
@@ -1349,7 +1352,60 @@ def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
     assert "should_render=frame_state.should_render" in submit_tail
     assert "screen_frame_uploaded=screen_frame_uploaded" in submit_tail
     assert "if not screen_frame_uploaded or" not in submit_tail
-    assert submit_tail.index("openxr_submit_frame") < submit_tail.index("effect_submitter.flush_after_submit(")
+    frame_submitter_text = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
+    assert "openxr_submit_frame" in frame_submitter_text
+    assert run_body.index("frame_submitter.submit(") < run_body.index("effect_submitter.flush_after_submit(")
+    assert "effect_submitter.flush_after_submit(" in submit_tail
+
+
+def test_frame_submitter_owns_end_frame_metrics(monkeypatch):
+    monkeypatch.chdir(SRC)
+    import xr_viewer.frame_submitter as frame_submitter
+    from xr_viewer.frame_submitter import FrameSubmitter
+
+    calls = []
+
+    class FakeXr:
+        class EnvironmentBlendMode:
+            OPAQUE = "opaque"
+
+        class FrameEndInfo:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        @staticmethod
+        def end_frame(session, info):
+            calls.append((session, info.kwargs))
+
+    class Viewer:
+        _xr_session = "session"
+
+        def __init__(self):
+            self.inc_calls = []
+            self.time_calls = []
+
+        def _breakdown_inc(self, name, amount=1):
+            self.inc_calls.append((name, amount))
+
+        def _fps_breakdown_add_time(self, name, seconds):
+            self.time_calls.append((name, seconds))
+
+        def _breakdown_add_time(self, name, seconds):
+            self.time_calls.append((name, seconds))
+
+    monkeypatch.setattr(frame_submitter, "xr", FakeXr)
+    viewer = Viewer()
+    layers = [object(), object()]
+
+    FrameSubmitter(viewer).submit(layers, display_time=123, submit_start=1.0)
+
+    assert viewer.inc_calls == [("openxr_layer_count", 2)]
+    assert calls[0][0] == "session"
+    assert calls[0][1]["display_time"] == 123
+    assert calls[0][1]["environment_blend_mode"] == "opaque"
+    assert calls[0][1]["layers"] is layers
+    assert "openxr_end_frame" in [name for name, _seconds in viewer.time_calls]
+    assert "openxr_submit_frame" in [name for name, _seconds in viewer.time_calls]
 
 
 def test_effect_submitter_flushes_only_after_rendered_reused_screen_frames(monkeypatch):
@@ -1394,7 +1450,7 @@ def test_active_openxr_presenter_does_not_lazy_load_environment_assets():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
     preview_block = run_body.split("if self._preview_only_mode:", 1)[1].split("self._poll_xr_events()", 1)[0]
-    active_tail = run_body.rsplit("_submit_openxr_frame(composition_layers)", 1)[1]
+    active_tail = run_body.rsplit("frame_submitter.submit(", 1)[1]
 
     assert "self._ensure_env_model_initialized(\"Preview-only\")" in preview_block
     assert "self._ensure_env_model_initialized(\"Lazy\")" not in active_tail
@@ -1436,8 +1492,8 @@ def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
         "if frame_state.should_render:", 1
     )[0]
 
-    assert "_submit_openxr_frame(composition_layers)" in session_ready_idle
-    assert "_submit_openxr_frame(composition_layers)" in no_renderable
+    assert "frame_submitter.submit(" in session_ready_idle
+    assert "frame_submitter.submit(" in no_renderable
     assert "self._flush_runtime_effect_submit()" not in session_ready_idle
     assert "self._flush_runtime_effect_submit()" not in no_renderable
     assert "time.sleep" not in no_renderable
@@ -1446,10 +1502,10 @@ def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     frame_block = implementation.split("# Drain depth_q non-blocking", 1)[1].split(
-        "_submit_openxr_frame(composition_layers)", 1
+        "frame_submitter.submit(", 1
     )[0]
     render_tail = implementation.split("# On the first valid frame", 1)[1].split(
-        "_submit_openxr_frame(composition_layers)", 1
+        "frame_submitter.submit(", 1
     )[0]
     poll_idx = frame_block.index("screen_frame_uploaded = self._poll_source_frame(upload=True)")
     presenter_idx = frame_block.index("screen_presenter = getattr(self, '_screen_layer_presenter', None)")

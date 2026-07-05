@@ -150,6 +150,7 @@ from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
 from .effect_submitter import EffectSubmitter
+from .frame_submitter import FrameSubmitter
 from .projection_layer_presenter import ProjectionLayerPresenter
 from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
@@ -4467,21 +4468,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     _loop_mark('controller_missing')
 
             composition_layers = []
-
-            def _submit_openxr_frame(layers):
-                if loop_breakdown_enabled:
-                    self._breakdown_inc('openxr_layer_count', len(layers))
-                xr_submit_start = time.perf_counter() if loop_breakdown_enabled else 0.0
-                xr.end_frame(
-                    self._xr_session,
-                    xr.FrameEndInfo(
-                        display_time=frame_state.predicted_display_time,
-                        environment_blend_mode=xr.EnvironmentBlendMode.OPAQUE,
-                        layers=layers,
-                    ),
-                )
-                if loop_breakdown_enabled:
-                    self._breakdown_add_time('openxr_end_frame', time.perf_counter() - xr_submit_start)
+            frame_submitter = getattr(self, '_frame_submitter', None)
+            if frame_submitter is None:
+                frame_submitter = self._frame_submitter = FrameSubmitter(self)
 
             session_idle_timeout = self._track_session_idle_render(frame_state.should_render, now)
             if frame_state.should_render:
@@ -4501,11 +4490,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     )
                     print("[OpenXRViewer] Headset detected, render confirmed")
                 else:
-                    _submit_openxr_frame(composition_layers)
+                    frame_submitter.submit(
+                        composition_layers,
+                        display_time=frame_state.predicted_display_time,
+                        submit_start=submit_start,
+                    )
                     if loop_trace_enabled:
                         _loop_mark('end_frame')
-                    if loop_breakdown_enabled:
-                        self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
                     if session_idle_timeout:
                         if not self._hard_idle_active:
                             print(
@@ -4523,11 +4514,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._pause_xr_output_for_source_stall()
                 if not self._has_renderable_source_frame():
                     self._breakdown_inc('openxr_no_renderable')
-                    _submit_openxr_frame(composition_layers)
+                    frame_submitter.submit(
+                        composition_layers,
+                        display_time=frame_state.predicted_display_time,
+                        submit_start=submit_start,
+                    )
                     if loop_trace_enabled:
                         _loop_mark('end_frame')
-                    if loop_breakdown_enabled:
-                        self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
                     continue
 
             screen_frame_uploaded = False
@@ -4692,11 +4685,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 if loop_trace_enabled:
                     _loop_mark('layers')
 
-            _submit_openxr_frame(composition_layers)
+            frame_submitter.submit(
+                composition_layers,
+                display_time=frame_state.predicted_display_time,
+                submit_start=submit_start,
+            )
             if loop_trace_enabled:
                 _loop_mark('end_frame')
-            if loop_breakdown_enabled:
-                self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
             effect_submitter = getattr(self, '_effect_submitter', None)
             if effect_submitter is None:
                 effect_submitter = self._effect_submitter = EffectSubmitter(self)

@@ -27,6 +27,19 @@ def _make_no_room_viewer(monkeypatch):
     return _NoRoomViewer()
 
 
+def _set_runtime_effect_safe(viewer, tex, size, frame_id):
+    if not hasattr(viewer, "_runtime_effect_scheduler"):
+        from xr_viewer.effect_scheduler import EffectScheduler
+
+        scheduler = EffectScheduler()
+        viewer._runtime_effect_scheduler = lambda: scheduler
+        viewer._runtime_effect_latest_safe = scheduler.latest_safe
+    pool = viewer._runtime_effect_scheduler().pool
+    pool.safe_tex = tex
+    pool.safe_size = size
+    pool.safe_frame_id = frame_id
+
+
 def test_no_room_background_effects_skip_shadow_and_ground(monkeypatch):
     viewer = _make_no_room_viewer(monkeypatch)
     viewer._screen_effects_enabled = True
@@ -180,28 +193,19 @@ def test_runtime_effect_consumers_only_read_existing_safe_texture(monkeypatch):
     safe_tex = object()
     inc_calls = []
 
-    def _fail_promote():
-        raise RuntimeError("consumer should not promote")
-
     for viewer in (_make_default_viewer(monkeypatch), _make_no_room_viewer(monkeypatch)):
         viewer._frame_count = 7
         viewer._runtime_direct_source = True
-        viewer._runtime_effect_safe_source_tex = safe_tex
-        viewer._runtime_effect_safe_source_size = (16, 9)
-        viewer._runtime_effect_safe_source_frame_id = 6
-        viewer._promote_runtime_effect_ready_texture = _fail_promote
+        _set_runtime_effect_safe(viewer, safe_tex, (16, 9), 6)
         viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
-        viewer._record_screen_effect_safe_age = lambda _source_tex: None
+        viewer._record_screen_effect_safe_age = lambda _source_tex, _frame_id=None: None
 
         assert viewer._screen_effect_source_texture()[0] is safe_tex
 
     viewer = _make_default_viewer(monkeypatch)
     viewer._frame_count = 8
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = safe_tex
-    viewer._runtime_effect_safe_source_size = (16, 9)
-    viewer._runtime_effect_safe_source_frame_id = 7
-    viewer._promote_runtime_effect_ready_texture = _fail_promote
+    _set_runtime_effect_safe(viewer, safe_tex, (16, 9), 7)
     viewer._cached_glow_downsample_texture = lambda _tex, _size: None
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
@@ -215,10 +219,8 @@ def test_screen_light_source_lookup_failure_reuses_safe_texture(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._frame_count = 8
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = safe_tex
-    viewer._runtime_effect_safe_source_size = (16, 9)
-    viewer._runtime_effect_safe_source_frame_id = 7
-    viewer._record_screen_effect_safe_age = lambda _source_tex: None
+    _set_runtime_effect_safe(viewer, safe_tex, (16, 9), 7)
+    viewer._record_screen_effect_safe_age = lambda _source_tex, _frame_id=None: None
     viewer._cached_glow_downsample_texture = lambda *_args: (_ for _ in ()).throw(RuntimeError("cache failed"))
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
@@ -231,7 +233,7 @@ def test_screen_effect_age_diagnostic_failure_does_not_break_effect_source(monke
     source_tex = object()
     inc_calls = []
     viewer._frame_count = 9
-    viewer._runtime_effect_safe_source_frame_id = 7
+    _set_runtime_effect_safe(viewer, source_tex, None, 7)
     viewer._breakdown_add_value = lambda *_args: (_ for _ in ()).throw(RuntimeError("stats failed"))
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
@@ -482,9 +484,9 @@ def test_openxr_loop_uses_fast_env_model_initializer():
     assert "_ensure_env_model_initialized(\"Preview-only\")" in run_body
     assert "_init_env_model()" not in run_body
 
-    quad_idx = run_body.index("updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)")
-    submit_idx = run_body.index("_submit_openxr_frame(composition_layers)", quad_idx)
-    flush_idx = run_body.index("self._flush_runtime_effect_submit()", submit_idx)
+    quad_idx = run_body.index("screen_presenter.prepare_frame_layers(screen_frame_uploaded=screen_frame_uploaded)")
+    submit_idx = run_body.index("frame_submitter.submit(", quad_idx)
+    flush_idx = run_body.index("effect_submitter.flush_after_submit(", submit_idx)
 
     assert quad_idx < submit_idx < flush_idx
     assert "_ensure_env_model_initialized(\"Lazy\")" not in run_body
@@ -500,7 +502,7 @@ def test_openxr_no_fresh_but_renderable_source_continues_to_screen_present():
 
     assert "self._pause_xr_output_for_source_stall()" in stale_block
     assert "if not self._has_renderable_source_frame():" in stale_block
-    assert "_submit_openxr_frame(composition_layers)" in no_renderable_block
+    assert "frame_submitter.submit(" in no_renderable_block
     assert "continue" in no_renderable_block
 
     stale_idx = run_body.index("if not self._has_fresh_source_frame(now):")
@@ -1065,12 +1067,12 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
 
     assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
     assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
-    assert "_runtime_effect_safe_source_tex" in source_func
+    assert "_runtime_effect_latest_safe()" in source_func
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
     assert "def _screen_effect_source_texture(self):" in base_text
-    assert "_runtime_effect_safe_source_tex" in base_text
+    assert "_runtime_effect_latest_safe()" in base_text
     assert "_promote_runtime_effect_ready_texture" not in base_text
     assert "_screen_effect_source_texture()" in no_room_glow
     assert "if getattr(self, '_runtime_direct_source', False):" in no_room_glow
@@ -1084,9 +1086,7 @@ def test_screen_effect_source_texture_is_cached_per_frame(monkeypatch):
     source_tex = type("Tex", (), {"glo": 11})()
     viewer._frame_count = 8
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = source_tex
-    viewer._runtime_effect_safe_source_size = (1280, 720)
-    viewer._runtime_effect_safe_source_frame_id = 4
+    _set_runtime_effect_safe(viewer, source_tex, (1280, 720), 4)
     viewer._promote_count = 0
     viewer._age_count = 0
     inc_calls = []
@@ -1095,7 +1095,7 @@ def test_screen_effect_source_texture_is_cached_per_frame(monkeypatch):
     def _promote():
         viewer._promote_count += 1
 
-    def _record_age(_source_tex):
+    def _record_age(_source_tex, _frame_id=None):
         viewer._age_count += 1
 
     viewer._promote_runtime_effect_ready_texture = _promote
@@ -1114,9 +1114,7 @@ def test_screen_effect_source_cache_refreshes_when_safe_source_changes(monkeypat
     next_tex = type("Tex", (), {"glo": 22})()
     viewer._frame_count = 8
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = first_tex
-    viewer._runtime_effect_safe_source_size = (1280, 720)
-    viewer._runtime_effect_safe_source_frame_id = 4
+    _set_runtime_effect_safe(viewer, first_tex, (1280, 720), 4)
     viewer._promote_count = 0
     viewer._age_count = 0
     viewer._breakdown_inc = lambda *args, **kwargs: None
@@ -1124,15 +1122,14 @@ def test_screen_effect_source_cache_refreshes_when_safe_source_changes(monkeypat
     def _promote():
         viewer._promote_count += 1
 
-    def _record_age(_source_tex):
+    def _record_age(_source_tex, _frame_id=None):
         viewer._age_count += 1
 
     viewer._promote_runtime_effect_ready_texture = _promote
     viewer._record_screen_effect_safe_age = _record_age
 
     assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (first_tex, (1280, 720))
-    viewer._runtime_effect_safe_source_tex = next_tex
-    viewer._runtime_effect_safe_source_frame_id = 5
+    _set_runtime_effect_safe(viewer, next_tex, (1280, 720), 5)
     assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (next_tex, (1280, 720))
 
     assert viewer._promote_count == 0
@@ -1144,9 +1141,7 @@ def test_no_room_screen_effect_source_texture_uses_safe_runtime_source(monkeypat
     source_tex = type("Tex", (), {"glo": 14})()
     viewer._frame_count = 6
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = source_tex
-    viewer._runtime_effect_safe_source_size = (640, 360)
-    viewer._runtime_effect_safe_source_frame_id = 2
+    _set_runtime_effect_safe(viewer, source_tex, (640, 360), 2)
     viewer._promote_count = 0
     viewer._age_count = 0
     inc_calls = []
@@ -1155,7 +1150,7 @@ def test_no_room_screen_effect_source_texture_uses_safe_runtime_source(monkeypat
     def _promote():
         viewer._promote_count += 1
 
-    def _record_age(_source_tex):
+    def _record_age(_source_tex, _frame_id=None):
         viewer._age_count += 1
 
     viewer._promote_runtime_effect_ready_texture = _promote
@@ -1190,7 +1185,7 @@ def test_screen_effect_safe_age_records_once_per_safe_texture_per_frame(monkeypa
     other_tex = type("Tex", (), {"glo": 13})()
     values = []
     viewer._frame_count = 9
-    viewer._runtime_effect_safe_source_frame_id = 5
+    _set_runtime_effect_safe(viewer, source_tex, None, 5)
     viewer._breakdown_add_value = lambda name, value: values.append((name, value))
 
     viewer._record_screen_effect_safe_age(source_tex)
@@ -1221,7 +1216,7 @@ def test_glow_downsample_cache_is_shared_across_eyes():
 
     assert "_glow_ds_cache_key" in cached_func
     assert "_current_eye_index" not in key_func + cached_func + prepare_func
-    assert "_runtime_effect_safe_source_frame_id" in key_func
+    assert "latest_safe()" in key_func
     assert "source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)" in key_func
     assert "_cached_glow_downsample_texture(source_tex, source_size)" in prepare_func
     assert "if getattr(self, '_runtime_direct_source', False):" in shell_func
@@ -1262,8 +1257,7 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
         "source_tex = getattr(self, 'color_tex'", 1
     )[0]
 
-    assert "_runtime_effect_safe_source_tex" in source_func
-    assert "_runtime_effect_safe_source_size" in source_func
+    assert "_runtime_effect_latest_safe()" in source_func
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_record_screen_effect_safe_age" in source_func
     assert "_prepare_glow_downsample_texture" in source_func
@@ -1280,9 +1274,7 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     light_tex = object()
     viewer._frame_count = 12
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = source_tex
-    viewer._runtime_effect_safe_source_size = (1920, 1080)
-    viewer._runtime_effect_safe_source_frame_id = 3
+    _set_runtime_effect_safe(viewer, source_tex, (1920, 1080), 3)
     viewer._glow_ds_tex = light_tex
     viewer._glow_ds_size = (96, 54)
     viewer._glow_ds_cache_key = (3, 7, 1920, 1080, 96, 54)
@@ -1291,7 +1283,7 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     viewer._prepare_count = 0
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
-    viewer._record_screen_effect_safe_age = lambda _source_tex: setattr(viewer, "_age_count", viewer._age_count + 1)
+    viewer._record_screen_effect_safe_age = lambda _source_tex, _frame_id=None: setattr(viewer, "_age_count", viewer._age_count + 1)
 
     def _promote():
         viewer._promote_count += 1
@@ -1318,14 +1310,12 @@ def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatc
     next_tex = type("Tex", (), {"glo": 32})()
     viewer._frame_count = 12
     viewer._runtime_direct_source = True
-    viewer._runtime_effect_safe_source_tex = first_tex
-    viewer._runtime_effect_safe_source_size = (1920, 1080)
-    viewer._runtime_effect_safe_source_frame_id = 3
+    _set_runtime_effect_safe(viewer, first_tex, (1920, 1080), 3)
     viewer._promote_count = 0
     viewer._age_count = 0
     viewer._prepare_count = 0
     viewer._breakdown_inc = lambda *args, **kwargs: None
-    viewer._record_screen_effect_safe_age = lambda _source_tex: setattr(viewer, "_age_count", viewer._age_count + 1)
+    viewer._record_screen_effect_safe_age = lambda _source_tex, _frame_id=None: setattr(viewer, "_age_count", viewer._age_count + 1)
 
     def _promote():
         viewer._promote_count += 1
@@ -1338,8 +1328,7 @@ def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatc
     viewer._prepare_glow_downsample_texture = _prepare
 
     assert viewer._screen_light_source_texture() == (first_tex, (1920, 1080))
-    viewer._runtime_effect_safe_source_tex = next_tex
-    viewer._runtime_effect_safe_source_frame_id = 4
+    _set_runtime_effect_safe(viewer, next_tex, (1920, 1080), 4)
     assert viewer._screen_light_source_texture() == (next_tex, (1920, 1080))
 
     assert viewer._promote_count == 0
@@ -1427,7 +1416,7 @@ def test_screen_glow_shader_uses_region_color_grid():
     assert "textureLod(u_screen_light_tex" in glsl_text
     assert "glow_grid_color" in glsl_text
     assert "def _screen_effect_source_texture" in effects_text
-    assert "_runtime_effect_safe_source_tex" in effects_text
+    assert "_runtime_effect_latest_safe()" in effects_text
 
 
 def test_no_room_glow_pass_restores_gl_state_on_failure():

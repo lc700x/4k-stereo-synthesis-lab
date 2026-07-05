@@ -721,6 +721,34 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     assert viewer._background_layer_renderer is not None
 
 
+def test_screen_layer_presenter_keeps_quad_when_background_layer_build_fails(monkeypatch):
+    import ctypes
+    from types import SimpleNamespace
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    viewer = _make_default_viewer(monkeypatch)
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._background_layer_renderer = SimpleNamespace(
+        make_background_layers=lambda: (_ for _ in ()).throw(RuntimeError("background failed")),
+    )
+    viewer._update_quad_layer_swapchains = lambda force=False: [0]
+    viewer._make_quad_layer = lambda _eye_index: ctypes.c_int(9)
+    presenter = ScreenLayerPresenter(viewer)
+    presenter.projection_layer_needed = lambda: False
+
+    quad_layers, quad_headers, updated, render_projection, background_headers = presenter.prepare_frame_layers(
+        screen_frame_uploaded=True
+    )
+
+    assert len(quad_layers) == 1
+    assert len(quad_headers) == 1
+    assert updated == [0]
+    assert render_projection is True
+    assert background_headers == []
+    assert ("openxr_background_layer_failed", 1) in inc_calls
+
+
 def test_background_layer_renderer_prefers_native_layer_before_projection_and_quad(monkeypatch):
     monkeypatch.chdir(SRC)
     import ctypes

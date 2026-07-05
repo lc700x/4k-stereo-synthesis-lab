@@ -378,11 +378,6 @@ class CoreSourceStateMixin:
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
             return
         self._pending_runtime_effect_source = None
-        try:
-            self._prewarm_runtime_effect_downsample()
-        except Exception as exc:
-            print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
-            self._breakdown_inc("openxr_effect_downsample_prewarm_failed")
 
     def _prewarm_runtime_effect_downsample(self):
         source_tex = getattr(self, "_runtime_effect_safe_source_tex", None)

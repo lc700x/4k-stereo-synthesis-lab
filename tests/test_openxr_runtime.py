@@ -589,45 +589,20 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
     assert ("openxr_effect_submit_failed", 1) in inc_calls
 
 
-def test_runtime_effect_submit_prewarms_downsample_after_flush():
+def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
     from xr_viewer.core_source_state import CoreSourceStateMixin
 
     class Viewer(CoreSourceStateMixin):
         pass
 
     viewer = Viewer()
-    source = object()
-    safe_tex = object()
-    prepared_tex = object()
-    prepared = []
-    inc_calls = []
-    viewer._pending_runtime_effect_source = source
-    viewer._runtime_effect_safe_source_tex = None
-    viewer._runtime_effect_safe_source_size = None
-    viewer._glow_mode = "surround"
-    viewer._glow_intensity_multiplier = 0.0
-    viewer._glow_shell_intensity_multiplier = 1.0
-    viewer._screen_light_intensity = 0.0
-    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
-    viewer._submit_runtime_effect_source_texture = lambda value: None
-
-    def _promote():
-        viewer._runtime_effect_safe_source_tex = safe_tex
-        viewer._runtime_effect_safe_source_size = (640, 360)
-        return safe_tex
-
-    def _prepare(tex, size):
-        prepared.append((tex, size))
-        return prepared_tex
-
-    viewer._promote_runtime_effect_ready_texture = _promote
-    viewer._prepare_glow_downsample_texture = _prepare
+    viewer._pending_runtime_effect_source = object()
+    viewer._submit_runtime_effect_source_texture = lambda _value: None
+    viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("flush should not prewarm")
 
     viewer._flush_runtime_effect_submit()
 
     assert viewer._pending_runtime_effect_source is None
-    assert prepared == [(safe_tex, (640, 360))]
-    assert ("openxr_effect_downsample_prewarm", 1) in inc_calls
 
 
 def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
@@ -672,25 +647,6 @@ def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
     viewer._prewarm_runtime_effect_downsample = lambda: None
     viewer._flush_runtime_effect_submit()
     assert viewer._pending_runtime_effect_source is None
-
-
-def test_runtime_effect_submit_prewarm_failure_is_not_submit_failure():
-    from xr_viewer.core_source_state import CoreSourceStateMixin
-
-    class Viewer(CoreSourceStateMixin):
-        pass
-
-    viewer = Viewer()
-    inc_calls = []
-    viewer._pending_runtime_effect_source = object()
-    viewer._submit_runtime_effect_source_texture = lambda _value: None
-    viewer._prewarm_runtime_effect_downsample = lambda: (_ for _ in ()).throw(RuntimeError("prewarm failed"))
-    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
-
-    viewer._flush_runtime_effect_submit()
-
-    assert ("openxr_effect_downsample_prewarm_failed", 1) in inc_calls
-    assert ("openxr_effect_submit_failed", 1) not in inc_calls
 
 
 def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():

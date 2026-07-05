@@ -637,7 +637,8 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
 
-    assert "_openxr_projection_screen_unavailable_reason" in screen_presenter
+    assert "_openxr_quad_screen_unavailable_reason" in screen_presenter
+    assert "_openxr_projection_screen_unavailable_reason" not in screen_presenter
     assert "draw_projection_screen" not in render_eye
     assert "_openxr_draw_projection_screen" not in render_eye
     assert "projection_screen_enabled=" not in render_eye

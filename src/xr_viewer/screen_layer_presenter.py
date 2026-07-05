@@ -99,7 +99,7 @@ class ScreenLayerPresenter:
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 
-    def projection_screen_unavailable_reason(self):
+    def quad_screen_unavailable_reason(self):
         reason = getattr(self.viewer, '_quad_layer_unavailable_reason', None)
         return reason() if callable(reason) else None
 
@@ -148,7 +148,7 @@ class ScreenLayerPresenter:
         return False
 
     def prepare_projection_frame_state(self):
-        self.viewer._openxr_projection_screen_unavailable_reason = self.projection_screen_unavailable_reason()
+        self.viewer._openxr_quad_screen_unavailable_reason = self.quad_screen_unavailable_reason()
 
     def prepare_frame_layers(self, *, screen_frame_uploaded=False):
         self._frame_background_layers = []

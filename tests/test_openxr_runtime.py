@@ -2195,7 +2195,8 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "_openxr_projection_screen_source_ready" not in render_eye_block
     assert "quad_unavailable_reason == 'missing_source_texture'" not in render_eye_block
     assert "not self._quad_layer_screen_presentable()" not in render_eye_block
-    assert "_openxr_projection_screen_unavailable_reason" in screen_presenter_text
+    assert "_openxr_quad_screen_unavailable_reason" in screen_presenter_text
+    assert "_openxr_projection_screen_unavailable_reason" not in screen_presenter_text
     assert "_openxr_draw_projection_screen" not in screen_presenter_text
     assert "_openxr_projection_screen_source_ready" not in screen_presenter_text
     assert "_openxr_projection_screen_effects_enabled" not in screen_presenter_text
@@ -2624,7 +2625,7 @@ def test_quad_layer_failure_reason_does_not_enable_projection_screen():
     assert viewer._update_quad_layer_swapchains() == []
     presenter = ScreenLayerPresenter(viewer)
 
-    assert presenter.projection_screen_unavailable_reason() == "update_failed_RuntimeError"
+    assert presenter.quad_screen_unavailable_reason() == "update_failed_RuntimeError"
 
 
 def test_quad_layer_status_hotkey_does_not_toggle_back_to_projection():

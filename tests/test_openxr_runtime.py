@@ -657,14 +657,21 @@ def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
 
     viewer = Viewer()
     inc_calls = []
-    viewer._pending_runtime_effect_source = object()
+    pending = object()
+    viewer._pending_runtime_effect_source = pending
     viewer._submit_runtime_effect_source_texture = lambda _value: False
     viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     viewer._flush_runtime_effect_submit()
 
+    assert viewer._pending_runtime_effect_source is pending
     assert ("openxr_effect_downsample_prewarm_skip", 1) in inc_calls
+
+    viewer._submit_runtime_effect_source_texture = lambda _value: None
+    viewer._prewarm_runtime_effect_downsample = lambda: None
+    viewer._flush_runtime_effect_submit()
+    assert viewer._pending_runtime_effect_source is None
 
 
 def test_runtime_effect_submit_prewarm_failure_is_not_submit_failure():

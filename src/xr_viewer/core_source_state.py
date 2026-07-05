@@ -367,16 +367,17 @@ class CoreSourceStateMixin:
         effect_source_rgb = getattr(self, "_pending_runtime_effect_source", None)
         if effect_source_rgb is None:
             return
-        self._pending_runtime_effect_source = None
         try:
             submitted = self._submit_runtime_effect_source_texture(effect_source_rgb)
         except Exception as exc:
+            self._pending_runtime_effect_source = None
             print(f"[OpenXRViewer] Runtime effect submit failed: {type(exc).__name__}: {exc}")
             self._breakdown_inc("openxr_effect_submit_failed")
             return
         if submitted is False:
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
             return
+        self._pending_runtime_effect_source = None
         try:
             self._prewarm_runtime_effect_downsample()
         except Exception as exc:

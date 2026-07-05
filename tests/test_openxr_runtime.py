@@ -774,9 +774,12 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def mark_ready" in scheduler_text
     assert "def promote_ready" in scheduler_text
     assert "def publish" in scheduler_text
+    assert "def submit_screen_frame" in scheduler_text
     assert "def publish_completed" in scheduler_text
     assert "def poll_completed" in scheduler_text
     assert "def latest_safe" in scheduler_text
+    assert "def latest_safe_glow" in scheduler_text
+    assert "def latest_safe_light_probe" in scheduler_text
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" in runtime_eye
@@ -958,14 +961,18 @@ def test_effect_scheduler_publishes_completed_result_before_consumers_read_safe(
             return tex
 
     scheduler = EffectScheduler()
-    staging = scheduler.ensure_staging(Ctx(), 8, 4)
+    staging = scheduler.submit_screen_frame(Ctx(), 8, 4)
     assert scheduler.latest_safe() == (None, None, 0)
+    assert scheduler.latest_safe_glow() == (None, None, 0)
+    assert scheduler.latest_safe_light_probe() == (None, None, 0)
 
     scheduler.publish_completed(8, 4, 21)
     assert scheduler.latest_safe() == (None, None, 0)
 
     assert scheduler.poll_completed()
     assert scheduler.latest_safe() == (staging, (8, 4), 21)
+    assert scheduler.latest_safe_glow() == (staging, (8, 4), 21)
+    assert scheduler.latest_safe_light_probe() == (staging, (8, 4), 21)
     assert not scheduler.poll_completed()
     assert scheduler.latest_safe() == (staging, (8, 4), 21)
 

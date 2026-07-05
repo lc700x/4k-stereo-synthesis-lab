@@ -102,6 +102,9 @@ class EffectScheduler:
     def ensure_staging(self, ctx, w, h):
         return self.pool.ensure_staging(ctx, w, h)
 
+    def submit_screen_frame(self, ctx, w, h):
+        return self.ensure_staging(ctx, w, h)
+
     def publish_completed(self, w, h, frame_id):
         return self.pool.publish(w, h, frame_id)
 
@@ -110,6 +113,12 @@ class EffectScheduler:
 
     def latest_safe(self):
         return self.pool.safe_tex, self.pool.safe_size, self.pool.safe_frame_id
+
+    def latest_safe_glow(self):
+        return self.latest_safe()
+
+    def latest_safe_light_probe(self):
+        return self.latest_safe()
 
     def release(self):
         self.pool.release()

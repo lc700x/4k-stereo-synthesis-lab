@@ -660,6 +660,7 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "BackgroundLayerRenderer" in background_presenter
     assert "ready = getattr(self.viewer, '_panorama_texture_ready', None)" in background_layer_renderer
     assert "projection_screen_enabled" not in background_presenter
+    assert "projection_fallback_needed=getattr(" in eye_background
     assert "if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in background_presenter
     assert "viewer._breakdown_inc('openxr_background_panorama')" in background_presenter
     assert "if eye_index == 0:" in background_presenter
@@ -759,7 +760,8 @@ def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch)
     viewer._team_help_visible = False
     viewer._team_help_tex = None
 
-    quad_layers, quad_headers, updated, render_projection, background_headers = ScreenLayerPresenter(viewer).prepare_frame_layers(
+    presenter = ScreenLayerPresenter(viewer)
+    quad_layers, quad_headers, updated, render_projection, background_headers = presenter.prepare_frame_layers(
         screen_frame_uploaded=True
     )
 
@@ -768,6 +770,7 @@ def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch)
     assert updated == [0]
     assert render_projection is False
     assert background_headers == []
+    assert presenter._frame_background_projection_fallback is False
     assert ("openxr_projection_layer_skipped", 1) in inc_calls
 
 
@@ -796,6 +799,7 @@ def test_screen_layer_presenter_keeps_quad_when_background_layer_build_fails(mon
     assert updated == [0]
     assert render_projection is True
     assert background_headers == []
+    assert presenter._frame_background_projection_fallback is True
     assert ("openxr_background_layer_failed", 1) in inc_calls
 
 
@@ -1002,6 +1006,46 @@ def test_background_presenter_skips_background_without_projection_screen_or_pano
     assert rendered is False
     assert ("openxr_background_idle", 1) in inc_calls
     assert any(name == "openxr_background" for name, _seconds in time_calls)
+
+
+def test_background_presenter_uses_frame_background_fallback_without_gate(monkeypatch):
+    monkeypatch.chdir(SRC)
+    import xr_viewer.background_presenter as background_module
+    from xr_viewer.background_presenter import BackgroundPresenter
+
+    monkeypatch.setattr(background_module, "glClear", lambda *_args: None)
+
+    class Fbo:
+        def __init__(self):
+            self.used = 0
+
+        def use(self):
+            self.used += 1
+
+    class Viewer:
+        pass
+
+    viewer = Viewer()
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_add_time = lambda name, seconds: None
+    viewer._render_panorama_background = lambda *_args: True
+    presenter = BackgroundPresenter(viewer)
+    presenter.projection_fallback_needed = lambda: pytest.fail("frame fallback result should be reused")
+    fbo = Fbo()
+
+    rendered = presenter.render_projection_background(
+        fbo,
+        object(),
+        object(),
+        object(),
+        eye_index=0,
+        projection_fallback_needed=True,
+    )
+
+    assert rendered is True
+    assert fbo.used == 1
+    assert ("openxr_background_panorama", 1) in inc_calls
 
 
 def test_background_presenter_keeps_panorama_projection_fallback_without_screen(monkeypatch):

@@ -16,6 +16,7 @@ class ScreenLayerPresenter:
         self._frame_background_layers = []
         self._frame_projection_layer = None
         self._frame_quad_layers = []
+        self._frame_background_projection_fallback = False
 
     def poll_screen_frame(self):
         viewer = self.viewer
@@ -162,6 +163,7 @@ class ScreenLayerPresenter:
         self._frame_background_layers = []
         self._frame_projection_layer = None
         self._frame_quad_layers = []
+        self._frame_background_projection_fallback = False
         background_renderer = getattr(self.viewer, '_background_layer_renderer', None)
         if background_renderer is None:
             background_renderer = BackgroundLayerRenderer(self.viewer)
@@ -177,6 +179,7 @@ class ScreenLayerPresenter:
             self.viewer._breakdown_inc('openxr_background_layer_failed')
             background_layer_headers, background_projection_fallback = [], True
             self._frame_background_layers = []
+        self._frame_background_projection_fallback = bool(background_projection_fallback)
         self.prepare_projection_frame_state()
         render_projection_layer = self.projection_layer_needed(
             background_projection_fallback=background_projection_fallback

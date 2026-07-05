@@ -2499,11 +2499,13 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     background_layer_renderer = (SRC / "xr_viewer" / "background_layer_renderer.py").read_text(encoding="utf-8")
     assert "projection_screen_enabled=" not in background_gate
     assert "background_presenter.projection_fallback_needed()" not in background_gate
+    assert "projection_fallback_needed=getattr(" in background_gate
     assert "def projection_fallback_needed" in background_presenter
     assert "BackgroundLayerRenderer" in background_presenter
     assert "ready = getattr(self.viewer, '_panorama_texture_ready', None)" in background_layer_renderer
     assert "projection_screen_enabled" not in background_presenter
-    assert "if self.projection_fallback_needed():" in background_presenter
+    assert "if projection_fallback_needed is None:" in background_presenter
+    assert "projection_fallback_needed = self.projection_fallback_needed()" in background_presenter
     layer_append_block = render_frame.split("self.screen_presenter.append_frame_layers(", 1)[1]
     assert "projection_views=eye_layer_views" in layer_append_block
     assert "projection_space=viewer._xr_space" in layer_append_block

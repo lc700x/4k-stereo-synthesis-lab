@@ -2138,12 +2138,18 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if background_presenter is None:
             background_presenter = BackgroundPresenter(self)
             self._background_presenter = background_presenter
+        screen_presenter = getattr(self, '_screen_layer_presenter', None)
         background_presenter.render_projection_background(
             mgl_fbo,
             view_mat,
             proj_mat,
             vp_mat,
             eye_index=eye_index,
+            projection_fallback_needed=getattr(
+                screen_presenter,
+                '_frame_background_projection_fallback',
+                None,
+            ),
         )
         if perf_enabled:
             _mark_perf('env')

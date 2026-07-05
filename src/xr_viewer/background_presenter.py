@@ -16,11 +16,13 @@ class BackgroundPresenter:
             self.viewer._background_layer_renderer = renderer
         return renderer.panorama_ready() and not renderer.native_background_available()
 
-    def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index):
+    def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, projection_fallback_needed=None):
         viewer = self.viewer
         start = time.perf_counter()
         rendered = False
-        if self.projection_fallback_needed():
+        if projection_fallback_needed is None:
+            projection_fallback_needed = self.projection_fallback_needed()
+        if projection_fallback_needed:
             if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):
                 if eye_index == 0:
                     viewer._breakdown_inc('openxr_background_panorama')

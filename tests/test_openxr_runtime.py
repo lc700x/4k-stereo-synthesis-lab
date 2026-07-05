@@ -1538,11 +1538,17 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
     from xr_viewer.openxr_frame_pipeline import OpenXRFramePipeline
 
     calls = []
+
+    class FrameTsRing(list):
+        def append(self, value):
+            calls.append(("record", value))
+            super().append(value)
+
     viewer = SimpleNamespace(
         _openxr_perf_log=False,
         _session_ready_pending=True,
         _frame_count=7,
-        _frame_ts_ring=[],
+        _frame_ts_ring=FrameTsRing(),
         actual_fps=0.0,
     )
     viewer._breakdown_inc = lambda name, amount=1: calls.append(("inc", name, amount))
@@ -1584,7 +1590,7 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
     assert ("poll", False) in calls
     names = [call[0] for call in calls]
     assert names.index("timing") < names.index("sync") < names.index("input")
-    assert names.index("gate") < names.index("render") < names.index("submit") < names.index("effect")
+    assert names.index("gate") < names.index("render") < names.index("submit") < names.index("effect") < names.index("record")
     render_call = next(call for call in calls if call[0] == "render")
     assert render_call[1]["display_time"] == 123
     assert render_call[1]["default_fov"] == "fov"

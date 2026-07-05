@@ -1029,6 +1029,28 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
     assert "def _submit_openxr_frame(layers):" in implementation
 
 
+def test_quad_layer_update_is_not_nested_under_projection_layer_views():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    loop_tail = implementation.split("if eye_layer_views:", 1)[1].split(
+        "_submit_openxr_frame(composition_layers)", 1
+    )[0]
+    projection_block = loop_tail.split("quad_layers = []", 1)[0]
+    quad_block = loop_tail.split("quad_layers = []", 1)[1]
+
+    assert "updated_quad_eyes = self._update_quad_layer_swapchains()" not in projection_block
+    assert "updated_quad_eyes = self._update_quad_layer_swapchains()" in quad_block
+    assert "composition_layers.append(" in quad_block
+
+    d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
+        "if self._use_d3d11:", 1
+    )[1]
+    assert "if self._quad_layer_can_replace_projection_screen():" in d3d11_native_block
+    assert "openxr_projection_screen_skipped" in d3d11_native_block
+    assert d3d11_native_block.index("if self._quad_layer_can_replace_projection_screen():") < d3d11_native_block.index(
+        "self._d3d11_native_renderer is not None"
+    )
+
+
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
 

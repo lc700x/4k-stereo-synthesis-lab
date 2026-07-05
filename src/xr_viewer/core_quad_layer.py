@@ -93,8 +93,6 @@ class CoreQuadLayerMixin:
         return source_tex, self._runtime_eye_texture_size, True
 
     def _quad_layer_unavailable_reason(self):
-        if not getattr(self, '_xr_quad_layer_enabled', False):
-            return "disabled"
         if getattr(self, '_xr_quad_layer_failed', False):
             return getattr(self, '_xr_quad_layer_failure_reason', None) or "failed"
         if not getattr(self, '_xr_quad_layer_active', False):

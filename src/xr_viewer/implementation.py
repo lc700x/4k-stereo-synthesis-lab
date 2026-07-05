@@ -433,7 +433,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._screen_quality_filter = bool(kwargs.get('screen_quality_filter', False))
         self._screen_quality_sharpness = max(0.0, min(1.0, float(kwargs.get('screen_quality_sharpness', 0.35))))
         self._screen_quality_oversample = max(0.75, min(1.5, float(kwargs.get('screen_quality_oversample', 1.0))))
-        self._xr_quad_layer_enabled = True
         self._xr_quad_layer_active = False
         self._xr_quad_layer_failed = False
         self._xr_quad_layer_failure_reason = None
@@ -461,7 +460,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             'screen_quality_filter': self._screen_quality_filter,
             'screen_quality_sharpness': self._screen_quality_sharpness,
             'screen_quality_oversample': self._screen_quality_oversample,
-            'xr_quad_layer_enabled': self._xr_quad_layer_enabled,
             'xr_quad_layer_debug_offset': self._xr_quad_layer_debug_offset,
             'xr_quad_layer_stereo_boost': self._xr_quad_layer_stereo_boost,
             'screen_light_intensity': self._screen_light_intensity,

@@ -181,7 +181,7 @@ class CoreOpenXRD3D11Mixin:
                 self._d3d11_native_renderer = None
                 print(f"[OpenXRViewer] D3D11 native renderer unavailable: {e}")
 
-        if self._xr_quad_layer_enabled and view_configs and self._d3d11_native_renderer is not None:
+        if view_configs and self._d3d11_native_renderer is not None:
             try:
                 self._quad_swapchain_presented_eyes = set()
                 src_w, src_h = self.frame_size

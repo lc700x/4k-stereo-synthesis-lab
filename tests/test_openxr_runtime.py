@@ -1336,7 +1336,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "'D2S_OPENXR_PANORAMA_BACKGROUND', '1'" in implementation
     assert "'D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS',\n            4.0" in implementation
     assert "'D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS',\n            4.0" in implementation
-    assert "self._xr_quad_layer_enabled = True" in implementation
+    assert "_xr_quad_layer_enabled" not in implementation
     assert "_openxr_screen_quad_enabled" not in implementation
     assert "kwargs.get('xr_quad_layer_enabled'" not in implementation
     assert "viewer._fps_breakdown_add_value = callbacks.breakdown_add_value" in (
@@ -2313,7 +2313,6 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
         pass
 
     viewer = Viewer()
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = True
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
@@ -2399,7 +2398,6 @@ def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused():
         pass
 
     viewer = Viewer()
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = True
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
@@ -2433,7 +2431,6 @@ def test_quad_layer_update_requires_both_eyes_for_quad_submit():
         pass
 
     viewer = Viewer()
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = True
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
@@ -2461,7 +2458,6 @@ def test_quad_layer_reuses_presented_frame_on_partial_update():
         pass
 
     viewer = Viewer()
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = True
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
@@ -2490,7 +2486,6 @@ def test_quad_layer_shared_swapchain_reuses_presented_frame_when_source_missing(
 
     shared_swapchain = object()
     viewer = Viewer()
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = True
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
@@ -2613,7 +2608,6 @@ def test_quad_layer_failure_reason_does_not_enable_projection_screen():
         pass
 
     viewer = Viewer()
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = True
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
@@ -2641,7 +2635,6 @@ def test_quad_layer_status_hotkey_does_not_toggle_back_to_projection():
 
     viewer = Viewer()
     viewer.published = 0
-    viewer._xr_quad_layer_enabled = True
     viewer._xr_quad_layer_active = False
     viewer._xr_quad_layer_failed = False
     viewer._quad_swapchains = {0: object(), 1: object()}
@@ -2660,7 +2653,7 @@ def test_quad_layer_status_hotkey_does_not_toggle_back_to_projection():
     viewer._xr_quad_layer_failed = True
     viewer._toggle_quad_layer_compare()
     assert viewer._xr_quad_layer_active is False
-    assert viewer._preset_name_overlay == "Projection Screen (Quad unavailable)"
+    assert viewer._preset_name_overlay == "Quad Layer unavailable"
 
 
 def test_quad_layer_pose_state_is_cached_per_frame():

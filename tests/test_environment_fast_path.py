@@ -452,13 +452,12 @@ def test_async_panorama_background_disables_default_glb_mesh(monkeypatch, tmp_pa
     viewer._environment_root = str(root)
     viewer._environment_model = "Default"
     viewer._openxr_panorama_background_enabled = True
-    viewer._xr_quad_layer_enabled = True
 
     viewer._configure_environment_profile()
 
     assert viewer._env_model_path is None
     assert viewer._panorama_background_path is None
-    assert viewer._xr_quad_layer_enabled is True
+    assert not hasattr(viewer, "_xr_quad_layer_enabled")
 
 
 def test_panorama_environment_skips_glb_initialization(monkeypatch):

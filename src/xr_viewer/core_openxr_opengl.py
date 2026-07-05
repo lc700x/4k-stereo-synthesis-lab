@@ -174,7 +174,7 @@ class CoreOpenXROpenGLMixin:
                 self._background_equirect_size = None
                 print(f"[OpenXRViewer] Equirect background layer unavailable: {type(exc).__name__}: {exc}")
 
-        if self._xr_quad_layer_enabled and view_configs:
+        if view_configs:
             try:
                 self._quad_swapchain_presented_eyes = set()
                 src_w, src_h = self.frame_size

@@ -434,7 +434,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._xr_quad_layer_enabled = bool(self._openxr_screen_quad_enabled)
         self._xr_quad_layer_active = False
         self._xr_quad_layer_failed = False
-        self._xr_quad_layer_debug_offset = float(kwargs.get('xr_quad_layer_debug_offset', 0.05))
+        self._xr_quad_layer_debug_offset = float(kwargs.get('xr_quad_layer_debug_offset', 0.0))
         self._xr_quad_layer_stereo_boost = max(1.0, float(kwargs.get('xr_quad_layer_stereo_boost', 1.0)))
         self._xr_quad_layer_debug_logged = False
         self._env_base_settings = {

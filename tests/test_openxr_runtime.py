@@ -1429,3 +1429,11 @@ def test_quad_layer_pose_state_is_cached_per_frame():
     assert first is second
     assert third is not first
     assert viewer.quat_calls == 2
+    assert tuple(first[1]) == (0.4, 0.5, -2.0)
+
+
+def test_quad_layer_debug_offset_defaults_to_screen_plane():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+
+    assert "kwargs.get('xr_quad_layer_debug_offset', 0.0)" in implementation
+    assert "kwargs.get('xr_quad_layer_debug_offset', 0.05)" not in implementation

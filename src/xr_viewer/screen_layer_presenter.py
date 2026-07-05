@@ -9,13 +9,18 @@ except ImportError:
 class ScreenLayerPresenter:
     def __init__(self, viewer):
         self.viewer = viewer
+        self._frame_projection_layer = None
+        self._frame_quad_layers = []
 
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 
     def prepare_frame_layers(self, *, screen_frame_uploaded=False):
+        self._frame_projection_layer = None
+        self._frame_quad_layers = []
         updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
         quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
+        self._frame_quad_layers = quad_layers
         render_projection_layer = self.viewer._projection_layer_needed()
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')
@@ -27,6 +32,7 @@ class ScreenLayerPresenter:
                 space=projection_space,
                 views=projection_views,
             )
+            self._frame_projection_layer = projection_layer
             composition_layers.append(
                 ctypes.cast(
                     ctypes.pointer(projection_layer),

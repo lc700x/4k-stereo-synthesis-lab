@@ -2274,6 +2274,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
 
     assert update_calls == [True]
     assert quad_layers == [left_layer, right_layer]
+    assert presenter._frame_quad_layers == [left_layer, right_layer]
     assert len(quad_layer_headers) == 2
     assert updated == [0, 1]
     assert render_projection_layer is False
@@ -2293,6 +2294,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     )
     assert len(composition_layers) == 3
     assert composition_layers[1:] == quad_layer_headers
+    assert presenter._frame_projection_layer is not None
 
     viewer._make_quad_layer = lambda _eye_index: None
     quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])

@@ -1436,8 +1436,10 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "screen_presenter.make_quad_layers(" not in frame_block
     assert "self._projection_layer_needed()" not in frame_block
     render_idx = frame_block.index("eye_layer_views = []")
-    append_idx = frame_block.index("for quad_layer_header in quad_layer_headers:")
+    append_idx = frame_block.index("screen_presenter.append_frame_layers(")
     assert poll_idx < presenter_idx < prepare_idx < render_idx < append_idx
+    assert "composition_layers.append(" not in frame_block
+    assert "ctypes.pointer(proj_layer)" not in frame_block
     screen_presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     assert "openxr_projection_layer_skipped" in screen_presenter_text
     render_eye = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
@@ -1455,8 +1457,9 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "enabled=draw_projection_screen" in background_gate
     assert "if enabled and getattr(viewer, '_panorama_background_path', None):" in background_presenter
     assert "if getattr(viewer, '_panorama_background_path', None):" not in background_presenter
-    quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
-    assert "composition_layers.append(quad_layer_header)" in quad_layer_block
+    layer_append_block = render_tail.split("screen_presenter.append_frame_layers(", 1)[1]
+    assert "projection_layer=projection_layer" in layer_append_block
+    assert "quad_layer_headers=quad_layer_headers" in layer_append_block
 
     d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
         "if self._use_d3d11:", 1
@@ -1650,6 +1653,12 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert ("openxr_projection_layer_skipped", 1) in inc_calls
     assert viewer._xr_quad_layer_active is True
     assert viewer._xr_quad_layer_failed is False
+
+    projection_layer = ctypes.c_int(3)
+    composition_layers = []
+    presenter.append_frame_layers(composition_layers, projection_layer=projection_layer, quad_layer_headers=quad_layer_headers)
+    assert len(composition_layers) == 3
+    assert composition_layers[1:] == quad_layer_headers
 
     viewer._make_quad_layer = lambda _eye_index: None
     quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])

@@ -4885,23 +4885,23 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                             ),
                         ))
 
+                projection_layer = None
                 if eye_layer_views:
                     if loop_trace_enabled:
                         _loop_mark('render_eyes')
-                    proj_layer = xr.CompositionLayerProjection(
+                    projection_layer = xr.CompositionLayerProjection(
                         space=self._xr_space,
                         views=eye_layer_views,
-                    )
-                    composition_layers.append(
-                        ctypes.cast(ctypes.pointer(proj_layer),
-                                    ctypes.POINTER(xr.CompositionLayerBaseHeader))
                     )
                 else:
                     if loop_trace_enabled:
                         _loop_mark('render_no_layers')
 
-                for quad_layer_header in quad_layer_headers:
-                    composition_layers.append(quad_layer_header)
+                screen_presenter.append_frame_layers(
+                    composition_layers,
+                    projection_layer=projection_layer,
+                    quad_layer_headers=quad_layer_headers,
+                )
                 if loop_trace_enabled:
                     _loop_mark('layers')
 

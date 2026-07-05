@@ -1088,6 +1088,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     frame_upload = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
     environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     screen_quality = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
     breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
@@ -1135,6 +1136,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
             or name in frame_upload
             or name in environment_renderer
             or name in screen_quality
+            or name in frame_renderer
             or name in screen_presenter
             or name in background_presenter
         )
@@ -1169,16 +1171,11 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert implementation.count("xr.wait_swapchain_image") == 1
     assert "xr.wait_swapchain_image" not in (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    screen_present_block = implementation.split(
-        "screen_presenter = getattr(self, '_screen_layer_presenter', None)", 1
-    )[1].split(
-        "eye_layer_views = []", 1
-    )[0]
-    assert "from .screen_layer_presenter import ScreenLayerPresenter" in implementation
-    assert "ScreenLayerPresenter(self)" in screen_present_block
-    assert "screen_presenter.update_or_reuse(" in screen_present_block
-    assert "screen_frame_uploaded=screen_frame_uploaded" in screen_present_block
-    assert "screen_presenter.make_quad_layers(" in screen_present_block
+    assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in implementation
+    assert "from .screen_layer_presenter import ScreenLayerPresenter" in frame_renderer
+    assert "ScreenLayerPresenter(viewer)" in frame_renderer
+    assert "self.screen_presenter.prepare_frame_layers(" in frame_renderer
+    assert "screen_frame_uploaded=screen_frame_uploaded" in frame_renderer
     assert "class ScreenLayerPresenter" in screen_presenter
     assert "def update_or_reuse" in screen_presenter
     assert "def make_quad_layers" in screen_presenter
@@ -1327,17 +1324,75 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
     pre_wait = run_body.split("# Wait for the runtime to signal frame timing.", 1)[0]
     wait_to_upload = run_body.split("# Wait for the runtime to signal frame timing.", 1)[1].split(
-        "view_tracker = getattr(self, '_view_pose_tracker', None)", 1
+        "frame_renderer = getattr(self, '_openxr_frame_renderer', None)", 1
     )[0]
 
     assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_wait
     assert "self._poll_source_frame(upload=False)" in pre_wait
     assert "xr.begin_frame" in wait_to_upload
     assert "screen_frame_uploaded = False" in wait_to_upload
-    assert "screen_frame_uploaded = self._poll_source_frame(upload=True)" in wait_to_upload
-    assert wait_to_upload.index("xr.begin_frame") < wait_to_upload.index(
-        "screen_frame_uploaded = self._poll_source_frame(upload=True)"
+    assert "frame_renderer.render_frame(" not in wait_to_upload
+
+
+def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():
+    from xr_viewer.openxr_frame_renderer import OpenXRFrameRenderer
+
+    class Viewer:
+        _xr_space = "space"
+
+        def __init__(self):
+            self.calls = []
+            self.time_calls = []
+
+        def _poll_source_frame(self, upload=False):
+            self.calls.append(("poll", upload))
+            return True
+
+        def _breakdown_add_time(self, name, seconds):
+            self.time_calls.append(name)
+
+    viewer = Viewer()
+    renderer = OpenXRFrameRenderer(viewer)
+    renderer.view_tracker = SimpleNamespace(
+        locate_views=lambda *, display_time: viewer.calls.append(("locate", display_time)) or (["view"], True)
     )
+    renderer.screen_presenter = SimpleNamespace(
+        prepare_frame_layers=lambda *, screen_frame_uploaded: viewer.calls.append(
+            ("prepare", screen_frame_uploaded)
+        ) or (["quad"], ["quad_header"], [0, 1], True),
+        append_frame_layers=lambda layers, **kwargs: viewer.calls.append(
+            ("append", layers, kwargs)
+        ) or layers.append("layer"),
+    )
+    renderer.projection_presenter = SimpleNamespace(
+        render_projection=lambda **kwargs: viewer.calls.append(("projection", kwargs)) or ["eye_layer"]
+    )
+    composition_layers = []
+
+    uploaded, adjusted, rendered = renderer.render_frame(
+        composition_layers=composition_layers,
+        display_time=123,
+        default_fov="fov",
+        default_proj="proj",
+        default_proj_d3d="proj_d3d",
+    )
+
+    assert uploaded is True
+    assert adjusted is True
+    assert rendered is True
+    assert composition_layers == ["layer"]
+    assert viewer.calls[0] == ("poll", True)
+    assert viewer.calls[1] == ("locate", 123)
+    assert viewer.calls[2] == ("prepare", True)
+    assert viewer.calls[3][0] == "projection"
+    assert viewer.calls[3][1]["enabled"] is True
+    assert viewer.calls[3][1]["views"] == ["view"]
+    assert viewer.calls[3][1]["updated_quad_eyes"] == [0, 1]
+    assert viewer.calls[4][0] == "append"
+    assert viewer.calls[4][2]["projection_views"] == ["eye_layer"]
+    assert viewer.calls[4][2]["projection_space"] == "space"
+    assert viewer.calls[4][2]["quad_layer_headers"] == ["quad_header"]
+    assert "openxr_quad_update" in viewer.time_calls
 
 
 def test_view_pose_tracker_owns_locate_cache_and_startup_screen(monkeypatch):
@@ -1431,20 +1486,18 @@ def test_view_pose_tracker_owns_locate_cache_and_startup_screen(monkeypatch):
 
 def test_active_openxr_presenter_delegates_view_pose_tracking():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
     view_pose_tracker = (SRC / "xr_viewer" / "view_pose_tracker.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
-    frame_block = run_body.split("# Drain depth_q non-blocking", 1)[1].split(
-        "quad_update_start = time.perf_counter()", 1
-    )[0]
 
-    assert "from .view_pose_tracker import ViewPoseTracker" in implementation
-    assert "view_tracker = getattr(self, '_view_pose_tracker', None)" in frame_block
-    assert "ViewPoseTracker(self)" in frame_block
-    assert "view_tracker.locate_views(" in frame_block
-    assert "display_time=frame_state.predicted_display_time" in frame_block
-    assert "xr.locate_views(" not in frame_block
-    assert "_head_model_mat4_from_views" not in frame_block
-    assert "_reset_screen_to_default(show_border=False)" not in frame_block
+    assert "OpenXRFrameRenderer(self)" in run_body
+    assert "from .view_pose_tracker import ViewPoseTracker" in frame_renderer
+    assert "ViewPoseTracker(viewer)" in frame_renderer
+    assert "self.view_tracker.locate_views(" in frame_renderer
+    assert "display_time=display_time" in frame_renderer
+    assert "xr.locate_views(" not in run_body
+    assert "_head_model_mat4_from_views" not in run_body
+    assert "_reset_screen_to_default(show_border=False)" not in run_body
     assert "class ViewPoseTracker" in view_pose_tracker
     assert "xr.locate_views(" in view_pose_tracker
     assert "viewer._last_located_views = views" in view_pose_tracker
@@ -1612,24 +1665,24 @@ def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
 
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    frame_block = implementation.split("# Drain depth_q non-blocking", 1)[1].split(
-        "frame_submitter.submit(", 1
-    )[0]
-    render_tail = implementation.split("view_tracker = getattr(self, '_view_pose_tracker', None)", 1)[1].split(
-        "frame_submitter.submit(", 1
-    )[0]
-    poll_idx = frame_block.index("screen_frame_uploaded = self._poll_source_frame(upload=True)")
-    presenter_idx = frame_block.index("screen_presenter = getattr(self, '_screen_layer_presenter', None)")
-    prepare_idx = frame_block.index("screen_presenter.prepare_frame_layers(")
-    assert "if self._quad_layer_can_replace_projection_screen():" not in frame_block[:prepare_idx]
-    assert "screen_presenter.make_quad_layers(" not in frame_block
-    assert "self._projection_layer_needed()" not in frame_block
-    render_idx = frame_block.index("projection_presenter.render_projection(")
-    append_idx = frame_block.index("screen_presenter.append_frame_layers(")
-    assert poll_idx < presenter_idx < prepare_idx < render_idx < append_idx
-    assert "composition_layers.append(" not in frame_block
-    assert "CompositionLayerProjection(" not in frame_block
-    assert "ctypes.pointer(proj_layer)" not in frame_block
+    frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
+    render_frame = frame_renderer.split("def render_frame", 1)[1]
+    poll_idx = render_frame.index("viewer._poll_source_frame(upload=True)")
+    locate_idx = render_frame.index("self.view_tracker.locate_views(")
+    prepare_idx = render_frame.index("self.screen_presenter.prepare_frame_layers(")
+    render_idx = render_frame.index("self.projection_presenter.render_projection(")
+    append_idx = render_frame.index("self.screen_presenter.append_frame_layers(")
+    assert poll_idx < locate_idx < prepare_idx < render_idx < append_idx
+    assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in implementation
+    assert "ScreenLayerPresenter" not in implementation
+    assert "ProjectionLayerPresenter" not in implementation
+    assert "ViewPoseTracker" not in implementation
+    assert "if self._quad_layer_can_replace_projection_screen():" not in render_frame[:prepare_idx]
+    assert "self.screen_presenter.make_quad_layers(" not in frame_renderer
+    assert "viewer._projection_layer_needed()" not in frame_renderer
+    assert "composition_layers.append(" not in frame_renderer
+    assert "CompositionLayerProjection(" not in frame_renderer
+    assert "ctypes.pointer(proj_layer)" not in frame_renderer
     screen_presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     assert "openxr_projection_layer_skipped" in screen_presenter_text
     assert "xr.CompositionLayerProjection(" in screen_presenter_text
@@ -1648,22 +1701,22 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "enabled=draw_projection_screen" in background_gate
     assert "if enabled and getattr(viewer, '_panorama_background_path', None):" in background_presenter
     assert "if getattr(viewer, '_panorama_background_path', None):" not in background_presenter
-    layer_append_block = render_tail.split("screen_presenter.append_frame_layers(", 1)[1]
+    layer_append_block = render_frame.split("self.screen_presenter.append_frame_layers(", 1)[1]
     assert "projection_views=eye_layer_views" in layer_append_block
-    assert "projection_space=self._xr_space" in layer_append_block
+    assert "projection_space=viewer._xr_space" in layer_append_block
     assert "quad_layer_headers=quad_layer_headers" in layer_append_block
-    projection_call = render_tail.split("projection_presenter.render_projection(", 1)[1].split(
-        "screen_presenter.append_frame_layers(", 1
+    projection_call = render_frame.split("self.projection_presenter.render_projection(", 1)[1].split(
+        "self.screen_presenter.append_frame_layers(", 1
     )[0]
     assert "enabled=render_projection_layer" in projection_call
-    assert "default_proj_d3d=_default_proj_d3d" in projection_call
+    assert "default_proj_d3d=default_proj_d3d" in projection_call
     assert "updated_quad_eyes=updated_quad_eyes" in projection_call
-    assert "render_d3d11_native(" not in render_tail
-    assert "render_nv_dx_interop(" not in render_tail
-    assert "render_d3d11_pbo(" not in render_tail
-    assert "render_opengl(" not in render_tail
-    assert "_get_or_create_fbo" not in render_tail
-    assert "glBlitFramebuffer" not in render_tail
+    assert "render_d3d11_native(" not in frame_renderer
+    assert "render_nv_dx_interop(" not in frame_renderer
+    assert "render_d3d11_pbo(" not in frame_renderer
+    assert "render_opengl(" not in frame_renderer
+    assert "_get_or_create_fbo" not in frame_renderer
+    assert "glBlitFramebuffer" not in frame_renderer
     projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     render_projection = projection_presenter.split("def render_projection", 1)[1].split(
         "def render_d3d11_native", 1

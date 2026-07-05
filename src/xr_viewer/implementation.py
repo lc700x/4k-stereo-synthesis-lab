@@ -151,9 +151,7 @@ from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
 from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
-from .projection_layer_presenter import ProjectionLayerPresenter
-from .screen_layer_presenter import ScreenLayerPresenter
-from .view_pose_tracker import ViewPoseTracker
+from .openxr_frame_renderer import OpenXRFrameRenderer
 from .filters import *
 
 class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
@@ -4526,62 +4524,24 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
             screen_frame_uploaded = False
             if frame_state.should_render:
-                # Drain depth_q non-blocking -keep only the newest frame
-                screen_frame_uploaded = self._poll_source_frame(upload=True)
-                if loop_trace_enabled:
-                    _loop_mark('poll_upload')
-
-                view_tracker = getattr(self, '_view_pose_tracker', None)
-                if view_tracker is None:
-                    view_tracker = ViewPoseTracker(self)
-                    self._view_pose_tracker = view_tracker
-                views, view_pose_adjusted = view_tracker.locate_views(
+                frame_renderer = getattr(self, '_openxr_frame_renderer', None)
+                if frame_renderer is None:
+                    frame_renderer = OpenXRFrameRenderer(self)
+                    self._openxr_frame_renderer = frame_renderer
+                screen_frame_uploaded, view_pose_adjusted, rendered_projection = frame_renderer.render_frame(
+                    composition_layers=composition_layers,
                     display_time=frame_state.predicted_display_time,
-                )
-                if loop_trace_enabled:
-                    _loop_mark('locate_views')
-                    if view_pose_adjusted:
-                        _loop_mark('view_pose_adjust')
-
-                quad_update_start = time.perf_counter()
-                screen_presenter = getattr(self, '_screen_layer_presenter', None)
-                if screen_presenter is None:
-                    screen_presenter = ScreenLayerPresenter(self)
-                    self._screen_layer_presenter = screen_presenter
-                quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer = (
-                    screen_presenter.prepare_frame_layers(screen_frame_uploaded=screen_frame_uploaded)
-                )
-                self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
-                if loop_trace_enabled:
-                    _loop_mark('quad_update')
-
-                projection_presenter = getattr(self, '_projection_layer_presenter', None)
-                if projection_presenter is None:
-                    projection_presenter = ProjectionLayerPresenter(self)
-                    self._projection_layer_presenter = projection_presenter
-                eye_layer_views = projection_presenter.render_projection(
-                    enabled=render_projection_layer,
-                    views=views,
                     default_fov=_default_fov,
                     default_proj=_default_proj,
                     default_proj_d3d=_default_proj_d3d,
-                    updated_quad_eyes=updated_quad_eyes,
-                )
-
-                if eye_layer_views:
-                    if loop_trace_enabled:
-                        _loop_mark('render_eyes')
-                else:
-                    if loop_trace_enabled:
-                        _loop_mark('render_no_layers')
-
-                screen_presenter.append_frame_layers(
-                    composition_layers,
-                    projection_views=eye_layer_views,
-                    projection_space=self._xr_space,
-                    quad_layer_headers=quad_layer_headers,
                 )
                 if loop_trace_enabled:
+                    _loop_mark('poll_upload')
+                    _loop_mark('locate_views')
+                    if view_pose_adjusted:
+                        _loop_mark('view_pose_adjust')
+                    _loop_mark('quad_update')
+                    _loop_mark('render_eyes' if rendered_projection else 'render_no_layers')
                     _loop_mark('layers')
 
             frame_submitter.submit(

@@ -373,7 +373,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     assert "constants[16:20] = np.array([eye_offset, depth_strength, convergence, roll]" in source
     assert "eye_sign * ipd * 0.5" not in source
     assert "self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0" in source
-    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in screen_presenter
+    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" not in screen_presenter
     assert "roll=viewer.screen_roll" in projection_presenter
     assert "float depth_response = depth - u_convergence;" in viewer_source
     assert "float shift = depth_response;" in viewer_source
@@ -2185,43 +2185,38 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     screen_presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     assert "openxr_projection_layer_skipped" in screen_presenter_text
     assert "xr.CompositionLayerProjection(" in screen_presenter_text
-    render_eye = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye_prefix, render_eye_block = render_eye.split("draw_projection_screen = bool(self._openxr_draw_projection_screen)", 1)
-    assert "quad_unavailable_reason == 'missing_source_texture'" not in render_eye_prefix
-    assert "not self._quad_layer_screen_presentable()" not in render_eye_prefix
+    render_eye_block = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
+    assert "draw_projection_screen" not in render_eye_block
+    assert "_openxr_draw_projection_screen" not in render_eye_block
+    assert "_openxr_projection_screen_source_ready" not in render_eye_block
+    assert "quad_unavailable_reason == 'missing_source_texture'" not in render_eye_block
+    assert "not self._quad_layer_screen_presentable()" not in render_eye_block
     assert "_openxr_projection_screen_unavailable_reason" in screen_presenter_text
-    assert "self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()" in screen_presenter_text
-    source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
-    assert "if draw_projection_screen:" in source_gate
-    assert "source_ready = self._openxr_projection_screen_source_ready" in source_gate
-    assert "getattr(self, '_openxr_projection_screen_source_ready'" not in source_gate
-    assert "self._runtime_eye_textures[eye_index] is None" not in source_gate
+    assert "_openxr_draw_projection_screen" not in screen_presenter_text
+    assert "_openxr_projection_screen_source_ready" not in screen_presenter_text
+    assert "_openxr_projection_screen_effects_enabled" not in screen_presenter_text
     prepare_frame_layers = screen_presenter_text.split("def prepare_frame_layers", 1)[1].split("def append_frame_layers", 1)[0]
     assert prepare_frame_layers.index("self.update_or_reuse(") < prepare_frame_layers.index("background_renderer.make_background_layers()")
     assert "def prepare_projection_frame_state" in screen_presenter_text
-    assert "self.viewer._openxr_projection_screen_source_ready" in screen_presenter_text
-    assert "self.viewer._openxr_projection_screen_effects_enabled" in screen_presenter_text
-    assert "def render_projection_screen" in screen_presenter_text
-    projection_screen = screen_presenter_text.split("def render_projection_screen", 1)[1].split("def render_quad_screen_overlay", 1)[0]
-    assert "_render_screen_background_effects" not in projection_screen
-    assert "_render_screen_foreground_effects" not in projection_screen
-    assert "screen_presenter.render_projection_screen(" in render_eye_block
+    assert "def render_projection_screen" not in screen_presenter_text
+    assert "_render_screen_background_effects" not in screen_presenter_text
+    assert "_render_screen_foreground_effects" not in screen_presenter_text
+    assert "screen_presenter.render_projection_screen(" not in render_eye_block
     assert "render_quad_screen_overlay(" in render_eye_block
     assert "openxr_projection_screen_skipped" not in render_eye_block
     assert "runtime_rgb_depth_max_disparity_px = (" not in render_eye_block
-    assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in screen_presenter_text
     background_gate = render_eye_block.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1
     )[0]
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
     background_layer_renderer = (SRC / "xr_viewer" / "background_layer_renderer.py").read_text(encoding="utf-8")
-    assert "projection_screen_enabled=draw_projection_screen" in background_gate
+    assert "projection_screen_enabled=" not in background_gate
     assert "background_presenter.projection_fallback_needed()" not in background_gate
     assert "def projection_fallback_needed" in background_presenter
     assert "BackgroundLayerRenderer" in background_presenter
     assert "ready = getattr(self.viewer, '_panorama_texture_ready', None)" in background_layer_renderer
-    assert "enabled = bool(projection_screen_enabled or has_panorama)" in background_presenter
-    assert "if enabled and has_panorama:" in background_presenter
+    assert "projection_screen_enabled" not in background_presenter
+    assert "if self.projection_fallback_needed():" in background_presenter
     layer_append_block = render_frame.split("self.screen_presenter.append_frame_layers(", 1)[1]
     assert "projection_views=eye_layer_views" in layer_append_block
     assert "projection_space=viewer._xr_space" in layer_append_block
@@ -2579,9 +2574,6 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert updated == [0, 1]
     assert render_projection_layer is False
     assert background_layer_headers == []
-    assert viewer._openxr_draw_projection_screen is False
-    assert viewer._openxr_projection_screen_source_ready == (True, True)
-    assert viewer._openxr_projection_screen_effects_enabled is False
     assert ("openxr_projection_layer_skipped", 1) in inc_calls
     assert viewer._xr_quad_layer_active is True
     assert viewer._xr_quad_layer_failed is False
@@ -2600,19 +2592,6 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert len(composition_layers) == 3
     assert composition_layers[1:] == quad_layer_headers
     assert presenter._frame_projection_layer is not None
-
-    viewer.render_projection_layer = True
-    viewer.screen_height = 1.0
-    viewer._screen_effects_enabled = True
-    viewer._should_render_source_screen_effects = lambda: True
-    assert presenter.projection_screen_needed() is False
-    assert presenter.projection_screen_source_ready(0) is True
-    assert presenter.projection_screen_source_ready(1) is True
-    assert presenter.projection_screen_effects_enabled() is False
-    viewer._runtime_direct_source = False
-    viewer.depth_tex = None
-    assert presenter.projection_screen_source_ready(0) is True
-    viewer.render_projection_layer = False
 
     viewer._make_quad_layer = lambda _eye_index: None
     quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])
@@ -2650,7 +2629,6 @@ def test_quad_layer_failure_reason_does_not_enable_projection_screen():
     assert viewer._update_quad_layer_swapchains() == []
     presenter = ScreenLayerPresenter(viewer)
 
-    assert presenter.projection_screen_needed() is False
     assert presenter.projection_screen_unavailable_reason() == "update_failed_RuntimeError"
 
 

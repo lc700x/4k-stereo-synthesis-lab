@@ -2178,15 +2178,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self.ctx.screen.use()
             return
 
-        draw_projection_screen = bool(self._openxr_draw_projection_screen)
-        if draw_projection_screen:
-            source_ready = self._openxr_projection_screen_source_ready
-            if not source_ready[eye_index]:
-                if perf_enabled:
-                    _mark_perf('no_source')
-                self.ctx.screen.use()
-                return
-
         # Pre-compute view-projection once per eye -all quads multiply their model
         # matrix against this rather than recomputing proj @ view each time.
         vp_mat = proj_mat @ view_mat
@@ -2210,27 +2201,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             proj_mat,
             vp_mat,
             eye_index=eye_index,
-            projection_screen_enabled=draw_projection_screen,
         )
         if perf_enabled:
             _mark_perf('env')
 
-        if draw_projection_screen:
-            screen_presenter = self._screen_layer_presenter
-            if not screen_presenter.render_projection_screen(
-                eye_index=eye_index,
-                mgl_fbo=mgl_fbo,
-                vp_mat=vp_mat,
-                swapchain_size=(sc_w, sc_h),
-                mark_perf=_mark_perf if perf_enabled else None,
-            ):
-                return
-        else:
-            self._screen_layer_presenter.render_quad_screen_overlay(
-                mgl_fbo=mgl_fbo,
-                vp_mat=vp_mat,
-                mark_perf=_mark_perf if perf_enabled else None,
-            )
+        self._screen_layer_presenter.render_quad_screen_overlay(
+            mgl_fbo=mgl_fbo,
+            vp_mat=vp_mat,
+            mark_perf=_mark_perf if perf_enabled else None,
+        )
         overlay_presenter = getattr(self, '_overlay_layer_presenter', None)
         if overlay_presenter is None:
             overlay_presenter = OverlayLayerPresenter(self)

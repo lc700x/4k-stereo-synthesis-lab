@@ -162,6 +162,13 @@ class CoreQuadLayerMixin:
             for eye_index in range(2):
                 if self._update_quad_layer_swapchain(eye_index):
                     updated.append(eye_index)
+            if len(updated) != 2:
+                self._xr_quad_layer_active = False
+                self._xr_quad_layer_failed = True
+                breakdown_inc = getattr(self, '_breakdown_inc', None)
+                if callable(breakdown_inc):
+                    breakdown_inc('openxr_quad_layer_failed')
+                return []
             return updated
 
         source0, size0, flip0 = self._quad_layer_source_texture(0)

@@ -1031,23 +1031,24 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
 
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    loop_tail = implementation.split("if eye_layer_views:", 1)[1].split(
+    render_tail = implementation.split("# On the first valid frame", 1)[1].split(
         "_submit_openxr_frame(composition_layers)", 1
     )[0]
-    projection_block = loop_tail.split("quad_layers = []", 1)[0]
-    quad_block = loop_tail.split("quad_layers = []", 1)[1]
-
-    assert "updated_quad_eyes = self._update_quad_layer_swapchains()" not in projection_block
-    assert "updated_quad_eyes = self._update_quad_layer_swapchains()" in quad_block
-    assert "composition_layers.append(" in quad_block
+    assert render_tail.index("updated_quad_eyes = self._update_quad_layer_swapchains()") < render_tail.index(
+        "eye_layer_views = []"
+    )
+    assert render_tail.index("eye_layer_views = []") < render_tail.index(
+        "for quad_eye_index in updated_quad_eyes:"
+    )
+    quad_layer_block = render_tail.split("for quad_eye_index in updated_quad_eyes:", 1)[1]
+    assert "composition_layers.append(" in quad_layer_block
 
     d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
         "if self._use_d3d11:", 1
     )[1]
-    assert "quad_replaces_projection_screen = self._quad_layer_can_replace_projection_screen()" in d3d11_native_block
-    assert "not quad_replaces_projection_screen" in d3d11_native_block
+    assert "not updated_quad_eyes" in d3d11_native_block
     assert "openxr_projection_screen_skipped" not in d3d11_native_block
-    assert d3d11_native_block.index("not quad_replaces_projection_screen") < d3d11_native_block.index(
+    assert d3d11_native_block.index("not updated_quad_eyes") < d3d11_native_block.index(
         "self._d3d11_native_renderer is not None"
     )
 
@@ -1095,6 +1096,32 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._xr_quad_layer_active = False
     assert viewer._quad_layer_unavailable_reason() == "inactive"
     assert viewer._quad_layer_can_replace_projection_screen() is False
+
+
+def test_quad_layer_update_requires_both_eyes_for_quad_submit():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._xr_quad_layer_enabled = True
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    viewer._screen_curved = False
+    viewer._runtime_direct_source = True
+    viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_eye_texture_size = (1920, 1080)
+    viewer._quad_swapchain_array_size = {0: 1, 1: 1}
+    viewer._update_quad_layer_swapchain = lambda eye_index: eye_index == 0
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._update_quad_layer_swapchains() == []
+    assert viewer._xr_quad_layer_active is False
+    assert viewer._xr_quad_layer_failed is True
+    assert ("openxr_quad_layer_failed", 1) in inc_calls
 
 
 def test_quad_layer_status_hotkey_does_not_toggle_back_to_projection():

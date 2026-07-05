@@ -183,17 +183,22 @@ class ScreenLayerPresenter:
     def append_frame_layers(self, composition_layers, *, projection_views=(), projection_space=None, quad_layer_headers=(), background_layer_headers=()):
         composition_layers.extend(background_layer_headers)
         if projection_views:
-            projection_layer = xr.CompositionLayerProjection(
-                space=projection_space,
-                views=projection_views,
-            )
-            self._frame_projection_layer = projection_layer
-            composition_layers.append(
-                ctypes.cast(
-                    ctypes.pointer(projection_layer),
-                    ctypes.POINTER(xr.CompositionLayerBaseHeader),
+            try:
+                projection_layer = xr.CompositionLayerProjection(
+                    space=projection_space,
+                    views=projection_views,
                 )
-            )
+                self._frame_projection_layer = projection_layer
+                composition_layers.append(
+                    ctypes.cast(
+                        ctypes.pointer(projection_layer),
+                        ctypes.POINTER(xr.CompositionLayerBaseHeader),
+                    )
+                )
+            except Exception as exc:
+                print(f"[OpenXRViewer] Projection layer append failed: {type(exc).__name__}: {exc}")
+                self.viewer._breakdown_inc('openxr_projection_render_failed')
+                self._frame_projection_layer = None
         composition_layers.extend(quad_layer_headers)
         return composition_layers
 

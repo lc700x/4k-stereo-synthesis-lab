@@ -2658,6 +2658,23 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert composition_layers[1:] == quad_layer_headers
     assert presenter._frame_projection_layer is not None
 
+    monkeypatch.setattr(
+        screen_layer_presenter.xr,
+        "CompositionLayerProjection",
+        lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("projection append failed")),
+    )
+    composition_layers = []
+    presenter.append_frame_layers(
+        composition_layers,
+        projection_views=[object()],
+        projection_space=object(),
+        quad_layer_headers=quad_layer_headers,
+        background_layer_headers=[],
+    )
+    assert composition_layers == quad_layer_headers
+    assert presenter._frame_projection_layer is None
+    assert ("openxr_projection_render_failed", 1) in inc_calls
+
     viewer._make_quad_layer = lambda _eye_index: None
     quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])
 

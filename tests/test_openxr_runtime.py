@@ -102,6 +102,24 @@ def test_load_openxr_viewer_raises_when_runtime_unavailable(monkeypatch):
         load_openxr_viewer(None)
 
 
+def _openxr_config(**overrides):
+    values = dict(
+        depth_strength=2.4,
+        convergence=0.1,
+        fps=72,
+        show_fps=True,
+        controller_model="pico",
+        environment_model="none",
+        screen_width=7.8,
+        screen_distance=9.5,
+        show_preview_window=False,
+        capture_mode="Monitor",
+        monitor_index=1,
+    )
+    values.update(overrides)
+    return OpenXRRuntimeConfig(**values)
+
+
 def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
     calls = []
 
@@ -128,19 +146,7 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
             123.0,
         )
     )
-    config = OpenXRRuntimeConfig(
-        depth_strength=2.4,
-        convergence=0.1,
-        fps=72,
-        show_fps=True,
-        controller_model="pico",
-        environment_model="none",
-        screen_width=7.8,
-        screen_distance=9.5,
-        show_preview_window=False,
-        capture_mode="Monitor",
-        monitor_index=1,
-    )
+    config = _openxr_config()
     callbacks = OpenXRRuntimeCallbacks(
         update_runtime_config=lambda *args, **kwargs: None,
         render_active_set=lambda: None,
@@ -159,6 +165,39 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
     assert calls[0]["frame_size"] == (3840, 2160)
     assert calls[0]["openxr_screen_width"] == 7.8
     assert calls[0]["openxr_screen_distance"] == 9.5
+
+
+def test_run_openxr_mode_bootstraps_without_waiting_for_first_runtime_frame(monkeypatch):
+    calls = []
+    callback_calls = []
+
+    class FakeViewer:
+        def __init__(self, **kwargs):
+            calls.append(kwargs)
+
+        def run(self, **kwargs):
+            calls.append({"run": kwargs})
+
+    monkeypatch.setitem(
+        sys.modules,
+        "xr_viewer.base",
+        types.SimpleNamespace(OPENXR_AVAILABLE=True, OpenXRViewer=FakeViewer),
+    )
+    callbacks = OpenXRRuntimeCallbacks(
+        update_runtime_config=lambda *args, **kwargs: None,
+        render_active_set=lambda: callback_calls.append("render_set"),
+        render_active_clear=lambda: callback_calls.append("render_clear"),
+        source_active_set=lambda: callback_calls.append("source_set"),
+        wait_idle_clear=lambda: callback_calls.append("wait_idle_clear"),
+        bootstrap_done_set=lambda: callback_calls.append("bootstrap_done"),
+    )
+
+    viewer = run_openxr_mode(queue.Queue(), _openxr_config(frame_size=(1920, 1080)), callbacks)
+
+    assert isinstance(viewer, FakeViewer)
+    assert calls[0]["frame_size"] == (1920, 1080)
+    assert calls[1]["run"] == {"first_runtime_result": None, "first_frame_ts": None}
+    assert callback_calls == ["source_set", "render_clear", "wait_idle_clear", "bootstrap_done"]
 
 
 def test_runtime_eye_tensor_hwc_u8_scales_near_normalized_float_range(monkeypatch):

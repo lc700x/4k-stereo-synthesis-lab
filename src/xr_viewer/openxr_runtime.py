@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from queue import Empty
 from typing import Callable
 
 
@@ -21,6 +22,7 @@ class OpenXRRuntimeConfig:
     show_preview_window: bool
     capture_mode: str
     monitor_index: int
+    frame_size: tuple[int, int] = (1280, 720)
 
 
 @dataclass
@@ -89,9 +91,14 @@ def load_openxr_viewer(environment_model):
 
 def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRuntimeCallbacks):
     OpenXRViewer = load_openxr_viewer(config.environment_model)
-    runtime_result, capture_start_time = runtime_q.get()
-    callbacks.breakdown_inc("viewer_get")
-    width, height = frame_size_from_runtime_result(runtime_result)
+    runtime_result = None
+    capture_start_time = None
+    try:
+        runtime_result, capture_start_time = runtime_q.get_nowait()
+        callbacks.breakdown_inc("viewer_get")
+        width, height = frame_size_from_runtime_result(runtime_result)
+    except Empty:
+        width, height = config.frame_size
     try:
         viewer = OpenXRViewer(
             depth_strength=config.depth_strength,

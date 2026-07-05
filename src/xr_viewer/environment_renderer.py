@@ -163,8 +163,14 @@ class EnvironmentRendererMixin:
 
     def _bind_screen_light_source_texture(self, location=8):
         source_tex, _source_size = self._screen_light_source_texture()
-        if source_tex is not None:
+        if source_tex is None:
+            return None
+        try:
             source_tex.use(location=location)
+        except Exception as exc:
+            print(f"[OpenXRViewer] Screen light texture bind failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_screen_light_bind_failed")
+            return None
         return source_tex
 
     def _apply_cinema_light_uniforms(self, mgl_fbo=None):

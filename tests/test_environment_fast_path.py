@@ -140,6 +140,21 @@ def test_builtin_environment_profiles_do_not_disable_quad_layer():
         assert "xr_quad_layer_enabled" not in profile
 
 
+def test_screen_light_bind_failure_disables_effect_without_raising(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    inc_calls = []
+
+    class Tex:
+        def use(self, location=0):
+            raise RuntimeError(f"bad bind {location}")
+
+    viewer._screen_light_source_texture = lambda: (Tex(), (16, 9))
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._bind_screen_light_source_texture(location=10) is None
+    assert ("openxr_screen_light_bind_failed", 1) in inc_calls
+
+
 def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
     viewer = _make_default_viewer(monkeypatch)
     room = tmp_path / "PanoramaRoom"

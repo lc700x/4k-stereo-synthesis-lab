@@ -4629,83 +4629,15 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         and self._d3d11_native_renderer is not None
                         and self._d3d11_native_renderer.has_frame
                     ):
-                        # Native D3D11 renderer: draw directly into OpenXR D3D11 swapchain images.
-                        for eye_index in range(2):
-                            swapchain = self._xr_swapchains[eye_index]
-                            img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-                            self._wait_swapchain_image(swapchain)
-                            released = False
-                            try:
-                                sc_image = self._swapchain_images[eye_index][img_index]
-                                sc_w, sc_h = self._swapchain_sizes[eye_index]
-                                view = views[eye_index] if views and views[eye_index] else None
-                                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                                proj_mat = _fov_to_proj_mat4_d3d(view.fov) if view else _default_proj_d3d
-                                mvp = proj_mat @ view_mat @ self._build_model_mat4()
-                                if self._runtime_direct_source:
-                                    self._d3d11_native_renderer.render_runtime_eye(
-                                        sc_image.texture,
-                                        sc_w,
-                                        sc_h,
-                                        eye_index,
-                                        mvp,
-                                    )
-                                else:
-                                    runtime_rgb_depth_max_disparity_px = float(
-                                        getattr(self, '_runtime_rgb_depth_max_disparity_px', 0.0)
-                                    )
-                                    runtime_rgb_depth_render_width = int(
-                                        getattr(self, '_runtime_rgb_depth_render_width', 0) or 0
-                                    )
-                                    if runtime_rgb_depth_render_width <= 0:
-                                        source_size = self._texture_size or (0, 0)
-                                        runtime_rgb_depth_render_width = int(source_size[0] or 0)
-                                    screen_disparity_uv = 0.0
-                                    if runtime_rgb_depth_render_width > 0:
-                                        screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)
-                                    screen_depth_strength = max(
-                                        0.0,
-                                        float(getattr(self, '_runtime_rgb_depth_depth_strength', self.depth_strength) or 0.0),
-                                    )
-                                    self._d3d11_native_renderer.render_eye(
-                                        sc_image.texture,
-                                        sc_w,
-                                        sc_h,
-                                        eye_index,
-                                        eye_sign * screen_disparity_uv / 2.0,
-                                        screen_depth_strength,
-                                        float(self.convergence),
-                                        mvp,
-                                        roll=self.screen_roll,
-                                    )
-                                xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                                released = True
-                                eye_layer_views.append(xr.CompositionLayerProjectionView(
-                                    pose=view.pose if view else xr.Posef(),
-                                    fov=view.fov   if view else _default_fov,
-                                    sub_image=xr.SwapchainSubImage(
-                                        swapchain=swapchain,
-                                        image_rect=xr.Rect2Di(
-                                            offset=xr.Offset2Di(x=0, y=0),
-                                            extent=xr.Extent2Di(width=sc_w, height=sc_h),
-                                        ),
-                                    ),
-                                ))
-                            except Exception as e:
-                                if not released:
-                                    try:
-                                        xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                                    except Exception:
-                                        pass
-                                print(f"[OpenXRViewer] D3D11 native render failed: {e}")
-                                try:
-                                    self._d3d11_native_renderer.cleanup()
-                                except Exception:
-                                    pass
-                                self._d3d11_native_renderer = None
-                                self._texture_size = None
-                                eye_layer_views = []
-                                break
+                        projection_presenter = getattr(self, '_projection_layer_presenter', None)
+                        if projection_presenter is None:
+                            projection_presenter = ProjectionLayerPresenter(self)
+                            self._projection_layer_presenter = projection_presenter
+                        eye_layer_views = projection_presenter.render_d3d11_native(
+                            views,
+                            _default_fov,
+                            _default_proj_d3d,
+                        )
 
                     elif self._interop_mode == 'nv_dx':
                         # NV_DX_interop2: render directly into swapchain textures

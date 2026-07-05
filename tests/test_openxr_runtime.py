@@ -1473,14 +1473,18 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "viewer._get_or_create_fbo(" in projection_presenter
     assert "glBlitFramebuffer" in projection_presenter
 
-    d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
-        "if self._use_d3d11:", 1
-    )[1]
+    d3d11_native_block = implementation.rsplit("if self._use_d3d11:", 1)[1].split(
+        "elif self._interop_mode == 'nv_dx':", 1
+    )[0]
     assert "not updated_quad_eyes" in d3d11_native_block
+    assert "projection_presenter.render_d3d11_native(" in d3d11_native_block
+    assert "eye_sign * screen_disparity_uv" not in d3d11_native_block
     assert "openxr_projection_screen_skipped" not in d3d11_native_block
     assert d3d11_native_block.index("not updated_quad_eyes") < d3d11_native_block.index(
         "self._d3d11_native_renderer is not None"
     )
+    assert "def render_d3d11_native(" in projection_presenter
+    assert "eye_sign * screen_disparity_uv" in projection_presenter
 
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():

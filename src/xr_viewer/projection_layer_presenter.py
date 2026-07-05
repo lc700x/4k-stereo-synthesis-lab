@@ -11,7 +11,7 @@ from OpenGL.GL import (
     glReadBuffer,
 )
 
-from .xr_math import _fov_to_proj_mat4, _pose_to_view_mat4
+from .xr_math import _fov_to_proj_mat4, _fov_to_proj_mat4_d3d, _pose_to_view_mat4
 
 try:
     import xr
@@ -22,6 +22,77 @@ except ImportError:
 class ProjectionLayerPresenter:
     def __init__(self, viewer):
         self.viewer = viewer
+
+    def render_d3d11_native(self, views, default_fov, default_proj_d3d):
+        viewer = self.viewer
+        eye_layer_views = []
+        for eye_index in range(2):
+            swapchain = viewer._xr_swapchains[eye_index]
+            img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
+            viewer._wait_swapchain_image(swapchain)
+            released = False
+            try:
+                sc_image = viewer._swapchain_images[eye_index][img_index]
+                sc_w, sc_h = viewer._swapchain_sizes[eye_index]
+                view = views[eye_index] if views and views[eye_index] else None
+                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
+                proj_mat = _fov_to_proj_mat4_d3d(view.fov) if view else default_proj_d3d
+                mvp = proj_mat @ view_mat @ viewer._build_model_mat4()
+                if viewer._runtime_direct_source:
+                    viewer._d3d11_native_renderer.render_runtime_eye(
+                        sc_image.texture,
+                        sc_w,
+                        sc_h,
+                        eye_index,
+                        mvp,
+                    )
+                else:
+                    runtime_rgb_depth_max_disparity_px = float(
+                        getattr(viewer, '_runtime_rgb_depth_max_disparity_px', 0.0)
+                    )
+                    runtime_rgb_depth_render_width = int(
+                        getattr(viewer, '_runtime_rgb_depth_render_width', 0) or 0
+                    )
+                    if runtime_rgb_depth_render_width <= 0:
+                        source_size = viewer._texture_size or (0, 0)
+                        runtime_rgb_depth_render_width = int(source_size[0] or 0)
+                    screen_disparity_uv = 0.0
+                    if runtime_rgb_depth_render_width > 0:
+                        screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)
+                    screen_depth_strength = max(
+                        0.0,
+                        float(getattr(viewer, '_runtime_rgb_depth_depth_strength', viewer.depth_strength) or 0.0),
+                    )
+                    eye_sign = -1.0 if eye_index == 0 else 1.0
+                    viewer._d3d11_native_renderer.render_eye(
+                        sc_image.texture,
+                        sc_w,
+                        sc_h,
+                        eye_index,
+                        eye_sign * screen_disparity_uv / 2.0,
+                        screen_depth_strength,
+                        float(viewer.convergence),
+                        mvp,
+                        roll=viewer.screen_roll,
+                    )
+                xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                released = True
+                eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
+            except Exception as exc:
+                if not released:
+                    try:
+                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                    except Exception:
+                        pass
+                print(f"[OpenXRViewer] D3D11 native render failed: {exc}")
+                try:
+                    viewer._d3d11_native_renderer.cleanup()
+                except Exception:
+                    pass
+                viewer._d3d11_native_renderer = None
+                viewer._texture_size = None
+                return []
+        return eye_layer_views
 
     def render_opengl(self, views, default_fov, default_proj, *, updated_quad_eyes=()):
         viewer = self.viewer
@@ -58,18 +129,21 @@ class ProjectionLayerPresenter:
                 print(f"[OpenXRViewer] OpenGL projection render failed: {type(exc).__name__}: {exc}")
                 return []
 
-            eye_layer_views.append(xr.CompositionLayerProjectionView(
-                pose=view.pose if view else xr.Posef(),
-                fov=view.fov if view else default_fov,
-                sub_image=xr.SwapchainSubImage(
-                    swapchain=swapchain,
-                    image_rect=xr.Rect2Di(
-                        offset=xr.Offset2Di(x=0, y=0),
-                        extent=xr.Extent2Di(width=sc_w, height=sc_h),
-                    ),
-                ),
-            ))
+            eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
         return eye_layer_views
+
+    def _projection_view(self, swapchain, sc_w, sc_h, view, default_fov):
+        return xr.CompositionLayerProjectionView(
+            pose=view.pose if view else xr.Posef(),
+            fov=view.fov if view else default_fov,
+            sub_image=xr.SwapchainSubImage(
+                swapchain=swapchain,
+                image_rect=xr.Rect2Di(
+                    offset=xr.Offset2Di(x=0, y=0),
+                    extent=xr.Extent2Di(width=sc_w, height=sc_h),
+                ),
+            ),
+        )
 
     def _mirror_preview(self, raw_fbo, sc_w, sc_h):
         viewer = self.viewer

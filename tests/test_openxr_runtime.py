@@ -1410,8 +1410,12 @@ def test_openxr_async_phase0_diagnostics_are_wired():
 def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     interop = (SRC / "xr_viewer" / "core_d3d_interop.py").read_text(encoding="utf-8")
+    d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
     d3d_interop = (SRC / "xr_viewer" / "d3d_interop.py").read_text(encoding="utf-8")
 
+    assert "interop/PBO" not in d3d11
+    assert "PBO readback path" not in d3d11
+    assert "skipped instead of reintroducing D3D11 PBO readback" in d3d11
     assert not (SRC / "xr_viewer" / "d3d11_backend.py").exists()
     assert "glFinish" not in implementation
     assert "glFinish" not in interop

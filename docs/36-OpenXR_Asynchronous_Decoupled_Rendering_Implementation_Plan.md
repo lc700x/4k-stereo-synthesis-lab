@@ -295,7 +295,7 @@ BackgroundPresenter
 
 - 后端替换不改变 OpenXR 主 loop 的 no-wait 规则。
 - GL/D3D11/D3D12/Vulkan 任一后端失败，都能回退到透明 effect + projection fallback。
-- 旧 EXT memory / `render.py` / `d3d11_backend.py` 路径不再参与 OpenXR 热路径；PBO readback 仅作为明确告警的 fallback。
+- 旧 EXT memory / `render.py` / `d3d11_backend.py` 路径不再参与 OpenXR 热路径；D3D11 projection 不回退 PBO readback，runtime texture upload 的 PBO 仅作为明确告警的 GPU fallback。
 
 ## 5. 关键设计约束
 

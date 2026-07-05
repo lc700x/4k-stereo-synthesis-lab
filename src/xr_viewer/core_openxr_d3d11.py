@@ -25,8 +25,8 @@ class CoreOpenXRD3D11Mixin:
         """Create or resume an OpenXR session backed by a D3D11 device.
 
         The native path renders directly into OpenXR D3D11 swapchain images.
-        Legacy GL interop/PBO paths remain available only as fallbacks when the
-        native renderer cannot be created.
+        NV_DX interop is only for projection overlays; without it projection is
+        skipped instead of reintroducing D3D11 PBO readback.
         """
         if self._xr_backend not in (None, 'd3d11'):
             raise RuntimeError(f"OpenXR backend mismatch: {self._xr_backend}")
@@ -168,7 +168,7 @@ class CoreOpenXRD3D11Mixin:
             self._swapchain_sizes[eye_index]  = (sc_w, sc_h)
 
         # 9. Prefer native D3D11 rendering. It avoids OpenGL -> D3D11 cross-API
-        # transfer entirely; interop/PBO remain fallback paths only.
+        # transfer entirely; projection overlay uses NV_DX interop or is skipped.
         if self._d3d11_native_requested:
             try:
                 from .d3d11_native_renderer import D3D11NativeRenderer
@@ -216,7 +216,7 @@ class CoreOpenXRD3D11Mixin:
                 self._set_quad_layer_failed(f"d3d11_swapchain_create_failed_{type(exc).__name__}")
                 print(f"[OpenXRViewer] Quad layer D3D11 unavailable: {type(exc).__name__}: {exc}")
 
-        # 10. Try GPU interop to avoid the PBO readback path when native D3D11
+        # 10. Try NV_DX interop for projection overlays when native D3D11
         # rendering is not available.
         if self._d3d11_native_renderer is None:
             self._setup_gpu_interop_d3d11()

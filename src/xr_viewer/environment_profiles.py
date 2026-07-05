@@ -64,6 +64,7 @@ class EnvironmentProfileMixin:
         if not is_panorama:
             return False, None, {}
 
+        path = None
         image = (
             cfg.get('image')
             or cfg.get('path')

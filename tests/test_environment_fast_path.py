@@ -321,6 +321,27 @@ def test_panorama_profile_auto_wall_mask_bakes_cached_png(monkeypatch, tmp_path)
     assert Image.open(mask_path).size == (64, 32)
 
 
+def test_panorama_profile_auto_wall_mask_without_image_does_not_crash(monkeypatch, tmp_path):
+    viewer = _make_default_viewer(monkeypatch)
+    room = tmp_path / "PanoramaRoom"
+    room.mkdir()
+
+    is_panorama, path, cfg = viewer._panorama_profile_config(
+        {
+            "environment_type": "panorama",
+            "panorama": {
+                "wall_light_mask": "auto",
+                "wall_light_mask_resolution": [32, 16],
+            },
+        },
+        str(room),
+    )
+
+    assert is_panorama
+    assert path is None
+    assert (room / cfg["wall_light_mask"]).is_file()
+
+
 def test_environment_discovery_includes_panorama_image_folder(monkeypatch, tmp_path):
     viewer = _make_default_viewer(monkeypatch)
     root = tmp_path / "environments"

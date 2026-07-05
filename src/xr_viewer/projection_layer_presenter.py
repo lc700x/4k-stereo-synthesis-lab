@@ -53,9 +53,6 @@ class ProjectionLayerPresenter:
                 default_fov,
                 default_proj,
             )
-        if updated_quad_eyes:
-            viewer._breakdown_inc('openxr_projection_pbo_skipped_for_quad')
-            return []
         return self.render_d3d11_pbo(
             views,
             default_fov,

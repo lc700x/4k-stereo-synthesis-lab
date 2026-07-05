@@ -1254,8 +1254,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "try:" in trigger_block
     assert "self._handle_triggers()" in trigger_block
     assert "openxr_input_trigger_failed" in trigger_block
-    assert "if updated_quad_eyes:" in projection_presenter
-    assert "openxr_projection_pbo_skipped_for_quad" in projection_presenter
+    assert "if updated_quad_eyes:" not in projection_presenter
+    assert "openxr_projection_pbo_skipped_for_quad" not in projection_presenter
     pbo_projection_block = projection_presenter.split("def render_d3d11_pbo", 1)[1].split(
         "def render_opengl", 1
     )[0]
@@ -2121,7 +2121,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "return self.render_opengl(" in render_projection
     assert "return self.render_d3d11_native(" in render_projection
     assert "return self.render_nv_dx_interop(" in render_projection
-    assert "openxr_projection_pbo_skipped_for_quad" in render_projection
+    assert "openxr_projection_pbo_skipped_for_quad" not in render_projection
     assert "return self.render_d3d11_pbo(" in render_projection
     assert "def render_opengl(" in projection_presenter
     assert "viewer._get_or_create_fbo(" in projection_presenter
@@ -2177,10 +2177,10 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     viewer._interop_mode = "nv_dx"
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["nv_dx"]
     viewer._interop_mode = "none"
-    assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == []
-    assert ("openxr_projection_pbo_skipped_for_quad", 1) in viewer.inc_calls
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == ["pbo"]
+    assert viewer.inc_calls == []
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["pbo"]
-    assert calls == ["opengl", "native", "nv_dx", "pbo"]
+    assert calls == ["opengl", "native", "nv_dx", "pbo", "pbo"]
 
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():

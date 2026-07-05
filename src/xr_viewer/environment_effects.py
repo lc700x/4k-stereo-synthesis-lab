@@ -165,7 +165,11 @@ class EnvironmentEffectsMixin:
                 return getattr(self, '_screen_effect_source_cache_value', value)
             promote_ready = getattr(self, '_promote_runtime_effect_ready_texture', None)
             if callable(promote_ready):
-                promote_ready()
+                try:
+                    promote_ready()
+                except Exception as exc:
+                    print(f"[OpenXRViewer] Runtime effect source promote failed: {type(exc).__name__}: {exc}")
+                    self._breakdown_inc("openxr_effect_source_promote_failed")
             source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
             value = (
                 source_tex,

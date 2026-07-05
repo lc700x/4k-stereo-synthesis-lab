@@ -183,6 +183,7 @@ class FPSBreakdown:
             f"fx_ready={rate('openxr_effect_source_ready_publish'):.1f} "
             f"fx_safe={rate('openxr_effect_source_safe_publish'):.1f} "
             f"fx_promote_reuse={rate('openxr_effect_source_promote_reuse'):.1f} "
+            f"fx_promote_failed={rate('openxr_effect_source_promote_failed'):.1f} "
             f"fx_source_reuse={rate('openxr_screen_effect_source_reuse'):.1f} "
             f"fx_safe_reuse={rate('openxr_effect_source_reused_safe'):.1f} "
             f"fx_skip={rate('openxr_effect_source_interval_skip'):.1f} "

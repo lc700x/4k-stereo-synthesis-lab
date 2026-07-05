@@ -155,6 +155,39 @@ def test_screen_light_bind_failure_disables_effect_without_raising(monkeypatch):
     assert ("openxr_screen_light_bind_failed", 1) in inc_calls
 
 
+def test_runtime_effect_source_promote_failure_reuses_existing_safe_texture(monkeypatch):
+    safe_tex = object()
+    inc_calls = []
+
+    def _fail_promote():
+        raise RuntimeError("promote failed")
+
+    for viewer in (_make_default_viewer(monkeypatch), _make_no_room_viewer(monkeypatch)):
+        viewer._frame_count = 7
+        viewer._runtime_direct_source = True
+        viewer._runtime_effect_safe_source_tex = safe_tex
+        viewer._runtime_effect_safe_source_size = (16, 9)
+        viewer._runtime_effect_safe_source_frame_id = 6
+        viewer._promote_runtime_effect_ready_texture = _fail_promote
+        viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+        viewer._record_screen_effect_safe_age = lambda _source_tex: None
+
+        assert viewer._screen_effect_source_texture()[0] is safe_tex
+
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._frame_count = 8
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = safe_tex
+    viewer._runtime_effect_safe_source_size = (16, 9)
+    viewer._runtime_effect_safe_source_frame_id = 7
+    viewer._promote_runtime_effect_ready_texture = _fail_promote
+    viewer._cached_glow_downsample_texture = lambda _tex, _size: None
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._screen_light_source_texture()[0] is safe_tex
+    assert inc_calls.count(("openxr_effect_source_promote_failed", 1)) == 3
+
+
 def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
     viewer = _make_default_viewer(monkeypatch)
     room = tmp_path / "PanoramaRoom"

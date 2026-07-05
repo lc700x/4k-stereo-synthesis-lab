@@ -72,6 +72,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_effect_source_ready_publish", 3)
     breakdown.inc("openxr_effect_source_safe_publish", 2)
     breakdown.inc("openxr_effect_source_promote_reuse", 1)
+    breakdown.inc("openxr_effect_source_promote_failed", 1)
     breakdown.inc("openxr_screen_effect_source_reuse", 4)
     breakdown.inc("openxr_effect_source_reused_safe", 6)
     breakdown.inc("openxr_effect_submit_overwrite", 1)
@@ -146,6 +147,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "fx_ready=3.0" in output
     assert "fx_safe=2.0" in output
     assert "fx_promote_reuse=1.0" in output
+    assert "fx_promote_failed=1.0" in output
     assert "fx_source_reuse=4.0" in output
     assert "fx_safe_reuse=6.0" in output
     assert "fx_overwrite=1.0" in output

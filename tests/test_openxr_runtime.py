@@ -1168,6 +1168,17 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     assert viewer._projection_layer_needed() is True
 
 
+def test_no_renderable_openxr_frame_does_not_sleep_after_submit():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    block = implementation.split("self._breakdown_inc('openxr_no_renderable')", 1)[1].split(
+        "if frame_state.should_render:", 1
+    )[0]
+
+    assert "_submit_openxr_frame(composition_layers)" in block
+    assert "self._flush_runtime_effect_submit()" in block
+    assert "time.sleep" not in block
+
+
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     frame_block = implementation.split("# Drain depth_q non-blocking", 1)[1].split(

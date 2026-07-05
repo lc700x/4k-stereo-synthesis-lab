@@ -4538,7 +4538,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     if loop_breakdown_enabled:
                         self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
                     self._flush_runtime_effect_submit()
-                    time.sleep(0.01)
                     continue
 
             if frame_state.should_render:

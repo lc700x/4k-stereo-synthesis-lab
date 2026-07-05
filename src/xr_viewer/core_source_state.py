@@ -403,6 +403,11 @@ class CoreSourceStateMixin:
             self._breakdown_inc("openxr_effect_downsample_prewarm")
 
     def _poll_source_frame(self, upload=False):
+        if upload:
+            from .screen_layer_presenter import ScreenLayerPresenter
+
+            return ScreenLayerPresenter(self).poll_screen_frame()
+
         poll_start = time.perf_counter()
         bridge = self._screen_frame_bridge()
         poll = bridge.drain_latest()
@@ -418,74 +423,8 @@ class CoreSourceStateMixin:
             self._pending_source_frame = latest
             self._mark_source_frame_received()
 
-        if not upload:
-            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-            return latest is not None
-
-        if self._pending_source_frame is None:
-            reuse = bridge.reuse_presented()
-            if reuse.frame is not None:
-                self._breakdown_inc("openxr_reused_screen_frame")
-                self._record_screen_frame_bridge_age(bridge)
-                self._record_screen_frame_source_latency(reuse.source_timestamp)
-            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-            return False
-
-        budget_ms = float(getattr(self, "_openxr_screen_upload_budget_ms", 0.0) or 0.0)
-        skip_armed = bool(getattr(self, "_openxr_screen_upload_budget_skip_armed", False))
-        if budget_ms > 0.0 and skip_armed:
-            reuse = bridge.reuse_presented()
-            if reuse.frame is not None:
-                self._openxr_screen_upload_budget_skip_armed = False
-                self._breakdown_inc("openxr_reused_screen_frame")
-                self._breakdown_inc("openxr_screen_upload_budget_skip")
-                self._record_screen_frame_bridge_age(bridge)
-                self._record_screen_frame_source_latency(reuse.source_timestamp)
-                self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-                return False
-
-        pending_frame = self._pending_source_frame
-        source_frame, frame_ts = self._normalize_source_frame(pending_frame)
-        self._pending_source_frame = None
-
-        upload_start = time.perf_counter()
-        effect_source_rgb = None
-        if self._is_runtime_result(source_frame):
-            effect_source_rgb = self._update_runtime_frame(source_frame)
-        else:
-            rgb, depth = source_frame
-            self._update_frame(rgb, depth)
-        upload_elapsed = time.perf_counter() - upload_start
-        upload_elapsed_ms = upload_elapsed * 1000.0
-        if budget_ms > 0.0:
-            self._openxr_screen_upload_budget_skip_armed = upload_elapsed_ms > budget_ms
-        if not self._has_renderable_source_frame():
-            self._pending_source_frame = pending_frame
-            self._breakdown_inc("openxr_screen_upload_not_renderable")
-            self._breakdown_add_time("openxr_upload", upload_elapsed)
-            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-            return False
-        if getattr(self, '_runtime_eye_reused_previous_frame', False):
-            self._breakdown_add_time("openxr_upload", upload_elapsed)
-            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-            return False
-        presented = bridge.mark_presented(pending_frame)
-        self._record_screen_frame_bridge_age(bridge)
-        self._record_screen_frame_source_latency(presented.source_timestamp)
-        self._breakdown_inc("openxr_new_screen_frame")
-        self._breakdown_add_time("openxr_upload", upload_elapsed)
-        self._queue_runtime_effect_submit(effect_source_rgb)
-        if frame_ts is not None:
-            self.total_latency = (time.perf_counter() - frame_ts) * 1000.0
-        sbs_now = time.perf_counter()
-        self._sbs_ts_ring.append(sbs_now)
-        m = len(self._sbs_ts_ring)
-        if m >= 2:
-            sbs_span = sbs_now - self._sbs_ts_ring[0]
-            if sbs_span > 0:
-                self.sbs_fps = (m - 1) / sbs_span
         self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-        return True
+        return latest is not None
 
     def _normalize_source_frame(self, item):
         if self._is_runtime_result(item):

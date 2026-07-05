@@ -497,6 +497,7 @@ def test_runtime_direct_renderable_source_does_not_require_depth_texture():
 
 def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pending():
     from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -520,7 +521,7 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
     viewer._update_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
     viewer._update_runtime_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
 
-    assert viewer._poll_source_frame(upload=True) is False
+    assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
     assert viewer._pending_source_frame is not None
     assert viewer._openxr_screen_upload_budget_skip_armed is False
@@ -531,6 +532,7 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
 
 def test_openxr_upload_keeps_pending_until_frame_is_renderable():
     from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -556,7 +558,7 @@ def test_openxr_upload_keeps_pending_until_frame_is_renderable():
     viewer._fps_breakdown_add_value = lambda name, value: None
     viewer._update_runtime_frame = lambda _result: None
 
-    assert viewer._poll_source_frame(upload=True) is False
+    assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
     assert viewer._pending_source_frame is pending_frame
     assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
@@ -566,6 +568,7 @@ def test_openxr_upload_keeps_pending_until_frame_is_renderable():
 
 def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
     from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -594,7 +597,7 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
 
     viewer._update_runtime_frame = _update_runtime_frame
 
-    assert viewer._poll_source_frame(upload=True) is False
+    assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
     assert viewer._pending_source_frame is None
     assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
@@ -602,6 +605,7 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
 
 def test_openxr_effect_submit_is_timed_outside_screen_upload():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -637,7 +641,7 @@ def test_openxr_effect_submit_is_timed_outside_screen_upload():
 
     viewer._update_runtime_frame = _update_runtime_frame
 
-    assert viewer._poll_source_frame(upload=True) is True
+    assert ScreenLayerPresenter(viewer).poll_screen_frame() is True
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is effect_source
     names = [name for name, _seconds in time_calls]
@@ -794,6 +798,7 @@ def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
 def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
     source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
+    screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     effects = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
     environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
@@ -850,12 +855,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "self.state = 'ready'" in scheduler_text
     assert "self.state = 'safe'" in scheduler_text
     assert "return effect_source_rgb" in runtime_eye
-    assert "effect_source_rgb = self._update_runtime_frame(source_frame)" in (
-        SRC / "xr_viewer" / "core_source_state.py"
-    ).read_text(encoding="utf-8")
-    assert "self._queue_runtime_effect_submit(effect_source_rgb)" in (
-        SRC / "xr_viewer" / "core_source_state.py"
-    ).read_text(encoding="utf-8")
+    assert "effect_source_rgb = viewer._update_runtime_frame(source_frame)" in screen_presenter
+    assert "viewer._queue_runtime_effect_submit(effect_source_rgb)" in screen_presenter
     frame_submitter_text = (SRC / "xr_viewer" / "frame_submitter.py").read_text(encoding="utf-8")
     frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
     assert "self.effect_submitter.flush_after_submit(" in frame_pipeline
@@ -1236,7 +1237,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "def poll_screen_frame" in screen_presenter
     assert "def update_or_reuse" in screen_presenter
     assert "def make_quad_layers" in screen_presenter
-    assert "self.viewer._poll_source_frame(upload=True)" in screen_presenter
+    assert "bridge = viewer._screen_frame_bridge()" in screen_presenter
+    assert "effect_source_rgb = viewer._update_runtime_frame(source_frame)" in screen_presenter
     assert "self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)" in screen_presenter
     assert "quad_layer = viewer._make_quad_layer(quad_eye_index)" in screen_presenter
     assert "raise RuntimeError(f\"missing quad layer for eye {quad_eye_index}\")" in screen_presenter

@@ -1,4 +1,5 @@
 import ctypes
+import time
 
 from .background_presenter import BackgroundPresenter
 
@@ -15,7 +16,86 @@ class ScreenLayerPresenter:
         self._frame_quad_layers = []
 
     def poll_screen_frame(self):
-        return self.viewer._poll_source_frame(upload=True)
+        viewer = self.viewer
+        poll_start = time.perf_counter()
+        bridge = viewer._screen_frame_bridge()
+        poll = bridge.drain_latest()
+        latest = poll.frame
+        dequeued = poll.dequeued
+
+        if dequeued:
+            viewer._breakdown_inc("viewer_get", dequeued)
+            if poll.dropped:
+                viewer._breakdown_inc("viewer_drop", poll.dropped)
+
+        if latest is not None:
+            viewer._pending_source_frame = latest
+            viewer._mark_source_frame_received()
+
+        if viewer._pending_source_frame is None:
+            reuse = bridge.reuse_presented()
+            if reuse.frame is not None:
+                viewer._breakdown_inc("openxr_reused_screen_frame")
+                viewer._record_screen_frame_bridge_age(bridge)
+                viewer._record_screen_frame_source_latency(reuse.source_timestamp)
+            viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+            return False
+
+        budget_ms = float(getattr(viewer, "_openxr_screen_upload_budget_ms", 0.0) or 0.0)
+        skip_armed = bool(getattr(viewer, "_openxr_screen_upload_budget_skip_armed", False))
+        if budget_ms > 0.0 and skip_armed:
+            reuse = bridge.reuse_presented()
+            if reuse.frame is not None:
+                viewer._openxr_screen_upload_budget_skip_armed = False
+                viewer._breakdown_inc("openxr_reused_screen_frame")
+                viewer._breakdown_inc("openxr_screen_upload_budget_skip")
+                viewer._record_screen_frame_bridge_age(bridge)
+                viewer._record_screen_frame_source_latency(reuse.source_timestamp)
+                viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+                return False
+
+        pending_frame = viewer._pending_source_frame
+        source_frame, frame_ts = viewer._normalize_source_frame(pending_frame)
+        viewer._pending_source_frame = None
+
+        upload_start = time.perf_counter()
+        effect_source_rgb = None
+        if viewer._is_runtime_result(source_frame):
+            effect_source_rgb = viewer._update_runtime_frame(source_frame)
+        else:
+            rgb, depth = source_frame
+            viewer._update_frame(rgb, depth)
+        upload_elapsed = time.perf_counter() - upload_start
+        if budget_ms > 0.0:
+            viewer._openxr_screen_upload_budget_skip_armed = (upload_elapsed * 1000.0) > budget_ms
+        if not viewer._has_renderable_source_frame():
+            viewer._pending_source_frame = pending_frame
+            viewer._breakdown_inc("openxr_screen_upload_not_renderable")
+            viewer._breakdown_add_time("openxr_upload", upload_elapsed)
+            viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+            return False
+        if getattr(viewer, '_runtime_eye_reused_previous_frame', False):
+            viewer._breakdown_add_time("openxr_upload", upload_elapsed)
+            viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+            return False
+
+        presented = bridge.mark_presented(pending_frame)
+        viewer._record_screen_frame_bridge_age(bridge)
+        viewer._record_screen_frame_source_latency(presented.source_timestamp)
+        viewer._breakdown_inc("openxr_new_screen_frame")
+        viewer._breakdown_add_time("openxr_upload", upload_elapsed)
+        viewer._queue_runtime_effect_submit(effect_source_rgb)
+        if frame_ts is not None:
+            viewer.total_latency = (time.perf_counter() - frame_ts) * 1000.0
+        sbs_now = time.perf_counter()
+        viewer._sbs_ts_ring.append(sbs_now)
+        m = len(viewer._sbs_ts_ring)
+        if m >= 2:
+            sbs_span = sbs_now - viewer._sbs_ts_ring[0]
+            if sbs_span > 0:
+                viewer.sbs_fps = (m - 1) / sbs_span
+        viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
+        return True
 
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)

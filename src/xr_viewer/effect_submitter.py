@@ -22,6 +22,7 @@ class EffectSubmitter:
             return False
         if bool(getattr(viewer, "_openxr_effect_submit_budget_skip_armed", False)):
             viewer._openxr_effect_submit_budget_skip_armed = False
+            scheduler.clear_pending_source()
             self._breakdown_inc("openxr_effect_submit_budget_skip")
             self._breakdown_inc("openxr_effect_source_reused_safe")
             return False

@@ -805,16 +805,15 @@ def test_runtime_effect_submit_budget_skip_does_not_call_submit():
 
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
 
-    assert viewer._runtime_effect_submit_scheduler().pending_source is pending
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert viewer._openxr_effect_submit_budget_skip_armed is False
     assert ("openxr_effect_submit_budget_skip", 1) in inc_calls
     assert ("openxr_effect_source_reused_safe", 1) in inc_calls
 
     submitted = []
     viewer._submit_runtime_effect_source_texture = lambda value: submitted.append(value)
-    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
-    assert submitted == [pending]
-    assert viewer._runtime_effect_submit_scheduler().pending_source is None
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert submitted == []
 
 
 def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():

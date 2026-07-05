@@ -4534,6 +4534,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     self._flush_runtime_effect_submit()
                     continue
 
+            screen_frame_uploaded = False
             if frame_state.should_render:
                 # Drain depth_q non-blocking -keep only the newest frame
                 screen_frame_uploaded = self._poll_source_frame(upload=True)
@@ -4930,7 +4931,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _loop_mark('end_frame')
             if loop_breakdown_enabled:
                 self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
-            self._flush_runtime_effect_submit()
+            if not screen_frame_uploaded:
+                self._flush_runtime_effect_submit()
             # Keep asset initialization off the active screen presenter path.
             if not self._has_renderable_source_frame():
                 self._ensure_env_model_initialized("Lazy")

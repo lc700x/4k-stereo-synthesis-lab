@@ -1157,10 +1157,23 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_wait
     assert "self._poll_source_frame(upload=False)" in pre_wait
     assert "xr.begin_frame" in wait_to_upload
+    assert "screen_frame_uploaded = False" in wait_to_upload
     assert "screen_frame_uploaded = self._poll_source_frame(upload=True)" in wait_to_upload
     assert wait_to_upload.index("xr.begin_frame") < wait_to_upload.index(
         "screen_frame_uploaded = self._poll_source_frame(upload=True)"
     )
+
+
+def test_active_openxr_presenter_skips_effect_flush_after_screen_upload():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    submit_tail = run_body.rsplit("_submit_openxr_frame(composition_layers)", 1)[1].split(
+        "# Keep asset initialization off the active screen presenter path.", 1
+    )[0]
+
+    assert "if not screen_frame_uploaded:" in submit_tail
+    assert submit_tail.index("openxr_submit_frame") < submit_tail.index("if not screen_frame_uploaded:")
+    assert submit_tail.index("if not screen_frame_uploaded:") < submit_tail.index("self._flush_runtime_effect_submit()")
 
 
 def test_no_renderable_openxr_frame_does_not_sleep_after_submit():

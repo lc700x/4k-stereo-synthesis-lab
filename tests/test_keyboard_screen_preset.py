@@ -201,17 +201,28 @@ def test_laser_hit_circle_model_is_shared_by_screen_and_keyboard(monkeypatch):
 
 
 def test_laser_hit_circles_render_without_depth_test_like_keyboard_cursor():
+    presenter_text = (SRC / "xr_viewer" / "overlay_layer_presenter.py").read_text(encoding="utf-8")
+    render_overlays = presenter_text.split("def render_projection_overlays", 1)[1]
+    hit_circle_block = render_overlays.split("'laser hit circle'", 1)[1]
+    hit_circle_block = hit_circle_block.split("viewer.ctx.disable(moderngl.BLEND)", 1)[0]
+
+    disable_depth = hit_circle_block.index("viewer.ctx.disable(moderngl.DEPTH_TEST)")
+    draw_hit_circles = hit_circle_block.index("viewer._render_lasers(mgl_fbo, vp_mat, blend=True)")
+    enable_blend = hit_circle_block.index("viewer.ctx.enable(moderngl.BLEND)")
+    assert disable_depth < enable_blend < draw_hit_circles
+    assert "setattr(viewer.ctx, 'depth_mask', False)" in hit_circle_block
+    assert "viewer.ctx.depth_mask = True" in render_overlays
+
+
+def test_render_eye_delegates_projection_overlays_to_presenter():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    hit_circle_block = render_eye.split("# 9. Laser hit circles", 1)[1]
-    hit_circle_block = hit_circle_block.split("# 10. FPS/status overlays", 1)[0]
+    render_eye = render_eye.split("    # OpenXR event loop", 1)[0]
 
-    disable_depth = hit_circle_block.index("self.ctx.disable(moderngl.DEPTH_TEST)")
-    draw_hit_circles = hit_circle_block.index("self._render_lasers(mgl_fbo, vp_mat, blend=True)")
-    enable_depth = hit_circle_block.index("self.ctx.enable(moderngl.DEPTH_TEST)")
-    assert disable_depth < draw_hit_circles < enable_depth
-    assert "setattr(self.ctx, 'depth_mask', False)" in hit_circle_block
-    assert "self.ctx.depth_mask = True" in hit_circle_block
+    assert "OverlayLayerPresenter(self)" in render_eye
+    assert "render_projection_overlays(" in render_eye
+    assert "self._render_keyboard(mgl_fbo, vp_mat)" not in render_eye
+    assert "self._render_lasers(mgl_fbo, vp_mat, blend=True)" not in render_eye
 
 
 def test_openxr_keyboard_hover_pulses_controller_haptics_on_key_changes():

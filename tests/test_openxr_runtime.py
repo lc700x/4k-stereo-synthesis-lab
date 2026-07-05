@@ -1143,6 +1143,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
+    overlay_presenter = (SRC / "xr_viewer" / "overlay_layer_presenter.py").read_text(encoding="utf-8")
     breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
 
     for name in (
@@ -1196,6 +1197,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
             or name in projection_presenter
             or name in screen_presenter
             or name in background_presenter
+            or name in overlay_presenter
         )
 
     assert "wall_mask=" in breakdown
@@ -1273,15 +1275,16 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "glfw.swap_buffers(viewer.window)" in projection_presenter
     assert "openxr_projection_render_failed" in opengl_projection_block
     assert "xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)" in opengl_projection_block
-    render_eye_aux_block = implementation.split("def _try_aux_render", 1)[1].split(
-        "self.ctx.screen.use()", 1
+    overlay_aux_block = overlay_presenter.split("def _try_aux_render", 1)[1].split(
+        "if viewer._keyboard_visible", 1
     )[0]
-    assert "try:" in render_eye_aux_block
-    assert "callback()" in render_eye_aux_block
-    assert "self._breakdown_inc(metric)" in render_eye_aux_block
-    assert "openxr_overlay_render_failed" in implementation
-    assert "openxr_controller_render_failed" in implementation
-    assert "openxr_laser_render_failed" in implementation
+    assert "try:" in overlay_aux_block
+    assert "callback()" in overlay_aux_block
+    assert "viewer._breakdown_inc(metric)" in overlay_aux_block
+    assert "openxr_overlay_render_failed" in overlay_presenter
+    assert "openxr_controller_render_failed" in overlay_presenter
+    assert "openxr_laser_render_failed" in overlay_presenter
+    assert "def _try_aux_render" not in implementation
 
 
 def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():

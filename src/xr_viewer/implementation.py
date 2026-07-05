@@ -150,6 +150,7 @@ from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
 from .openxr_frame_pipeline import OpenXRFramePipeline
+from .overlay_layer_presenter import OverlayLayerPresenter
 from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
 
@@ -2151,20 +2152,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             perf_marks.append((label, (now - perf_last) * 1000.0))
             perf_last = now
 
-        def _try_aux_render(metric, label, callback):
-            try:
-                callback()
-                return True
-            except Exception as exc:
-                self._breakdown_inc(metric)
-                print(f"[OpenXRViewer] {label} render failed: {type(exc).__name__}: {exc}")
-                mgl_fbo.use()
-                self.ctx.viewport = (0, 0, sc_w, sc_h)
-                self.ctx.disable(moderngl.BLEND)
-                self.ctx.depth_mask = True
-                self.ctx.enable(moderngl.DEPTH_TEST)
-                return False
-
         # The swapchain is GL_SRGB8_ALPHA8, but the desktop capture texture is already
         # gamma-encoded.  Disabling GL_FRAMEBUFFER_SRGB prevents AMD (and compliant
         # drivers) from applying a second sRGB encoding pass on write, which would
@@ -2241,111 +2228,18 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 vp_mat=vp_mat,
                 mark_perf=_mark_perf if perf_enabled else None,
             )
-        # 3. Keyboard
-        if self._keyboard_visible and self._keyboard_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'keyboard', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_keyboard(mgl_fbo, vp_mat),
-            ))
-        if perf_enabled:
-            _mark_perf('keyboard')
-
-        # 5. Depth OSD (floating panel, always checked; method handles its own alpha)
-        if self._depth_osd_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'depth OSD', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_depth_osd(eye_index, mgl_fbo, vp_mat),
-            ))
-
-        # 5b. Screen-info OSD (size + distance, shown while right grip + stick adjusts)
-        if self._screen_osd_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'screen OSD', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_screen_osd(eye_index, mgl_fbo, vp_mat),
-            ))
-
-        # 5c. Preset OSD (name, shown briefly after cycling presets with Y button)
-        if self._preset_osd_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'preset OSD', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_preset_osd(eye_index, mgl_fbo, vp_mat),
-            ))
-        # 6b. Brand OSD (controller model indicator, attached to right controller)
-        if self._brand_osd_tex is not None and self._grip_mat_r is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'brand OSD', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_brand_osd(eye_index, mgl_fbo, vp_mat),
-            ))
-
-        # 6c. Seat adjustment OSD
-        if self._seat_adjust_osd_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'seat OSD', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_seat_adjust_osd(eye_index, mgl_fbo, vp_mat),
-            ))
-
-        # 7. Laser beam (opaque rainbow) -rendered behind controllers so the
-        # controller ring and body correctly occlude the beam near its origin.
-        _try_aux_render('openxr_laser_render_failed', 'laser beam', lambda: (
-            setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-            self._render_lasers(mgl_fbo, vp_mat, blend=False),
-        ))
-
-        # 8. VR Controller models -rendered on top of the opaque laser beam.
-        if self._ctrl_prims_l or self._ctrl_prims_r:
-            _try_aux_render('openxr_controller_render_failed', 'controller', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self.ctx.disable(moderngl.BLEND),
-                setattr(self.ctx, 'depth_mask', True),
-                glFrontFace(GL_CCW),
-                self._render_controllers(mgl_fbo, vp_mat, view_mat),
-            ))
-
-        # 9. Laser hit circles (semi-transparent) -rendered on top of controllers.
-        _try_aux_render('openxr_laser_render_failed', 'laser hit circle', lambda: (
-            setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-            self.ctx.disable(moderngl.DEPTH_TEST),
-            setattr(self.ctx, 'depth_mask', False),
-            self.ctx.enable(moderngl.BLEND),
-            setattr(self.ctx, 'blend_func', (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)),
-            self._render_lasers(mgl_fbo, vp_mat, blend=True),
-        ))
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
-        self.ctx.enable(moderngl.DEPTH_TEST)
-
-        # 10. FPS/status overlays -topmost UI, occlude laser beams
-        if self._hand_fps_visible and self._overlay_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'FPS overlay', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_fps_overlay(eye_index, mgl_fbo, vp_mat),
-            ))
-        if self._team_fps_visible and self._team_status_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'team status overlay', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_team_status_overlay(eye_index, mgl_fbo, vp_mat),
-            ))
-
-        # 11. Calibration panel (also topmost, shown when in calibration mode -occludes everything else)
-        if self._calibration_mode:
-            _try_aux_render('openxr_overlay_render_failed', 'calibration panel', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_calibration_panel(mgl_fbo, vp_mat),
-            ))
-
-        # 12. Help panels
-        if self._fps_overlay_visible and self._help_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'help panel', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_help_panel(mgl_fbo, vp_mat),
-            ))
-        if self._team_status_visible and self._team_help_visible and self._team_help_tex is not None:
-            _try_aux_render('openxr_overlay_render_failed', 'team help panel', lambda: (
-                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-                self._render_team_help_panel(mgl_fbo, vp_mat),
-            ))
-        if perf_enabled:
-            _mark_perf('osd')
+        overlay_presenter = getattr(self, '_overlay_layer_presenter', None)
+        if overlay_presenter is None:
+            overlay_presenter = OverlayLayerPresenter(self)
+            self._overlay_layer_presenter = overlay_presenter
+        overlay_presenter.render_projection_overlays(
+            eye_index=eye_index,
+            mgl_fbo=mgl_fbo,
+            vp_mat=vp_mat,
+            view_mat=view_mat,
+            swapchain_size=(sc_w, sc_h),
+            mark_perf=_mark_perf if perf_enabled else None,
+        )
 
         self.ctx.screen.use()
         if perf_enabled:

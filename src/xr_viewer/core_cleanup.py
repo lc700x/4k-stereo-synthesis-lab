@@ -168,6 +168,7 @@ class CoreCleanupMixin:
         self._background_equirect_uploaded_key = None
         self._background_equirect_failed_key = None
         self._background_equirect_pending_tex = None
+        self._runtime_effect_downsample_failed_key = None
         self._quad_swapchain_images.clear()
         self._quad_swapchain_sizes.clear()
         self._quad_swapchain_array_size.clear()

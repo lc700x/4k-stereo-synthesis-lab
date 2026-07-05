@@ -2412,8 +2412,10 @@ def test_quad_layer_presented_state_resets_when_swapchains_reset():
     assert "self._quad_swapchain_presented_eyes = set()" in d3d11
     assert "self._background_equirect_failed_key = None" in implementation
     assert "self._background_equirect_pending_tex = None" in implementation
+    assert "self._runtime_effect_downsample_failed_key = None" in implementation
     assert "self._background_equirect_failed_key = None" in cleanup
     assert "self._background_equirect_pending_tex = None" in cleanup
+    assert "self._runtime_effect_downsample_failed_key = None" in cleanup
     assert cleanup.index("self._background_equirect_uploaded_key = None") < cleanup.index(
         "self._quad_swapchain_images.clear()"
     )

@@ -382,14 +382,16 @@ class CoreSourceStateMixin:
             return
 
         def _promote_ready():
-            promote_ready = getattr(self, "_promote_runtime_effect_ready_texture", None)
-            if not callable(promote_ready):
-                return
             try:
-                promote_ready()
+                result = scheduler.promote_ready_once(getattr(self, "_frame_count", 0))
             except Exception as exc:
                 print(f"[OpenXRViewer] Runtime effect source promote failed: {type(exc).__name__}: {exc}")
                 self._breakdown_inc("openxr_effect_source_promote_failed")
+                return
+            if result == 'reused':
+                self._breakdown_inc("openxr_effect_source_promote_reuse")
+            elif result == 'promoted':
+                self._breakdown_inc("openxr_effect_source_safe_publish")
 
         try:
             status = scheduler.flush_pending_source(

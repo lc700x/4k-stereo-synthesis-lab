@@ -243,17 +243,6 @@ class CoreRuntimeEyeMixin:
         self._runtime_effect_scheduler().publish_completed(w, h, getattr(self, '_frame_count', 0))
         self._breakdown_inc("openxr_effect_source_ready_publish")
 
-    def _promote_runtime_effect_ready_texture(self):
-        frame_id = int(getattr(self, '_frame_count', 0) or 0)
-        scheduler = self._runtime_effect_scheduler()
-        if getattr(self, '_runtime_effect_promote_frame', -1) == frame_id:
-            self._breakdown_inc("openxr_effect_source_promote_reuse")
-            return scheduler.latest_safe()[0]
-        self._runtime_effect_promote_frame = frame_id
-        if scheduler.poll_completed():
-            self._breakdown_inc("openxr_effect_source_safe_publish")
-        return scheduler.latest_safe()[0]
-
     def _try_update_runtime_effect_source_texture_gpu(self, frame, w, h):
         if not self._runtime_eye_gpu_enabled or CUDART_GL is None or BACKEND not in ("CUDA", "HIP"):
             return False

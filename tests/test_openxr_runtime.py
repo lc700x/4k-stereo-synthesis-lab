@@ -800,8 +800,9 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def latest_safe_light_probe" in scheduler_text
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
-    assert "def _promote_runtime_effect_ready_texture" in runtime_eye
+    assert "def _promote_runtime_effect_ready_texture" not in runtime_eye
     assert "def _runtime_effect_latest_safe" in runtime_eye
+    assert "def promote_ready_once" in scheduler_text
     assert "_runtime_effect_spare_source_tex" not in runtime_eye
     assert "self.ready_tex = self.staging_tex" in scheduler_text
     assert "self.safe_tex = self.ready_tex" in scheduler_text
@@ -821,7 +822,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
         SRC / "xr_viewer" / "core_screen_quality.py"
     ).read_text(encoding="utf-8")
     assert "openxr_screen_light_source_reuse" in environment_renderer
-    assert "openxr_effect_source_safe_publish" in runtime_eye
+    assert "openxr_effect_source_safe_publish" in source_state
     assert "openxr_screen_effect_source_reuse" in effects
     assert "_openxr_effect_submit_budget_skip_armed" in runtime_eye
     assert "self._runtime_effect_result_state = pool.state" not in runtime_eye
@@ -850,15 +851,15 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
         "def _release_runtime_eye_texture_resources", 1
     )[0]
     publish_block = runtime_eye.split("def _publish_runtime_effect_staging_texture", 1)[1].split(
-        "def _promote_runtime_effect_ready_texture", 1
-    )[0]
-    promote_block = runtime_eye.split("def _promote_runtime_effect_ready_texture", 1)[1].split(
         "def _try_update_runtime_effect_source_texture_gpu", 1
+    )[0]
+    flush_block = source_state.split("def _flush_runtime_effect_submit", 1)[1].split(
+        "def _prewarm_runtime_effect_downsample", 1
     )[0]
     assert "staging_tex = self._ensure_runtime_effect_staging_texture(w, h)" in runtime_eye
     assert "publish_completed(w, h, getattr(self, '_frame_count', 0))" in publish_block
     assert "poll_completed()" not in publish_block
-    assert "poll_completed()" in promote_block
+    assert "promote_ready_once" in flush_block
     assert "self._release_runtime_effect_source_texture()" not in update_block.split(
         "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1
     )[1]
@@ -867,6 +868,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "openxr_effect_ready_age_frames" in effects
     assert "_promote_runtime_effect_ready_texture" not in effects
     assert "_promote_runtime_effect_ready_texture" not in environment_renderer
+    assert "_promote_runtime_effect_ready_texture" not in source_state
     assert "getattr(self, '_runtime_effect_source_tex', None)" not in effects.split(
         "def _screen_effect_source_texture", 1
     )[1].split("def _render_glow", 1)[0]
@@ -997,43 +999,28 @@ def test_effect_scheduler_publishes_completed_result_before_consumers_read_safe(
     assert scheduler.latest_safe() == (staging, (8, 4), 21)
 
 
-def test_runtime_effect_ready_promotes_once_per_frame(monkeypatch):
-    monkeypatch.chdir(SRC)
-    from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
+def test_effect_scheduler_promotes_ready_once_per_frame():
+    from xr_viewer.effect_scheduler import EffectScheduler
 
-    class Viewer(CoreRuntimeEyeMixin):
-        pass
+    class Pool:
+        def __init__(self):
+            self.calls = 0
+            self.safe_tex = object()
+            self.safe_size = (8, 4)
+            self.safe_frame_id = 11
 
-    ready_tex = object()
-    viewer = Viewer()
-    viewer._frame_count = 11
-    viewer._runtime_effect_result_pool = SimpleNamespace(
-        ready_tex=ready_tex,
-        safe_tex=None,
-        safe_size=None,
-        safe_frame_id=0,
-        promote_calls=0,
-        promote_ready=lambda: False,
-    )
-    inc_calls = []
-    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
-    def _promote_ready():
-        viewer._runtime_effect_result_pool.promote_calls += 1
-        viewer._runtime_effect_result_pool.safe_tex = ready_tex
-        viewer._runtime_effect_result_pool.ready_tex = None
-        return True
+        def promote_ready(self):
+            self.calls += 1
+            return True
 
-    viewer._runtime_effect_result_pool.promote_ready = _promote_ready
+    pool = Pool()
+    scheduler = EffectScheduler(pool)
 
-    assert viewer._promote_runtime_effect_ready_texture() is ready_tex
-    assert viewer._promote_runtime_effect_ready_texture() is ready_tex
-    assert viewer._runtime_effect_result_pool.promote_calls == 1
-    assert ("openxr_effect_source_safe_publish", 1) in inc_calls
-    assert ("openxr_effect_source_promote_reuse", 1) in inc_calls
-
-    viewer._frame_count = 12
-    assert viewer._promote_runtime_effect_ready_texture() is ready_tex
-    assert viewer._runtime_effect_result_pool.promote_calls == 2
+    assert scheduler.promote_ready_once(11) == 'promoted'
+    assert scheduler.promote_ready_once(11) == 'reused'
+    assert pool.calls == 1
+    assert scheduler.promote_ready_once(12) == 'promoted'
+    assert pool.calls == 2
 
 
 def test_runtime_effect_submit_budget_reuses_safe_texture_on_next_frame(monkeypatch):

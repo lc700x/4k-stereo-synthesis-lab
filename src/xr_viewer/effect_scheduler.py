@@ -99,6 +99,7 @@ class EffectScheduler:
     def __init__(self, pool=None):
         self.pool = pool or AsyncEffectResultPool()
         self.pending_source = None
+        self.promote_frame_id = -1
 
     def queue_source(self, source):
         overwritten = self.pending_source is not None
@@ -131,6 +132,13 @@ class EffectScheduler:
 
     def poll_completed(self):
         return self.pool.promote_ready()
+
+    def promote_ready_once(self, frame_id):
+        frame_id = int(frame_id or 0)
+        if self.promote_frame_id == frame_id:
+            return 'reused'
+        self.promote_frame_id = frame_id
+        return 'promoted' if self.poll_completed() else 'unchanged'
 
     def latest_safe(self):
         return self.pool.safe_tex, self.pool.safe_size, self.pool.safe_frame_id

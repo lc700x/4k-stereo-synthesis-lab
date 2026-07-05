@@ -5,8 +5,23 @@ class EffectWorker:
     def __init__(self, viewer):
         self.viewer = viewer
 
+    def _interval(self):
+        raw = getattr(self.viewer, "_openxr_effect_worker_interval", None)
+        if raw is None:
+            import os
+            raw = os.environ.get("D2S_OPENXR_EFFECT_WORKER_INTERVAL", "1")
+        try:
+            return max(1, int(raw))
+        except (TypeError, ValueError):
+            return 1
+
     def prewarm_after_submit(self):
         viewer = self.viewer
+        interval = self._interval()
+        frame_id = int(getattr(viewer, "_frame_count", 0) or 0)
+        if interval > 1 and frame_id > 0 and (frame_id % interval) != 0:
+            viewer._breakdown_inc("openxr_effect_worker_interval_skip")
+            return
         scheduler = viewer._runtime_effect_submit_scheduler()
         source_tex, source_size, source_frame_id = scheduler.latest_safe()
         if source_tex is None or source_size is None:

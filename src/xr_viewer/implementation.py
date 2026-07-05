@@ -2119,7 +2119,10 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self.ctx.enable(moderngl.DEPTH_TEST)
 
     def _projection_layer_needed(self):
-        if self._quad_layer_unavailable_reason() is not None:
+        quad_unavailable_reason = self._quad_layer_unavailable_reason()
+        if quad_unavailable_reason == 'missing_source_texture' and self._quad_layer_has_presented_frame():
+            quad_unavailable_reason = None
+        if quad_unavailable_reason is not None:
             return True
         if self._keyboard_visible and self._keyboard_tex is not None:
             return True

@@ -1237,7 +1237,15 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     viewer._aim_mat_l = None
     viewer._panorama_background_path = None
 
+    viewer._quad_layer_unavailable_reason = lambda: "missing_source_texture"
+    viewer._quad_layer_has_presented_frame = lambda: True
+    assert viewer._projection_layer_needed() is False
+
+    viewer._quad_layer_has_presented_frame = lambda: False
+    assert viewer._projection_layer_needed() is True
+
     viewer._quad_layer_unavailable_reason = lambda: "inactive"
+    viewer._quad_layer_has_presented_frame = lambda: True
     assert viewer._projection_layer_needed() is True
 
 

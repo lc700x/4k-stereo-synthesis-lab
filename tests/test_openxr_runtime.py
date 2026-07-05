@@ -406,6 +406,23 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert rgbd_poll.source_timestamp == 23.5
 
 
+def test_runtime_direct_renderable_source_does_not_require_depth_texture():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._runtime_direct_source = True
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_depth_texture = None
+
+    assert viewer._has_renderable_source_frame()
+
+    viewer._runtime_eye_textures[1] = None
+    assert not viewer._has_renderable_source_frame()
+
+
 def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pending():
     from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
 

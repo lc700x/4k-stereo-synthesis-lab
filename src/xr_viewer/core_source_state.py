@@ -525,7 +525,7 @@ class CoreSourceStateMixin:
 
     def _has_renderable_source_frame(self):
         if self._runtime_direct_source:
-            return all(self._runtime_eye_textures) and self._runtime_depth_texture is not None
+            return all(self._runtime_eye_textures)
         return self.color_tex is not None and self.depth_tex is not None
 
     def _should_show_source_border(self, now=None):

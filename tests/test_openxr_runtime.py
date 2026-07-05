@@ -919,7 +919,6 @@ def test_effect_worker_publishes_light_probe_without_polluting_glow_downsample()
     viewer = Viewer()
     scheduler = viewer._runtime_effect_submit_scheduler()
     _publish_effect_safe(scheduler, object(), (640, 360), 6)
-    downsampled = SimpleNamespace(size=(32, 18))
     viewer._frame_count = 6
     viewer._glow_mode = "veil"
     viewer._glow_intensity_multiplier = 0.0
@@ -928,12 +927,55 @@ def test_effect_worker_publishes_light_probe_without_polluting_glow_downsample()
     viewer._panorama_background_path = "background.hdr"
     viewer._breakdown_inc = lambda *_args, **_kwargs: None
     viewer._breakdown_add_time = lambda *_args, **_kwargs: None
-    viewer._prepare_glow_downsample_texture = lambda *_args: downsampled
+    light_probe = SimpleNamespace(size=(3, 3))
+    calls = []
+
+    def _prepare(_source_tex, _source_size, target_size=None):
+        calls.append(target_size)
+        return light_probe
+
+    viewer._prepare_glow_downsample_texture = _prepare
 
     EffectWorker(viewer).prewarm_after_submit()
 
+    assert calls == [(3, 3)]
     assert scheduler.latest_safe_downsample() == (None, None, 6)
-    assert scheduler.latest_safe_light_probe() == (downsampled, (32, 18), 6)
+    assert scheduler.latest_safe_light_probe() == (light_probe, (3, 3), 6)
+
+
+def test_effect_worker_publishes_separate_glow_and_light_probe_results():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_worker import EffectWorker
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    scheduler = viewer._runtime_effect_submit_scheduler()
+    _publish_effect_safe(scheduler, object(), (640, 360), 6)
+    glow_tex = SimpleNamespace(size=(32, 18))
+    light_probe = SimpleNamespace(size=(3, 3))
+    calls = []
+    viewer._frame_count = 6
+    viewer._glow_mode = "screen"
+    viewer._glow_intensity_multiplier = 1.0
+    viewer._glow_shell_intensity_multiplier = 0.0
+    viewer._screen_light_intensity = 1.0
+    viewer._panorama_background_path = "background.hdr"
+    viewer._breakdown_inc = lambda *_args, **_kwargs: None
+    viewer._breakdown_add_time = lambda *_args, **_kwargs: None
+
+    def _prepare(_source_tex, _source_size, target_size=None):
+        calls.append(target_size)
+        return light_probe if target_size == (3, 3) else glow_tex
+
+    viewer._prepare_glow_downsample_texture = _prepare
+
+    EffectWorker(viewer).prewarm_after_submit()
+
+    assert calls == [None, (3, 3)]
+    assert scheduler.latest_safe_downsample() == (glow_tex, (32, 18), 6)
+    assert scheduler.latest_safe_light_probe() == (light_probe, (3, 3), 6)
 
 
 def test_runtime_effect_submit_budget_includes_prewarm():
@@ -1043,7 +1085,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def publish_downsample" in scheduler_text
     assert "prepare_downsample" not in scheduler_text
     assert "prepare(source_tex, source_size)" not in source_state
-    assert "prepare(source_tex, source_size)" in worker_text
+    assert "prepare(source_tex, source_size) if glow_needs_downsample else None" in worker_text
+    assert "prepare(source_tex, source_size, target_size=(3, 3))" in worker_text
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" not in runtime_eye

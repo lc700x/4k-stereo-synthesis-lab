@@ -49,7 +49,8 @@ class EffectWorker:
             return
         start = time.perf_counter()
         try:
-            tex = prepare(source_tex, source_size)
+            glow_tex = prepare(source_tex, source_size) if glow_needs_downsample else None
+            light_tex = prepare(source_tex, source_size, target_size=(3, 3)) if light_needs_downsample else None
         except Exception as exc:
             viewer._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
             print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
@@ -58,10 +59,9 @@ class EffectWorker:
             return
         viewer._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
         viewer._runtime_effect_downsample_failed_key = None
-        if tex is not None:
-            size = getattr(tex, 'size', None)
-            if glow_needs_downsample:
-                scheduler.publish_downsample(tex, size, source_frame_id)
-            if light_needs_downsample:
-                scheduler.publish_light_probe(tex, size, source_frame_id)
+        if glow_tex is not None:
+            scheduler.publish_downsample(glow_tex, getattr(glow_tex, 'size', None), source_frame_id)
+        if light_tex is not None:
+            scheduler.publish_light_probe(light_tex, getattr(light_tex, 'size', None), source_frame_id)
+        if glow_tex is not None or light_tex is not None:
             viewer._breakdown_inc("openxr_effect_downsample_prewarm")

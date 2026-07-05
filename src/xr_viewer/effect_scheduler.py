@@ -98,6 +98,27 @@ class AsyncEffectResultPool:
 class EffectScheduler:
     def __init__(self, pool=None):
         self.pool = pool or AsyncEffectResultPool()
+        self.pending_source = None
+
+    def queue_source(self, source):
+        overwritten = self.pending_source is not None
+        self.pending_source = source
+        return overwritten
+
+    def clear_pending_source(self):
+        self.pending_source = None
+
+    def flush_pending_source(self, submit_source, promote_ready=None):
+        source = self.pending_source
+        if source is None:
+            return 'empty'
+        submitted = submit_source(source)
+        if submitted is False:
+            return 'skipped'
+        if callable(promote_ready):
+            promote_ready()
+        self.pending_source = None
+        return 'submitted'
 
     def ensure_staging(self, ctx, w, h):
         return self.pool.ensure_staging(ctx, w, h)

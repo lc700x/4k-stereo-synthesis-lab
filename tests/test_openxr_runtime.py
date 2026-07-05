@@ -635,10 +635,29 @@ def test_openxr_effect_submit_is_timed_outside_screen_upload():
 
     assert viewer._poll_source_frame(upload=True) is True
 
-    assert viewer._pending_runtime_effect_source is effect_source
+    assert viewer._runtime_effect_submit_scheduler().pending_source is effect_source
     names = [name for name, _seconds in time_calls]
     assert names.index("openxr_upload") < names.index("openxr_poll")
     assert "openxr_effect_submit" not in names
+
+
+def test_effect_scheduler_owns_latest_only_pending_submit():
+    from xr_viewer.effect_scheduler import EffectScheduler
+
+    scheduler = EffectScheduler()
+    first = object()
+    second = object()
+    submitted = []
+
+    assert scheduler.queue_source(first) is False
+    assert scheduler.queue_source(second) is True
+    assert scheduler.flush_pending_source(lambda value: submitted.append(value)) == 'submitted'
+    assert submitted == [second]
+    assert scheduler.pending_source is None
+
+    scheduler.queue_source(first)
+    assert scheduler.flush_pending_source(lambda _value: False) == 'skipped'
+    assert scheduler.pending_source is first
 
 
 def test_runtime_effect_submit_flushes_after_frame_submit():
@@ -662,7 +681,7 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
 
     viewer._flush_runtime_effect_submit()
     assert submitted == [newer_source]
-    assert viewer._pending_runtime_effect_source is None
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
     viewer._flush_runtime_effect_submit()
     assert submitted == [newer_source]
@@ -674,7 +693,7 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
     viewer._queue_runtime_effect_submit(source)
     viewer._flush_runtime_effect_submit()
 
-    assert viewer._pending_runtime_effect_source is None
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert ("openxr_effect_submit_failed", 1) in inc_calls
 
 
@@ -685,13 +704,13 @@ def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
         pass
 
     viewer = Viewer()
-    viewer._pending_runtime_effect_source = object()
+    viewer._runtime_effect_submit_scheduler().queue_source(object())
     viewer._submit_runtime_effect_source_texture = lambda _value: None
     viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("flush should not prewarm")
 
     viewer._flush_runtime_effect_submit()
 
-    assert viewer._pending_runtime_effect_source is None
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
 
 def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
@@ -722,20 +741,20 @@ def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
     viewer = Viewer()
     inc_calls = []
     pending = object()
-    viewer._pending_runtime_effect_source = pending
+    viewer._runtime_effect_submit_scheduler().queue_source(pending)
     viewer._submit_runtime_effect_source_texture = lambda _value: False
     viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     viewer._flush_runtime_effect_submit()
 
-    assert viewer._pending_runtime_effect_source is pending
+    assert viewer._runtime_effect_submit_scheduler().pending_source is pending
     assert ("openxr_effect_downsample_prewarm_skip", 1) in inc_calls
 
     viewer._submit_runtime_effect_source_texture = lambda _value: None
     viewer._prewarm_runtime_effect_downsample = lambda: None
     viewer._flush_runtime_effect_submit()
-    assert viewer._pending_runtime_effect_source is None
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
 
 def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
@@ -755,7 +774,7 @@ def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
     viewer._queue_runtime_effect_submit(source)
     viewer._flush_runtime_effect_submit()
 
-    assert getattr(viewer, "_pending_runtime_effect_source", None) is None
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert submitted == []
     assert viewer._released
 

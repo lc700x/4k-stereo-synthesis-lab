@@ -7,6 +7,8 @@ from typing import Any, Optional
 
 from OpenGL.GL import glDeleteBuffers
 
+from .effect_scheduler import EffectScheduler
+
 
 @dataclass
 class ScreenFramePoll:
@@ -346,6 +348,16 @@ class CoreSourceStateMixin:
             return
         self._breakdown_add_time("openxr_source_latency", time.perf_counter() - float(source_timestamp))
 
+    def _runtime_effect_submit_scheduler(self):
+        scheduler_factory = getattr(self, "_runtime_effect_scheduler", None)
+        if callable(scheduler_factory):
+            return scheduler_factory()
+        scheduler = getattr(self, "_openxr_effect_submit_scheduler", None)
+        if scheduler is None:
+            scheduler = EffectScheduler()
+            self._openxr_effect_submit_scheduler = scheduler
+        return scheduler
+
     def _queue_runtime_effect_submit(self, effect_source_rgb):
         if effect_source_rgb is None:
             return
@@ -356,35 +368,41 @@ class CoreSourceStateMixin:
                     release_effect_source = getattr(self, "_release_runtime_effect_source_texture", None)
                     if callable(release_effect_source):
                         release_effect_source()
+                    self._runtime_effect_submit_scheduler().clear_pending_source()
                     return
             except Exception:
                 pass
-        if getattr(self, "_pending_runtime_effect_source", None) is not None:
+        scheduler = self._runtime_effect_submit_scheduler()
+        if scheduler.queue_source(effect_source_rgb):
             self._breakdown_inc("openxr_effect_submit_overwrite")
-        self._pending_runtime_effect_source = effect_source_rgb
 
     def _flush_runtime_effect_submit(self):
-        effect_source_rgb = getattr(self, "_pending_runtime_effect_source", None)
-        if effect_source_rgb is None:
+        scheduler = self._runtime_effect_submit_scheduler()
+        if scheduler.pending_source is None:
             return
-        try:
-            submitted = self._submit_runtime_effect_source_texture(effect_source_rgb)
-        except Exception as exc:
-            self._pending_runtime_effect_source = None
-            print(f"[OpenXRViewer] Runtime effect submit failed: {type(exc).__name__}: {exc}")
-            self._breakdown_inc("openxr_effect_submit_failed")
-            return
-        if submitted is False:
-            self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
-            return
-        promote_ready = getattr(self, "_promote_runtime_effect_ready_texture", None)
-        if callable(promote_ready):
+
+        def _promote_ready():
+            promote_ready = getattr(self, "_promote_runtime_effect_ready_texture", None)
+            if not callable(promote_ready):
+                return
             try:
                 promote_ready()
             except Exception as exc:
                 print(f"[OpenXRViewer] Runtime effect source promote failed: {type(exc).__name__}: {exc}")
                 self._breakdown_inc("openxr_effect_source_promote_failed")
-        self._pending_runtime_effect_source = None
+
+        try:
+            status = scheduler.flush_pending_source(
+                self._submit_runtime_effect_source_texture,
+                _promote_ready,
+            )
+        except Exception as exc:
+            scheduler.clear_pending_source()
+            print(f"[OpenXRViewer] Runtime effect submit failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_effect_submit_failed")
+            return
+        if status == 'skipped':
+            self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
 
     def _prewarm_runtime_effect_downsample(self):
         source_tex = getattr(self, "_runtime_effect_safe_source_tex", None)

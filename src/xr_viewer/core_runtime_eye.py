@@ -461,7 +461,7 @@ class CoreRuntimeEyeMixin:
             self._openxr_effect_submit_budget_skip_armed = False
             self._breakdown_inc("openxr_effect_submit_budget_skip")
             self._breakdown_inc("openxr_effect_source_reused_safe")
-            return
+            return False
         submit_start = time.perf_counter()
         self._update_runtime_effect_source_texture(frame)
         elapsed = time.perf_counter() - submit_start
@@ -469,6 +469,7 @@ class CoreRuntimeEyeMixin:
         budget_ms = float(getattr(self, "_openxr_effect_submit_budget_ms", 0.0) or 0.0)
         if budget_ms > 0.0:
             self._openxr_effect_submit_budget_skip_armed = (elapsed * 1000.0) > budget_ms
+        return True
 
     def _release_runtime_eye_texture_resources(self):
         uploader = getattr(self, "_runtime_eye_texture_uploader", None)

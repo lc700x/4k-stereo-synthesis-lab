@@ -1310,11 +1310,15 @@ def test_realtime_screen_glow_cpu_sampler_is_removed():
     runtime_eye_text = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
     effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
     renderer_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    screen_quality_text = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     base_text = (SRC / "xr_viewer" / "base.py").read_text(encoding="utf-8")
     source_func = effects_text.split("def _screen_effect_source_texture", 1)[1].split("def _render_glow", 1)[0]
     light_func = renderer_text.split("def _screen_light_source_texture", 1)[1].split(
         "def _apply_cinema_light_uniforms", 1
+    )[0]
+    downsample_func = screen_quality_text.split("def _prepare_glow_downsample_texture", 1)[1].split(
+        "def ", 1
     )[0]
 
     assert not (SRC / "xr_viewer" / "core_glow.py").exists()
@@ -1331,7 +1335,7 @@ def test_realtime_screen_glow_cpu_sampler_is_removed():
     assert "_screen_light_colors" not in effects_text
     assert "_screen_light_colors" not in impl_text
     assert "_glow_color_counter" not in impl_text
-    for realtime_func in (source_func, light_func):
+    for realtime_func in (source_func, light_func, downsample_func):
         assert ".cpu(" not in realtime_func
         assert ".numpy(" not in realtime_func
         assert "glReadPixels" not in realtime_func

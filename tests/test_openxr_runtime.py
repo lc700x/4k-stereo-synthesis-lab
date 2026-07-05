@@ -575,6 +575,24 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     viewer._prewarm_runtime_effect_downsample()
 
 
+def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    inc_calls = []
+    viewer._pending_runtime_effect_source = object()
+    viewer._submit_runtime_effect_source_texture = lambda _value: False
+    viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    viewer._flush_runtime_effect_submit()
+
+    assert ("openxr_effect_downsample_prewarm_skip", 1) in inc_calls
+
+
 def test_runtime_effect_submit_prewarm_failure_is_not_submit_failure():
     from xr_viewer.core_source_state import CoreSourceStateMixin
 
@@ -850,8 +868,8 @@ def test_runtime_effect_submit_budget_reuses_safe_texture_on_next_frame(monkeypa
 
     viewer._update_runtime_effect_source_texture = _update
 
-    viewer._submit_runtime_effect_source_texture(object())
-    viewer._submit_runtime_effect_source_texture(object())
+    assert viewer._submit_runtime_effect_source_texture(object()) is True
+    assert viewer._submit_runtime_effect_source_texture(object()) is False
 
     assert viewer._updated == 1
     assert viewer._openxr_effect_submit_budget_skip_armed is False

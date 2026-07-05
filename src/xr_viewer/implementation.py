@@ -2120,8 +2120,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
     def _projection_layer_needed(self):
         if self._quad_layer_unavailable_reason() is not None:
             return True
-        if getattr(self, '_preview_active', False):
-            return True
         if getattr(self, '_panorama_background_path', None):
             return True
         if getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', None):

@@ -1127,7 +1127,7 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
 
     viewer = object.__new__(OpenXRViewerCore)
     viewer._quad_layer_unavailable_reason = lambda: None
-    viewer._preview_active = False
+    viewer._preview_active = True
     viewer._panorama_background_path = None
     viewer._env_model_visible = False
     viewer._env_model_prims = []
@@ -1154,6 +1154,9 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     viewer._team_help_visible = False
     viewer._team_help_tex = None
 
+    assert viewer._projection_layer_needed() is False
+
+    viewer._preview_active = False
     assert viewer._projection_layer_needed() is False
 
     viewer._aim_mat_l = object()

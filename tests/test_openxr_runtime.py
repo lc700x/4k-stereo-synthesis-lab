@@ -1754,7 +1754,7 @@ def test_active_openxr_presenter_delegates_view_pose_tracking():
     assert "viewer._reset_screen_to_default(show_border=False)" in view_pose_tracker
 
 
-def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
+def test_active_openxr_presenter_flushes_effect_after_frame_submit():
     frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
     submit_tail = frame_pipeline.rsplit("self.frame_submitter.submit(", 1)[1].split(
         "if perf_log_enabled:", 1
@@ -1823,7 +1823,7 @@ def test_frame_submitter_owns_end_frame_metrics(monkeypatch):
     assert "openxr_submit_frame" in [name for name, _seconds in viewer.time_calls]
 
 
-def test_effect_submitter_flushes_only_after_rendered_reused_screen_frames(monkeypatch):
+def test_effect_submitter_flushes_after_rendered_frames(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.effect_scheduler import EffectScheduler
     from xr_viewer.effect_submitter import EffectSubmitter
@@ -1850,14 +1850,18 @@ def test_effect_submitter_flushes_only_after_rendered_reused_screen_frames(monke
 
     assert not submitter.flush_after_submit(should_render=False, screen_frame_uploaded=False)
     assert viewer.scheduler.pending_source is source
-    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
-    assert viewer.scheduler.pending_source is source
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    assert viewer.submitted == [source]
+    assert viewer.scheduler.pending_source is None
+
+    source = object()
+    viewer.scheduler.queue_source(source)
     viewer.allowed = False
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
     assert viewer.scheduler.pending_source is source
     viewer.allowed = True
     assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
-    assert viewer.submitted == [source]
+    assert viewer.submitted[-1] is source
     assert viewer.scheduler.pending_source is None
 
 

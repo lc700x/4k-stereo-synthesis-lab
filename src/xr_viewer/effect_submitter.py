@@ -8,7 +8,7 @@ class EffectSubmitter:
             callback(name, amount)
 
     def flush_after_submit(self, *, should_render, screen_frame_uploaded):
-        if not should_render or screen_frame_uploaded:
+        if not should_render:
             return False
         viewer = self.viewer
         should_submit = getattr(viewer, "_should_submit_runtime_effect_source", None)

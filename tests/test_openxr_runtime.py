@@ -662,11 +662,13 @@ def test_effect_scheduler_owns_latest_only_pending_submit():
 
 def test_runtime_effect_submit_flushes_after_frame_submit():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_submitter import EffectSubmitter
 
     class Viewer(CoreSourceStateMixin):
         pass
 
     viewer = Viewer()
+    submitter = EffectSubmitter(viewer)
     submitted = []
     source = object()
     newer_source = object()
@@ -679,11 +681,11 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
     assert submitted == []
     assert ("openxr_effect_submit_overwrite", 1) in inc_calls
 
-    viewer._flush_runtime_effect_submit()
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
     assert submitted == [newer_source]
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
-    viewer._flush_runtime_effect_submit()
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
     assert submitted == [newer_source]
 
     def _fail_submit(_value):
@@ -691,7 +693,7 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
 
     viewer._submit_runtime_effect_source_texture = _fail_submit
     viewer._queue_runtime_effect_submit(source)
-    viewer._flush_runtime_effect_submit()
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert ("openxr_effect_submit_failed", 1) in inc_calls
@@ -699,6 +701,7 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
 
 def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_submitter import EffectSubmitter
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -708,7 +711,7 @@ def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
     viewer._submit_runtime_effect_source_texture = lambda _value: None
     viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("flush should not prewarm")
 
-    viewer._flush_runtime_effect_submit()
+    assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=False)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
@@ -733,11 +736,13 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
 
 def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_submitter import EffectSubmitter
 
     class Viewer(CoreSourceStateMixin):
         pass
 
     viewer = Viewer()
+    submitter = EffectSubmitter(viewer)
     inc_calls = []
     pending = object()
     viewer._runtime_effect_submit_scheduler().queue_source(pending)
@@ -745,19 +750,20 @@ def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
     viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    viewer._flush_runtime_effect_submit()
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is pending
     assert ("openxr_effect_downsample_prewarm_skip", 1) in inc_calls
 
     viewer._submit_runtime_effect_source_texture = lambda _value: None
     viewer._prewarm_runtime_effect_downsample = lambda: None
-    viewer._flush_runtime_effect_submit()
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
 
 def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_submitter import EffectSubmitter
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -771,7 +777,7 @@ def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
     viewer._submit_runtime_effect_source_texture = lambda value: submitted.append(value)
 
     viewer._queue_runtime_effect_submit(source)
-    viewer._flush_runtime_effect_submit()
+    assert not EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=False)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert submitted == []
@@ -785,6 +791,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     scheduler_text = (SRC / "xr_viewer" / "effect_scheduler.py").read_text(encoding="utf-8")
+    submitter_text = (SRC / "xr_viewer" / "effect_submitter.py").read_text(encoding="utf-8")
 
     assert "class AsyncEffectResultPool" in scheduler_text
     assert "class EffectScheduler" in scheduler_text
@@ -822,7 +829,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
         SRC / "xr_viewer" / "core_screen_quality.py"
     ).read_text(encoding="utf-8")
     assert "openxr_screen_light_source_reuse" in environment_renderer
-    assert "openxr_effect_source_safe_publish" in source_state
+    assert "openxr_effect_source_safe_publish" in submitter_text
     assert "openxr_screen_effect_source_reuse" in effects
     assert "_openxr_effect_submit_budget_skip_armed" in runtime_eye
     assert "self._runtime_effect_result_state = pool.state" not in runtime_eye
@@ -853,13 +860,12 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     publish_block = runtime_eye.split("def _publish_runtime_effect_staging_texture", 1)[1].split(
         "def _try_update_runtime_effect_source_texture_gpu", 1
     )[0]
-    flush_block = source_state.split("def _flush_runtime_effect_submit", 1)[1].split(
-        "def _prewarm_runtime_effect_downsample", 1
-    )[0]
+    flush_block = submitter_text.split("def flush_after_submit", 1)[1]
     assert "staging_tex = self._ensure_runtime_effect_staging_texture(w, h)" in runtime_eye
     assert "publish_completed(w, h, getattr(self, '_frame_count', 0))" in publish_block
     assert "poll_completed()" not in publish_block
     assert "promote_ready_once" in flush_block
+    assert "def _flush_runtime_effect_submit" not in source_state
     assert "self._release_runtime_effect_source_texture()" not in update_block.split(
         "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1
     )[1]
@@ -1348,29 +1354,40 @@ def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
 
 def test_effect_submitter_flushes_only_after_rendered_reused_screen_frames(monkeypatch):
     monkeypatch.chdir(SRC)
+    from xr_viewer.effect_scheduler import EffectScheduler
     from xr_viewer.effect_submitter import EffectSubmitter
 
     class Viewer:
         def __init__(self):
-            self.flushes = 0
             self.allowed = True
+            self.scheduler = EffectScheduler()
+            self.submitted = []
 
         def _should_submit_runtime_effect_source(self):
             return self.allowed
 
-        def _flush_runtime_effect_submit(self):
-            self.flushes += 1
+        def _runtime_effect_submit_scheduler(self):
+            return self.scheduler
+
+        def _submit_runtime_effect_source_texture(self, source):
+            self.submitted.append(source)
 
     viewer = Viewer()
     submitter = EffectSubmitter(viewer)
+    source = object()
+    viewer.scheduler.queue_source(source)
 
     assert not submitter.flush_after_submit(should_render=False, screen_frame_uploaded=False)
+    assert viewer.scheduler.pending_source is source
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    assert viewer.scheduler.pending_source is source
     viewer.allowed = False
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert viewer.scheduler.pending_source is source
     viewer.allowed = True
     assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
-    assert viewer.flushes == 1
+    assert viewer.submitted == [source]
+    assert viewer.scheduler.pending_source is None
 
 
 def test_active_openxr_presenter_does_not_lazy_load_environment_assets():

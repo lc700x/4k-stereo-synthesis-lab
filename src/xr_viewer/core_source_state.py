@@ -376,36 +376,6 @@ class CoreSourceStateMixin:
         if scheduler.queue_source(effect_source_rgb):
             self._breakdown_inc("openxr_effect_submit_overwrite")
 
-    def _flush_runtime_effect_submit(self):
-        scheduler = self._runtime_effect_submit_scheduler()
-        if scheduler.pending_source is None:
-            return
-
-        def _promote_ready():
-            try:
-                result = scheduler.promote_ready_once(getattr(self, "_frame_count", 0))
-            except Exception as exc:
-                print(f"[OpenXRViewer] Runtime effect source promote failed: {type(exc).__name__}: {exc}")
-                self._breakdown_inc("openxr_effect_source_promote_failed")
-                return
-            if result == 'reused':
-                self._breakdown_inc("openxr_effect_source_promote_reuse")
-            elif result == 'promoted':
-                self._breakdown_inc("openxr_effect_source_safe_publish")
-
-        try:
-            status = scheduler.flush_pending_source(
-                self._submit_runtime_effect_source_texture,
-                _promote_ready,
-            )
-        except Exception as exc:
-            scheduler.clear_pending_source()
-            print(f"[OpenXRViewer] Runtime effect submit failed: {type(exc).__name__}: {exc}")
-            self._breakdown_inc("openxr_effect_submit_failed")
-            return
-        if status == 'skipped':
-            self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
-
     def _prewarm_runtime_effect_downsample(self):
         latest_safe = getattr(self, "_runtime_effect_latest_safe", None)
         if not callable(latest_safe):

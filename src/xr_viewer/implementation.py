@@ -4622,7 +4622,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     try:
                         quad_layer = self._make_quad_layer(quad_eye_index)
                         if quad_layer is None:
-                            continue
+                            raise RuntimeError(f"missing quad layer for eye {quad_eye_index}")
                         quad_layers.append(quad_layer)
                         quad_layer_headers.append(
                             ctypes.cast(ctypes.pointer(quad_layer),

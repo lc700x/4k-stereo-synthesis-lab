@@ -1062,11 +1062,14 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "def _wait_swapchain_image" in implementation
     assert implementation.count("xr.wait_swapchain_image") == 1
     assert "xr.wait_swapchain_image" not in (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
-    quad_build_block = implementation.split("updated_quad_eyes = self._update_quad_layer_swapchains()", 1)[1].split(
-        "if loop_trace_enabled:", 1
+    quad_build_block = implementation.split(
+        "updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)", 1
+    )[1].split(
+        "eye_layer_views = []", 1
     )[0]
     assert "try:" in quad_build_block
     assert "quad_layer = self._make_quad_layer(quad_eye_index)" in quad_build_block
+    assert "raise RuntimeError(f\"missing quad layer for eye {quad_eye_index}\")" in quad_build_block
     assert "openxr_quad_layer_failed" in quad_build_block
     assert "self._xr_quad_layer_active = False" in quad_build_block
     assert "break" in quad_build_block

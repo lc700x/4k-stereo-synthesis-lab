@@ -2319,6 +2319,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert render_projection_layer is False
     assert viewer._openxr_draw_projection_screen is False
     assert viewer._openxr_projection_screen_source_ready == (True, True)
+    assert viewer._openxr_projection_screen_effects_enabled is False
     assert ("openxr_projection_layer_skipped", 1) in inc_calls
     assert viewer._xr_quad_layer_active is True
     assert viewer._xr_quad_layer_failed is False
@@ -2338,8 +2339,14 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert presenter._frame_projection_layer is not None
 
     viewer.render_projection_layer = True
+    viewer.screen_height = 1.0
+    viewer._screen_effects_enabled = True
+    viewer._should_render_source_screen_effects = lambda: True
     assert presenter.projection_screen_source_ready(0) is True
     assert presenter.projection_screen_source_ready(1) is False
+    assert presenter.projection_screen_effects_enabled() is True
+    viewer._should_render_source_screen_effects = lambda: False
+    assert presenter.projection_screen_effects_enabled() is False
     viewer._runtime_direct_source = False
     assert presenter.projection_screen_source_ready(0) is True
     viewer.depth_tex = None

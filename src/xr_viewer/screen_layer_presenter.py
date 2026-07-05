@@ -116,6 +116,17 @@ class ScreenLayerPresenter:
             return viewer._runtime_eye_textures[eye_index] is not None
         return getattr(viewer, 'color_tex', None) is not None and getattr(viewer, 'depth_tex', None) is not None
 
+    def projection_screen_effects_enabled(self):
+        if not self.projection_screen_needed():
+            return False
+        viewer = self.viewer
+        if not getattr(viewer, '_screen_effects_enabled', True):
+            return False
+        if getattr(viewer, 'screen_height', None) is None:
+            return False
+        should_render = getattr(viewer, '_should_render_source_screen_effects', None)
+        return bool(should_render()) if callable(should_render) else True
+
     def projection_layer_needed(self):
         viewer = self.viewer
         if self.projection_screen_needed():
@@ -163,6 +174,7 @@ class ScreenLayerPresenter:
         self.viewer._openxr_projection_screen_source_ready = tuple(
             self.projection_screen_source_ready(eye_index) for eye_index in range(2)
         )
+        self.viewer._openxr_projection_screen_effects_enabled = self.projection_screen_effects_enabled()
         render_projection_layer = self.projection_layer_needed()
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')

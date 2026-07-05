@@ -2182,6 +2182,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             return
 
         draw_projection_screen = bool(getattr(self, '_openxr_draw_projection_screen', True))
+        draw_projection_screen_effects = bool(getattr(self, '_openxr_projection_screen_effects_enabled', draw_projection_screen))
         quad_unavailable_reason = getattr(self, '_openxr_projection_screen_unavailable_reason', None) or 'unknown'
         if draw_projection_screen:
             source_ready = getattr(self, '_openxr_projection_screen_source_ready', None)
@@ -2229,7 +2230,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if draw_projection_screen:
             self._breakdown_inc(f"openxr_quad_unavailable_{quad_unavailable_reason}")
             # Optional screen effects behind the desktop quad (normal viewer only).
-            self._render_screen_background_effects(mgl_fbo, vp_mat)
+            if draw_projection_screen_effects:
+                self._render_screen_background_effects(mgl_fbo, vp_mat)
             if perf_enabled:
                 _mark_perf('bgfx')
 
@@ -2392,7 +2394,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _mark_perf('border')
 
             # Optional screen effects on/around the desktop quad (normal viewer only).
-            self._render_screen_foreground_effects(mgl_fbo, vp_mat)
+            if draw_projection_screen_effects:
+                self._render_screen_foreground_effects(mgl_fbo, vp_mat)
             if perf_enabled:
                 _mark_perf('fgfx')
         else:

@@ -57,6 +57,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_reused_screen_frame", 1)
     breakdown.inc("openxr_screen_quality_failed", 1)
     breakdown.inc("openxr_quad_layer_failed", 1)
+    breakdown.inc("openxr_quad_reused_screen_frame", 2)
     breakdown.inc("openxr_projection_render_failed", 1)
     breakdown.inc("openxr_overlay_render_failed", 2)
     breakdown.inc("openxr_controller_render_failed", 3)
@@ -180,6 +181,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "d3d11_upload=12.00ms" in output
     assert "d3d11_pbo=1.0" in output
     assert "quad_update=3.00ms" in output
+    assert "quad_reuse=2.0" in output
     assert "quad_failed=1.0" in output
     assert "quad_unavail=missing_swapchain:1.0,not_runtime_direct:2.0" in output
     assert "background=5.00ms" in output

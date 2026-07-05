@@ -228,6 +228,7 @@ class FPSBreakdown:
             f"controller_failed={rate('openxr_controller_render_failed'):.1f} "
             f"laser_failed={rate('openxr_laser_render_failed'):.1f} "
             f"quad_update={avg_ms('openxr_quad_update'):.2f}ms "
+            f"quad_reuse={rate('openxr_quad_reused_screen_frame'):.1f} "
             f"quad_failed={rate('openxr_quad_layer_failed'):.1f} "
             f"quad_unavail={quad_unavailable} "
             f"background={avg_ms('openxr_background'):.2f}ms "

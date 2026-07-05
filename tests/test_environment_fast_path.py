@@ -625,7 +625,8 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
 
     assert "_openxr_projection_screen_unavailable_reason" in render_eye
-    assert "draw_projection_screen = bool(getattr(self, '_openxr_draw_projection_screen', True))" in render_eye
+    assert "draw_projection_screen = bool(self._openxr_draw_projection_screen)" in render_eye
+    assert "getattr(self, '_openxr_draw_projection_screen'" not in render_eye
     assert "projection_screen_enabled=draw_projection_screen" in render_eye
     assert "background_presenter.projection_fallback_needed()" not in render_eye
     assert "and not has_panorama" in background_presenter

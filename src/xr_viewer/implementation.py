@@ -150,6 +150,7 @@ from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
 from .openxr_frame_pipeline import OpenXRFramePipeline
+from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
 
 class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
@@ -1757,6 +1758,12 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._source_stalled = True
             return False
 
+        screen_presenter = getattr(self, '_preview_screen_presenter', None)
+        if screen_presenter is None:
+            screen_presenter = ScreenLayerPresenter(self)
+            self._preview_screen_presenter = screen_presenter
+        screen_presenter.prepare_projection_frame_state()
+
         sc_w, sc_h = self._swapchain_sizes[0]
         mgl_fbo, raw_fbo = self._get_or_create_offscreen_fbo(0, 0, sc_w, sc_h)
         self._render_eye(0, mgl_fbo, np.eye(4, dtype=np.float32), proj_mat)
@@ -2181,18 +2188,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self.ctx.screen.use()
             return
 
-        draw_projection_screen = bool(getattr(self, '_openxr_draw_projection_screen', True))
-        draw_projection_screen_effects = bool(getattr(self, '_openxr_projection_screen_effects_enabled', draw_projection_screen))
-        quad_unavailable_reason = getattr(self, '_openxr_projection_screen_unavailable_reason', None) or 'unknown'
+        draw_projection_screen = bool(self._openxr_draw_projection_screen)
+        draw_projection_screen_effects = bool(self._openxr_projection_screen_effects_enabled)
+        quad_unavailable_reason = self._openxr_projection_screen_unavailable_reason or 'unknown'
         if draw_projection_screen:
-            source_ready = getattr(self, '_openxr_projection_screen_source_ready', None)
-            if source_ready is None:
-                source_ready = tuple(
-                    self._runtime_eye_textures[i] is not None for i in range(2)
-                ) if self._runtime_direct_source else (
-                    self.color_tex is not None and self.depth_tex is not None,
-                    self.color_tex is not None and self.depth_tex is not None,
-                )
+            source_ready = self._openxr_projection_screen_source_ready
             if not source_ready[eye_index]:
                 if perf_enabled:
                     _mark_perf('no_source')

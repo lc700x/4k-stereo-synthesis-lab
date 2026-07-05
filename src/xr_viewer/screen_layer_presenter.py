@@ -163,18 +163,21 @@ class ScreenLayerPresenter:
             return True
         return False
 
-    def prepare_frame_layers(self, *, screen_frame_uploaded=False):
-        self._frame_projection_layer = None
-        self._frame_quad_layers = []
-        updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
-        quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
-        self._frame_quad_layers = quad_layers
+    def prepare_projection_frame_state(self):
         self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()
         self.viewer._openxr_projection_screen_unavailable_reason = self.projection_screen_unavailable_reason()
         self.viewer._openxr_projection_screen_source_ready = tuple(
             self.projection_screen_source_ready(eye_index) for eye_index in range(2)
         )
         self.viewer._openxr_projection_screen_effects_enabled = self.projection_screen_effects_enabled()
+
+    def prepare_frame_layers(self, *, screen_frame_uploaded=False):
+        self._frame_projection_layer = None
+        self._frame_quad_layers = []
+        updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
+        quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
+        self._frame_quad_layers = quad_layers
+        self.prepare_projection_frame_state()
         render_projection_layer = self.projection_layer_needed()
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')

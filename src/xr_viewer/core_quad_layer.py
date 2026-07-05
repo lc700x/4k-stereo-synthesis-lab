@@ -72,6 +72,10 @@ class CoreQuadLayerMixin:
     def _quad_layer_source_texture(self, eye_index=0):
         if not self._runtime_direct_source:
             return None, None, True
+        if getattr(self, '_use_d3d11', False):
+            renderer = getattr(self, '_d3d11_native_renderer', None)
+            if renderer is not None and renderer.has_frame and renderer.runtime_eye_size is not None:
+                return renderer, renderer.runtime_eye_size, False
         textures = getattr(self, '_runtime_eye_textures', [None, None])
         source_tex = textures[eye_index] if eye_index < len(textures) else None
         if source_tex is None:
@@ -118,17 +122,20 @@ class CoreQuadLayerMixin:
         prev_depth_mask = None
         try:
             sc_image = self._quad_swapchain_images[eye_index][img_index]
-            mgl_fbo = self._get_or_create_quad_fbo(eye_index, img_index, sc_image.image, quad_w, quad_h)
-            prev_viewport = self.ctx.viewport
-            prev_depth_mask = self.ctx.depth_mask
-            mgl_fbo.use()
-            self.ctx.viewport = (0, 0, quad_w, quad_h)
-            self.ctx.disable(moderngl.DEPTH_TEST)
-            self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = False
-            source_tex.use(location=0)
-            self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
-            self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
+            if getattr(self, '_use_d3d11', False):
+                source_tex.render_runtime_eye(sc_image.texture, quad_w, quad_h, eye_index, np.eye(4, dtype=np.float32))
+            else:
+                mgl_fbo = self._get_or_create_quad_fbo(eye_index, img_index, sc_image.image, quad_w, quad_h)
+                prev_viewport = self.ctx.viewport
+                prev_depth_mask = self.ctx.depth_mask
+                mgl_fbo.use()
+                self.ctx.viewport = (0, 0, quad_w, quad_h)
+                self.ctx.disable(moderngl.DEPTH_TEST)
+                self.ctx.disable(moderngl.BLEND)
+                self.ctx.depth_mask = False
+                source_tex.use(location=0)
+                self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
+                self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True
             return True

@@ -1137,6 +1137,18 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
 
+def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
+    core_quad = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
+    d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
+
+    assert "xr.SwapchainImageD3D11KHR" in d3d11
+    assert "self._quad_swapchains[eye_index] = swapchain" in d3d11
+    assert "Quad layer D3D11 swapchains" in d3d11
+    assert "and self._d3d11_native_renderer is not None" in d3d11
+    assert "renderer.has_frame and renderer.runtime_eye_size is not None" in core_quad
+    assert "source_tex.render_runtime_eye(sc_image.texture, quad_w, quad_h, eye_index" in core_quad
+
+
 def test_quad_layer_update_requires_both_eyes_for_quad_submit():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
 

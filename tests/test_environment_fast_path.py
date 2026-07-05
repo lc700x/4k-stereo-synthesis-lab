@@ -1344,7 +1344,8 @@ def test_glow_downsample_cache_is_shared_across_eyes():
 
     assert "_glow_ds_cache_key" in cached_func
     assert "_current_eye_index" not in key_func + cached_func + prepare_func
-    assert "latest_safe()" in key_func
+    assert "_runtime_effect_submit_scheduler" in key_func
+    assert "scheduler_factory().latest_safe()" in key_func
     assert "source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)" in key_func
     assert "_cached_glow_downsample_texture(source_tex, source_size)" in prepare_func
     assert "if getattr(self, '_runtime_direct_source', False):" in shell_func

@@ -183,9 +183,9 @@ class CoreScreenQualityMixin:
         out_w = max(2, out_w & ~1)
         out_h = max(2, out_h & ~1)
         source_frame_id = None
-        latest_safe = getattr(self, '_runtime_effect_latest_safe', None)
-        if getattr(self, '_runtime_direct_source', False) and callable(latest_safe):
-            safe_tex, _safe_size, safe_frame_id = latest_safe()
+        scheduler_factory = getattr(self, '_runtime_effect_submit_scheduler', None)
+        if getattr(self, '_runtime_direct_source', False) and callable(scheduler_factory):
+            safe_tex, _safe_size, safe_frame_id = scheduler_factory().latest_safe()
             if source_tex is safe_tex:
                 source_frame_id = int(safe_frame_id or 0)
         cache_key = (

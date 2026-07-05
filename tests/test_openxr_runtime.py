@@ -1068,6 +1068,37 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
 
+def test_quad_layer_status_hotkey_does_not_toggle_back_to_projection():
+    from xr_viewer.core_window_input import CoreWindowInputMixin
+
+    class Viewer(CoreWindowInputMixin):
+        def _publish_runtime_config(self):
+            self.published += 1
+
+    viewer = Viewer()
+    viewer.published = 0
+    viewer._xr_quad_layer_enabled = True
+    viewer._xr_quad_layer_active = False
+    viewer._xr_quad_layer_failed = False
+    viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._quad_swapchain_array_size = {0: 1}
+    viewer._xr_quad_layer_stereo_boost = 1.0
+
+    viewer._toggle_quad_layer_compare()
+    assert viewer._xr_quad_layer_active is True
+    assert viewer._preset_name_overlay == "Quad Layer Screen"
+
+    viewer._toggle_quad_layer_compare()
+    assert viewer._xr_quad_layer_active is True
+    assert viewer._preset_name_overlay == "Quad Layer Screen"
+    assert viewer.published == 2
+
+    viewer._xr_quad_layer_failed = True
+    viewer._toggle_quad_layer_compare()
+    assert viewer._xr_quad_layer_active is False
+    assert viewer._preset_name_overlay == "Projection Screen (Quad unavailable)"
+
+
 def test_quad_layer_pose_state_is_cached_per_frame():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
 

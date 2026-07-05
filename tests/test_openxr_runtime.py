@@ -1275,7 +1275,7 @@ def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
     )[0]
 
     assert "should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)" in submit_tail
-    assert "if not screen_frame_uploaded and (" in submit_tail
+    assert "if frame_state.should_render and not screen_frame_uploaded and (" in submit_tail
     assert "not callable(should_submit_effect_source) or should_submit_effect_source()" in submit_tail
     assert "if not screen_frame_uploaded or" not in submit_tail
     assert submit_tail.index("openxr_submit_frame") < submit_tail.index("should_submit_effect_source =")

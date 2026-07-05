@@ -4936,7 +4936,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             if loop_breakdown_enabled:
                 self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
             should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)
-            if not screen_frame_uploaded and (
+            if frame_state.should_render and not screen_frame_uploaded and (
                 not callable(should_submit_effect_source) or should_submit_effect_source()
             ):
                 self._flush_runtime_effect_submit()

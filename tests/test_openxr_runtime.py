@@ -2268,6 +2268,8 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
 
     viewer._xr_quad_layer_failed = True
     assert viewer._quad_layer_unavailable_reason() == "failed"
+    viewer._xr_quad_layer_failure_reason = "swapchain_create_failed_RuntimeError"
+    assert viewer._quad_layer_unavailable_reason() == "swapchain_create_failed_RuntimeError"
     assert viewer._quad_layer_screen_presentable() is False
 
 
@@ -2354,6 +2356,7 @@ def test_quad_layer_update_requires_both_eyes_for_quad_submit():
     assert viewer._update_quad_layer_swapchains() == []
     assert viewer._xr_quad_layer_active is False
     assert viewer._xr_quad_layer_failed is True
+    assert viewer._quad_layer_unavailable_reason() == "partial_update_without_presented_frame"
     assert ("openxr_quad_layer_failed", 1) in inc_calls
 
 
@@ -2520,7 +2523,36 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert updated == []
     assert viewer._xr_quad_layer_active is False
     assert viewer._xr_quad_layer_failed is True
+    assert viewer._xr_quad_layer_failure_reason == "layer_build_failed_RuntimeError"
     assert ("openxr_quad_layer_failed", 1) in inc_calls
+
+
+def test_quad_layer_failure_reason_flows_to_projection_fallback():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._xr_quad_layer_enabled = True
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    viewer._screen_curved = False
+    viewer._runtime_direct_source = True
+    viewer._runtime_eye_has_frame = True
+    viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_eye_texture_size = (1920, 1080)
+    viewer._quad_swapchain_array_size = {0: 1, 1: 1}
+    viewer._update_quad_layer_swapchain = lambda _eye_index: (_ for _ in ()).throw(RuntimeError("boom"))
+    viewer._breakdown_inc = lambda *args, **kwargs: None
+
+    assert viewer._update_quad_layer_swapchains() == []
+    presenter = ScreenLayerPresenter(viewer)
+
+    assert presenter.projection_screen_needed() is True
+    assert presenter.projection_screen_unavailable_reason() == "update_failed_RuntimeError"
 
 
 def test_quad_layer_status_hotkey_does_not_toggle_back_to_projection():

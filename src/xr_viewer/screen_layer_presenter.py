@@ -391,8 +391,13 @@ class ScreenLayerPresenter:
                     )
                 )
             except Exception as exc:
-                viewer._xr_quad_layer_active = False
-                viewer._xr_quad_layer_failed = True
+                set_failed = getattr(viewer, '_set_quad_layer_failed', None)
+                if callable(set_failed):
+                    set_failed(f"layer_build_failed_{type(exc).__name__}")
+                else:
+                    viewer._xr_quad_layer_active = False
+                    viewer._xr_quad_layer_failed = True
+                    viewer._xr_quad_layer_failure_reason = f"layer_build_failed_{type(exc).__name__}"
                 viewer._breakdown_inc('openxr_quad_layer_failed')
                 print(f"[OpenXRViewer] Quad layer build failed: {type(exc).__name__}: {exc}")
                 return [], [], []

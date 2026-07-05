@@ -25,6 +25,11 @@ from OpenGL.GL import (
 
 
 class CoreQuadLayerMixin:
+    def _set_quad_layer_failed(self, reason):
+        self._xr_quad_layer_active = False
+        self._xr_quad_layer_failed = True
+        self._xr_quad_layer_failure_reason = str(reason or "failed")
+
     def _get_or_create_quad_fbo(self, eye_index, image_index, gl_tex, width, height):
         array_size = int(self._quad_swapchain_array_size.get(eye_index, 1))
         layer_index = int(eye_index) if array_size > 1 else 0
@@ -91,7 +96,7 @@ class CoreQuadLayerMixin:
         if not getattr(self, '_xr_quad_layer_enabled', False):
             return "disabled"
         if getattr(self, '_xr_quad_layer_failed', False):
-            return "failed"
+            return getattr(self, '_xr_quad_layer_failure_reason', None) or "failed"
         if not getattr(self, '_xr_quad_layer_active', False):
             return "inactive"
         if getattr(self, '_screen_curved', False):
@@ -145,8 +150,7 @@ class CoreQuadLayerMixin:
             self._quad_swapchain_presented_eyes.add(int(eye_index))
             return True
         except Exception as exc:
-            self._xr_quad_layer_active = False
-            self._xr_quad_layer_failed = True
+            self._set_quad_layer_failed(f"update_failed_{type(exc).__name__}")
             print(f"[OpenXRViewer] Quad layer update failed: {type(exc).__name__}: {exc}")
             return False
         finally:
@@ -182,7 +186,13 @@ class CoreQuadLayerMixin:
         if not shared_swapchain:
             updated = []
             for eye_index in range(2):
-                if self._update_quad_layer_swapchain(eye_index):
+                try:
+                    eye_updated = self._update_quad_layer_swapchain(eye_index)
+                except Exception as exc:
+                    self._set_quad_layer_failed(f"update_failed_{type(exc).__name__}")
+                    print(f"[OpenXRViewer] Quad layer update failed: {type(exc).__name__}: {exc}")
+                    eye_updated = False
+                if eye_updated:
                     updated.append(eye_index)
             if len(updated) != 2:
                 if self._quad_layer_has_presented_frame():
@@ -190,8 +200,8 @@ class CoreQuadLayerMixin:
                     if callable(breakdown_inc):
                         breakdown_inc('openxr_quad_update_partial_reuse')
                     return [0, 1]
-                self._xr_quad_layer_active = False
-                self._xr_quad_layer_failed = True
+                if not getattr(self, '_xr_quad_layer_failed', False):
+                    self._set_quad_layer_failed('partial_update_without_presented_frame')
                 breakdown_inc = getattr(self, '_breakdown_inc', None)
                 if callable(breakdown_inc):
                     breakdown_inc('openxr_quad_layer_failed')
@@ -233,8 +243,7 @@ class CoreQuadLayerMixin:
             self._quad_swapchain_presented_eyes.update((0, 1))
             return [0, 1]
         except Exception as exc:
-            self._xr_quad_layer_active = False
-            self._xr_quad_layer_failed = True
+            self._set_quad_layer_failed(f"stereo_update_failed_{type(exc).__name__}")
             print(f"[OpenXRViewer] Quad stereo layer update failed: {type(exc).__name__}: {exc}")
             return []
         finally:

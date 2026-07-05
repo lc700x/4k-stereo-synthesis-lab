@@ -205,8 +205,7 @@ class CoreOpenXRD3D11Mixin:
                 self._xr_quad_layer_active = True
                 print(f"[OpenXRViewer] Quad layer D3D11 swapchains: {quad_w}x{quad_h}/eye active=True")
             except Exception as exc:
-                self._xr_quad_layer_active = False
-                self._xr_quad_layer_failed = True
+                self._set_quad_layer_failed(f"d3d11_swapchain_create_failed_{type(exc).__name__}")
                 print(f"[OpenXRViewer] Quad layer D3D11 unavailable: {type(exc).__name__}: {exc}")
 
         # 10. Try GPU interop to avoid the PBO readback path when native D3D11

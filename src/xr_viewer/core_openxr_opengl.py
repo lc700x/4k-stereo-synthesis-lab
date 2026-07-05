@@ -166,8 +166,7 @@ class CoreOpenXROpenGLMixin:
                 self._xr_quad_layer_active = True
                 print(f"[OpenXRViewer] Quad layer swapchains: {quad_w}x{quad_h}/eye active={self._xr_quad_layer_active}")
             except Exception as exc:
-                self._xr_quad_layer_active = False
-                self._xr_quad_layer_failed = True
+                self._set_quad_layer_failed(f"swapchain_create_failed_{type(exc).__name__}")
                 print(f"[OpenXRViewer] Quad layer unavailable: {type(exc).__name__}: {exc}")
 
         # 8. Controller actions (optional -silently disabled if action set creation fails)

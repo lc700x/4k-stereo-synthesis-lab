@@ -630,9 +630,13 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
 
 
 def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
+    from xr_viewer.background_presenter import BackgroundPresenter
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
     viewer = _make_default_viewer(monkeypatch)
     viewer._quad_layer_screen_presentable = lambda: True
     viewer._panorama_background_path = "room.hdr"
+    viewer._background_presenter = BackgroundPresenter(viewer)
     viewer._env_model_visible = True
     viewer._env_model_prims = [object()]
     viewer._keyboard_visible = False
@@ -658,7 +662,7 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     viewer._team_help_visible = False
     viewer._team_help_tex = None
 
-    assert viewer._projection_layer_needed() is True
+    assert ScreenLayerPresenter(viewer).projection_layer_needed() is True
 
 
 def test_background_presenter_skips_background_when_projection_screen_is_not_used(monkeypatch):

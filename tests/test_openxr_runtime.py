@@ -1300,10 +1300,12 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
 
 def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     monkeypatch.chdir(SRC)
-    from xr_viewer.implementation import OpenXRViewerCore
+    from xr_viewer.background_presenter import BackgroundPresenter
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
-    viewer = object.__new__(OpenXRViewerCore)
-    viewer._quad_layer_unavailable_reason = lambda: None
+    viewer = SimpleNamespace()
+    viewer._quad_layer_screen_presentable = lambda: True
+    viewer._background_presenter = BackgroundPresenter(viewer)
     viewer._preview_active = True
     viewer._panorama_background_path = None
     viewer._env_model_visible = False
@@ -1330,39 +1332,38 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     viewer._team_status_visible = False
     viewer._team_help_visible = False
     viewer._team_help_tex = None
+    presenter = ScreenLayerPresenter(viewer)
 
-    assert viewer._projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is False
 
     viewer._env_model_visible = True
     viewer._env_model_prims = [object()]
-    assert viewer._projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is False
     viewer._env_model_visible = False
     viewer._env_model_prims = []
 
     viewer._preview_active = False
-    assert viewer._projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is False
 
     viewer._aim_mat_l = object()
-    assert viewer._projection_layer_needed() is True
+    assert presenter.projection_layer_needed() is True
     viewer._aim_mat_l = None
 
     viewer._panorama_background_path = "room.hdr"
-    assert viewer._projection_layer_needed() is True
+    assert presenter.projection_layer_needed() is True
     viewer._aim_mat_l = object()
-    assert viewer._projection_layer_needed() is True
+    assert presenter.projection_layer_needed() is True
     viewer._aim_mat_l = None
     viewer._panorama_background_path = None
 
-    viewer._quad_layer_unavailable_reason = lambda: "missing_source_texture"
-    viewer._quad_layer_has_presented_frame = lambda: True
-    assert viewer._projection_layer_needed() is False
+    viewer._quad_layer_screen_presentable = lambda: True
+    assert presenter.projection_layer_needed() is False
 
-    viewer._quad_layer_has_presented_frame = lambda: False
-    assert viewer._projection_layer_needed() is True
+    viewer._quad_layer_screen_presentable = lambda: False
+    assert presenter.projection_layer_needed() is True
 
-    viewer._quad_layer_unavailable_reason = lambda: "inactive"
-    viewer._quad_layer_has_presented_frame = lambda: True
-    assert viewer._projection_layer_needed() is True
+    viewer._quad_layer_screen_presentable = lambda: False
+    assert presenter.projection_layer_needed() is True
 
 
 def test_active_openxr_presenter_drains_source_after_begin_frame():
@@ -2255,7 +2256,30 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     update_calls = []
     viewer._update_quad_layer_swapchains = lambda force=False: update_calls.append(force) or [0, 1]
-    viewer._projection_layer_needed = lambda: viewer.render_projection_layer
+    viewer._quad_layer_screen_presentable = lambda: not viewer.render_projection_layer
+    viewer._background_presenter = SimpleNamespace(projection_fallback_needed=lambda: False)
+    viewer._keyboard_visible = False
+    viewer._keyboard_tex = None
+    viewer._aim_mat_l = None
+    viewer._aim_mat_r = None
+    viewer._grip_mat_l = None
+    viewer._grip_mat_r = None
+    viewer._border_alpha = 0.0
+    viewer._depth_osd_tex = None
+    viewer._screen_osd_tex = None
+    viewer._preset_osd_tex = None
+    viewer._seat_adjust_osd_tex = None
+    viewer._brand_osd_tex = None
+    viewer._hand_fps_visible = False
+    viewer._overlay_tex = None
+    viewer._team_fps_visible = False
+    viewer._team_status_tex = None
+    viewer._calibration_mode = False
+    viewer._fps_overlay_visible = False
+    viewer._help_tex = None
+    viewer._team_status_visible = False
+    viewer._team_help_visible = False
+    viewer._team_help_tex = None
 
     left_layer = ctypes.c_int(1)
     right_layer = ctypes.c_int(2)

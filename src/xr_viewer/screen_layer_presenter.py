@@ -15,13 +15,46 @@ class ScreenLayerPresenter:
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 
+    def projection_layer_needed(self):
+        viewer = self.viewer
+        if not viewer._quad_layer_screen_presentable():
+            return True
+        background_presenter = getattr(viewer, '_background_presenter', None)
+        if background_presenter is not None and background_presenter.projection_fallback_needed():
+            return True
+        if viewer._keyboard_visible and viewer._keyboard_tex is not None:
+            return True
+        if viewer._aim_mat_l is not None or viewer._aim_mat_r is not None:
+            return True
+        if viewer._grip_mat_l is not None or viewer._grip_mat_r is not None:
+            return True
+        if float(getattr(viewer, '_border_alpha', 0.0) or 0.0) > 0.0:
+            return True
+        if any(getattr(viewer, name, None) is not None for name in (
+            '_depth_osd_tex', '_screen_osd_tex', '_preset_osd_tex', '_seat_adjust_osd_tex'
+        )):
+            return True
+        if viewer._brand_osd_tex is not None and viewer._grip_mat_r is not None:
+            return True
+        if viewer._hand_fps_visible and viewer._overlay_tex is not None:
+            return True
+        if viewer._team_fps_visible and viewer._team_status_tex is not None:
+            return True
+        if viewer._calibration_mode:
+            return True
+        if viewer._fps_overlay_visible and viewer._help_tex is not None:
+            return True
+        if viewer._team_status_visible and viewer._team_help_visible and viewer._team_help_tex is not None:
+            return True
+        return False
+
     def prepare_frame_layers(self, *, screen_frame_uploaded=False):
         self._frame_projection_layer = None
         self._frame_quad_layers = []
         updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
         quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
         self._frame_quad_layers = quad_layers
-        render_projection_layer = self.viewer._projection_layer_needed()
+        render_projection_layer = self.projection_layer_needed()
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')
         return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer

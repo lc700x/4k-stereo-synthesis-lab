@@ -17,13 +17,13 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Current focus:
 
 ```text
-OpenXR asynchronous decoupled rendering plan, GPU glow constraints, and presentation/runtime handoff follow-ups
+OpenXR asynchronous decoupled rendering implementation, validation logging, GPU glow constraints, and real-device presentation/runtime handoff follow-ups
 ```
 
 Latest pushed task commit:
 
 ```text
-599981e feat: add GUI log panel controls and progress
+ed078ff feat(openxr): add async validation summary
 ```
 
 Canonical specs for current work:
@@ -69,9 +69,46 @@ Current task queue:
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
 10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
-11. Implement the OpenXR asynchronous decoupled rendering plan in `docs/36`: first add flags/diagnostics and `ScreenFrameBridge`, then promote Quad-layer screen presentation, then add panorama background, async GPU Glow result pool, and GPU-only wall reflection/light probe paths.
+11. Continue OpenXR asynchronous decoupled rendering validation per `docs/36`: code structure is largely in place, but completion now depends on real-device logs proving `openxr_async_ok=1`, stable screen present under slow runtime/effect/background paths, and no Quad/PBO hard failures.
 
 ## Current Status
+
+### 2026-07-06 OpenXR Async Validation Summary
+
+Implemented and pushed:
+
+```text
+ed078ff feat(openxr): add async validation summary
+01bc75b refactor(openxr): lock d3d11 quad layer boundary
+```
+
+Current state:
+
+- OpenXR async code structure is estimated at about 80% complete: Quad Layer is the screen main path, projection screen body fallback is removed, screen/background/effect/submit paths are separated, panorama/HDR/SBS/light-probe paths are present, and D3D11/PBO legacy boundaries are guarded by tests.
+- Final completion is not proven yet. Runtime/headset validation is still required to show complex background cost does not drag down screen present, slow runtime frames reuse the last Quad texture instead of blocking, and slow/failing effect workers do not affect `xrEndFrame` cadence.
+- `FPSBreakdown.validate_openxr_async()` and the log fields `openxr_async_ok`, `openxr_async_missing`, and `openxr_async_failed` are now the primary quick health signal for OpenXR async acceptance. A passing real-device run should report `openxr_async_ok=1`, `openxr_async_missing=none`, and `openxr_async_failed=none` after the scene is actively presenting.
+- D3D11 native is explicitly scoped to runtime-eye -> Quad Layer swapchain upload. Projection overlays use OpenGL or NV_DX interop; the display body must not return to a D3D11 projection swapchain/PBO path.
+
+Verification run during this pass:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\utils\breakdown.py tests\test_breakdown.py
+.\src\python3\python.exe -m pytest tests\test_breakdown.py -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\core_openxr_d3d11.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+4 breakdown tests passed
+D3D11 Quad boundary test passed
+```
+
+Next validation target:
+
+- Run OpenXR on a headset with FPS breakdown enabled and inspect `openxr_async_ok/missing/failed`, `screen_new`, `screen_reuse`, `quad_reuse`, `fx_age`, `bg_path`, `xr_submit`, and `xr_end` under normal, slow-runtime, slow-effect, and complex-background scenarios.
 
 ### 2026-07-04 OpenXR Asynchronous Decoupled Rendering Plan
 

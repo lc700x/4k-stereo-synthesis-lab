@@ -837,6 +837,29 @@ GPU Glow / 屏幕光约束：
 禁止：实时 `.cpu()`、`.numpy()`、`glReadPixels()`、`tex.read()` 作为屏幕光颜色来源。
 Glow Off 必须保持 fast path，不触发 downsample，不触发 CPU 采样。
 ```
+
+当前落地状态：
+
+```text
+代码结构约 80% 完成：Quad Layer 已是显示器主路径，projection screen 主体 fallback 已移除，screen/background/effect/submit 分段已建立，panorama HDR/SBS、safe light probe、GPU downsample/result pool 与 D3D11/PBO 边界测试已落地。
+最终验收约 65-70%：还缺真实头显/设备日志证明复杂背景、慢 runtime、慢/失败 effect worker 不会拖慢 screen present 或阻塞 xrEndFrame。
+```
+
+运行验收信号：
+
+```text
+FPSBreakdown.validate_openxr_async() 汇总 OpenXR async 硬性验收。
+日志字段 openxr_async_ok / openxr_async_missing / openxr_async_failed 是当前快速判断入口。
+实机稳定运行时应看到：openxr_async_ok=1 openxr_async_missing=none openxr_async_failed=none。
+如果 openxr_async_failed 包含 quad_layer_failed 或 d3d11_pbo_readback，不能判定异步重构完成。
+```
+
+D3D11 native 边界：
+
+```text
+D3D11 native renderer 只负责 runtime eye -> Quad Layer D3D11 swapchain upload。
+Projection overlay 使用 OpenGL 或 NV_DX interop；显示器主体不得回到 D3D11 projection swapchain、PBO readback 或旧 projection screen body 路径。
+```
 ### OpenXR 虚拟屏幕、头显预设与 OSD 规范
 
 头显屏幕预设属于 OpenXR presentation 层，不改变 runtime 立体合成语义。GUI 只保存 `XR Headset Model`，运行时通过 `src/utils/xr_headset_presets.py` 解析设备推荐观看距离，并按统一水平视角计算屏幕尺寸。头显焦距/屏幕尺寸不得替代 `Convergence`、`Dynamic Convergence Strength`、`Parallax Budget`、`Depth Separation` 或 FG/MG/BG Pop；这些仍按立体参数表独立调节。
@@ -1141,6 +1164,8 @@ tests/test_gui_config.py
 scripts/tools/local_4k_pipeline_benchmark.py
 scripts/tools/local_4k_sbs_visual_regression.py
 scripts/tools/openxr_visual_regression.py
+FPSBreakdown.validate_openxr_async()
+openxr_async_ok / openxr_async_missing / openxr_async_failed 日志字段
 ```
 
 新增功能必须补充：
@@ -1183,12 +1208,12 @@ scripts/tools/openxr_visual_regression.py
 | Capture preprocess device contract | 已显式处理 numpy / CPU tensor / CUDA tensor / ROCm tensor 形态，并记录 origin/output device 与 transfer metadata | 跨设备 fallback 和硬件路径仍需按目标机器补充验证矩阵 |
 | OpenXR direct uniforms | 已输出规范 `shader_uniforms`，字段以 `max_disparity_px`、`depth_strength`、`depth_response`、`convergence`、`dynamic_convergence_strength`、layer pop、`render_size`、`screen_roll` 为主；OpenGL 与 D3D11 RGB+D direct 调用层均按 `max_disparity_px / render_width` 派生每眼 shader offset，并使用同一 `depth_strength` 放大实际视差位移，不再消费 IPD / Stereo Scale / Max Shift Ratio 旧强度链 | D3D11 native direct shader 仍需追平 OpenGL direct shader 的完整 DIBR 质量语义；OpenXR 头显屏幕几何不得反向修改 convergence/parallax 参数 |
 | OpenXR headset screen presets / OSD | 已新增 `XR Headset Model` 设置和 `src/utils/xr_headset_presets.py`，按推荐距离 + 60° 水平视角自动计算屏幕尺寸；`_screen_view_distance()` 统一用户可见距离；preset OSD 显示 5 秒且不被 live distance 刷新；Y 恢复同一 preset 会重新显示 OSD；右手柄保留 sphere-orbit 并自动朝向头部；头显屏幕预设只影响 presentation geometry | 后续如增加水平视角 GUI slider，只应调整统一 FOV 参数或显式设置，不应回到每个预设手工维护宽高；屏幕几何仍不得替代 `Convergence`、`Dynamic Convergence Strength`、`Parallax Budget`、`Depth Separation` 或 FG/MG/BG Pop |
-| GPU texture upload | 已抽出共享 `CudaGlTextureUploader`，OpenXR runtime eye 与本地 viewer runtime RGBA texture 复用同一 CUDA/GL upload 语义；image texture 优先、PBO fallback、CPU fallback 红色告警；glow 实时采样只允许走 GPU source texture | 继续真机验证 CUDA/GL image texture 失败根因和各显示模式 fallback 日志；RGB+depth direct texture path 可按同一 uploader 继续收敛 |
+| GPU texture upload | 已抽出共享 `CudaGlTextureUploader`，OpenXR runtime eye 与本地 viewer runtime RGBA texture 复用同一 CUDA/GL upload 语义；image texture 优先、PBO fallback、CPU fallback 红色告警；glow 实时采样只允许走 GPU source texture；OpenXR D3D11 native 已明确限定为 runtime eye -> Quad Layer swapchain upload，显示器主体不得回到 projection/PBO 路径 | 继续真机验证 CUDA/GL image texture 失败根因和各显示模式 fallback 日志；RGB+depth direct texture path 可按同一 uploader 继续收敛 |
 | Realtime no-sync scalar policy | 动态会聚、motion sampler、OpenXR shader uniform staging、runtime-eye tensor diagnostics 已按 no-sync 原则处理；实时相关文件检查不再包含 `.item()` | 后续新增 realtime CUDA 标量路径必须优先传 tensor；CPU-only 消费者只能异步 staging 并使用上一帧 ready 值，不能阻塞当前帧 |
 | Depth provider GPU timing / zero-copy | TensorRT native 已记录真实 CUDA event timing；MIGraphX 构建已导入 ROCm7 FP8-first/FP16 fallback/force-FP32 skip 规则；TensorRT ORT CPU staging 已作为下一优化目标记录 | TensorRT ORT / ONNX Runtime realtime provider 仍需移除 CPU numpy input/output 往返，保持 iobinding output 在 GPU 并直接返回 CUDA tensor |
 | Render Size / 4K scale tier | 已收敛为固定 scale 档位 Render Scale：非 4K 保持 capture_size；4K 级输入按 4K/3K/2K/1K 稳定 scale 档位解析，并保持横屏、竖屏、16:10、DCI 4K、常见 4K 超宽比例；判断排除面积不足的窄高/1440p 超宽；旧 numeric / short alias Render Scale 输入已清理为默认回退 | 继续通过测试防止重新引入 `0.75`、`75%`、`2K` 等用户侧别名；无新的运行时语义待办 |
 | Runtime scheduling / backpressure | 已确认 capture 前段可到高刷 cadence，完整 CUDA runtime 后段若无 GPU 完成边界会因异步队列积压反压 WGC / CUDA interop；规范要求 latest-frame、raw overwrite/drop 和 `D2S_RUNTIME_SYNC_AFTER_FRAME=auto` 的 CUDA runtime 同步策略 | 继续用真实高刷显示器验证 CUDA/ROCm/非 CUDA 后端矩阵；不得把该问题误归因到 OpenXR presentation target |
-| Debug / result contract | `StereoRuntimeResult` / `OpenXRRuntimeResult` 已暴露 output/timing/provider 结构化字段；每帧 debug_info 已补齐 application_runtime_target、stereo_synthesis_mode、transport、output_transport、capture/render/depth size、active settings metadata、dynamic convergence、Depth Pop 和 FG/MG/BG Pop 诊断字段 | debug-only 兼容键仍按兼容清理表逐步移除；host/viewer 新消费路径应继续优先读结构化字段 |
+| Debug / result contract | `StereoRuntimeResult` / `OpenXRRuntimeResult` 已暴露 output/timing/provider 结构化字段；每帧 debug_info 已补齐 application_runtime_target、stereo_synthesis_mode、transport、output_transport、capture/render/depth size、active settings metadata、dynamic convergence、Depth Pop 和 FG/MG/BG Pop 诊断字段；OpenXR async 增加 `validate_openxr_async()` 和 `openxr_async_ok/missing/failed` 日志验收摘要 | debug-only 兼容键仍按兼容清理表逐步移除；host/viewer 新消费路径应继续优先读结构化字段；OpenXR 完成判定必须以实机日志显示 `openxr_async_ok=1` 且 missing/failed 均为 none 为依据 |
 | Network stream | MJPEG/legacy stream 已消费 packed frame，并引入 `EncoderProfile` 描述 transport 侧 resize、pixel format、quality/FPS 等 | RTMP/更低延迟编码仍是后续工程；不能重新定义立体参数语义 |
 
 ## 未来实现目标
@@ -1260,7 +1285,7 @@ Capture -> timestamped frame window -> high quality synthesis -> delayed present
 9. 验证 Windows D3D11 texture -> D3D12 resource -> DirectML IoBinding 的原生零 CPU 回读链路。
 10. 在真实 Apple Silicon Mac 上验证 ScreenCaptureKit -> Metal preprocess -> CoreML Distill Depth 的 macOS 零 CPU 回读原型。
 11. 增加可选高画质缓冲输出骨架，默认关闭，先支持固定延迟、本地/OpenXR 共用 presentation scheduler，禁止实时帧落盘。
-12. 按 `docs/36` 推进 OpenXR 异步解耦渲染：flags/diagnostics、ScreenFrameBridge、Quad-layer screen presenter、panorama background、async GPU Glow result pool、GPU-only wall reflection/light probe。
+12. 按 `docs/36` 完成 OpenXR 异步解耦渲染实机验收：用 `openxr_async_ok/missing/failed`、screen_new/reuse、quad_reuse、fx_age、bg_path、xr_submit/xr_end 证明复杂背景、慢 runtime、慢/失败 effect worker 不阻塞 Quad screen present；只对日志暴露的真实 failed/missing 项继续补代码。
 13. 继续完善 network_stream 的 encoder transport contract，尤其是 RTMP/低延迟编码路径，但保持其只消费 packed synthesis 输出。
 
 ## 结论

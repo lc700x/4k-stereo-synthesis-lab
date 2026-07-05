@@ -4615,13 +4615,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
                 quad_layers = []
                 quad_layer_headers = []
-                updated_quad_eyes = []
-                if self._quad_layer_can_replace_projection_screen():
-                    quad_update_start = time.perf_counter()
-                    updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)
-                    self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
-                    if loop_trace_enabled:
-                        _loop_mark('quad_update')
+                quad_update_start = time.perf_counter()
+                updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)
+                self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
+                if loop_trace_enabled:
+                    _loop_mark('quad_update')
 
                 for quad_eye_index in updated_quad_eyes:
                     try:

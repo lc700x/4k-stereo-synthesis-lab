@@ -1337,6 +1337,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     poll_idx = frame_block.index("screen_frame_uploaded = self._poll_source_frame(upload=True)")
     update_idx = frame_block.index("updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)")
     build_idx = frame_block.index("for quad_eye_index in updated_quad_eyes:")
+    assert "if self._quad_layer_can_replace_projection_screen():" not in frame_block[:update_idx]
     failure_idx = frame_block.index("self._xr_quad_layer_failed = True", build_idx)
     render_idx = frame_block.index("eye_layer_views = []")
     skip_idx = frame_block.index("render_projection_layer = self._projection_layer_needed()")

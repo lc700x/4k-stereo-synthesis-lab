@@ -506,7 +506,8 @@ def test_openxr_no_fresh_but_renderable_source_continues_to_screen_present():
 
     assert "viewer._poll_source_frame(upload=False)" in stale_block
     assert "_pause_xr_output_for_source_stall" in source_state
-    assert "if not viewer._has_renderable_source_frame():" in gate_text
+    assert "quad_presentable = getattr(viewer, '_quad_layer_screen_presentable', lambda: False)()" in gate_text
+    assert "if not viewer._has_renderable_source_frame() and not quad_presentable:" in gate_text
     assert "self.frame_submitter.submit(" in gate_text
 
     stale_idx = pipeline_text.index("if viewer._session_ready_pending or not viewer._has_fresh_source_frame(now):")

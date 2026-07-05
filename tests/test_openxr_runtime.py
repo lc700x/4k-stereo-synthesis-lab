@@ -1990,6 +1990,54 @@ def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
     assert "pause" in viewer.actions
 
 
+def test_stale_source_keeps_rendering_when_quad_layer_has_presented_frame():
+    from xr_viewer.openxr_frame_gate import OpenXRFrameGate
+
+    class Submitter:
+        def submit(self, *_args, **_kwargs):
+            pytest.fail("stale reusable quad frame should not submit an empty frame")
+
+    class Viewer:
+        _session_ready_pending = False
+        _hard_idle_active = False
+
+        def __init__(self):
+            self.inc_calls = []
+            self.actions = []
+
+        def _track_session_idle_render(self, should_render, now=None):
+            return False
+
+        def _breakdown_inc(self, name, amount=1):
+            self.inc_calls.append((name, amount))
+
+        def _has_fresh_source_frame(self, now):
+            return False
+
+        def _pause_xr_output_for_source_stall(self):
+            self.actions.append("pause")
+
+        def _has_renderable_source_frame(self):
+            return False
+
+        def _quad_layer_screen_presentable(self):
+            return True
+
+    viewer = Viewer()
+    skip, idle_timeout = OpenXRFrameGate(viewer, Submitter()).handle_ready_or_stall(
+        frame_state=SimpleNamespace(should_render=True, predicted_display_time=123),
+        now=10.0,
+        composition_layers=[],
+        submit_start=1.0,
+    )
+
+    assert skip is False
+    assert idle_timeout is False
+    assert ("openxr_no_fresh", 1) in viewer.inc_calls
+    assert ("openxr_no_renderable", 1) not in viewer.inc_calls
+    assert viewer.actions == ["pause"]
+
+
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")

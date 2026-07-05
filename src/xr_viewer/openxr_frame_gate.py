@@ -32,7 +32,8 @@ class OpenXRFrameGate:
         if not viewer._has_fresh_source_frame(now):
             viewer._breakdown_inc('openxr_no_fresh')
             viewer._pause_xr_output_for_source_stall()
-            if not viewer._has_renderable_source_frame():
+            quad_presentable = getattr(viewer, '_quad_layer_screen_presentable', lambda: False)()
+            if not viewer._has_renderable_source_frame() and not quad_presentable:
                 viewer._breakdown_inc('openxr_no_renderable')
                 self.submit_empty_frame(
                     composition_layers=composition_layers,

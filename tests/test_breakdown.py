@@ -44,6 +44,24 @@ def test_fps_breakdown_supports_legacy_debug_runtime_output_fields():
     assert breakdown.stats["rt_output_pack"] == "torch_float_to_uint8"
 
 
+def test_fps_breakdown_validates_openxr_async_contract():
+    breakdown = FPSBreakdown(enabled=True, target_fps=72)
+    assert breakdown.validate_openxr_async().missing == ("screen_present", "effect_submit_or_safe_reuse")
+
+    breakdown.inc("openxr_new_screen_frame", 4)
+    breakdown.add_time("openxr_effect_submit", 0.002)
+    validation = breakdown.validate_openxr_async()
+    assert validation.passed
+    assert validation.missing == ()
+    assert validation.failed == ()
+
+    breakdown.inc("openxr_quad_layer_failed", 1)
+    breakdown.inc("openxr_d3d11_pbo_readback", 1)
+    validation = breakdown.validate_openxr_async()
+    assert not validation.passed
+    assert validation.failed == ("quad_layer_failed", "d3d11_pbo_readback")
+
+
 def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown = FPSBreakdown(enabled=True, target_fps=72)
     now = breakdown.last_log + 1.0
@@ -219,3 +237,6 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "rt_gpu_syn_sbs=9.00ms" in output
     assert "rt_gpu_pack=3.00ms" in output
     assert "rt_gpu_openxr_pack=2.00ms" in output
+    assert "openxr_async_ok=0" in output
+    assert "openxr_async_missing=none" in output
+    assert "openxr_async_failed=quad_layer_failed,d3d11_pbo_readback" in output

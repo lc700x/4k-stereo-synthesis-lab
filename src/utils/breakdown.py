@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import threading
 import time
+
+
+@dataclass(frozen=True)
+class OpenXRAsyncValidation:
+    passed: bool
+    missing: tuple[str, ...]
+    failed: tuple[str, ...]
 
 
 LATEST_KEYS = {
@@ -73,6 +82,29 @@ class FPSBreakdown:
         with self.lock:
             self.stats[name] = value
 
+    def _validate_openxr_async_stats(self, stats) -> OpenXRAsyncValidation:
+        missing = []
+        failed = []
+        screen_present = stats.get("openxr_new_screen_frame", 0) + stats.get("openxr_reused_screen_frame", 0)
+        if screen_present <= 0:
+            missing.append("screen_present")
+        if stats.get("openxr_quad_layer_failed", 0) > 0:
+            failed.append("quad_layer_failed")
+        if stats.get("openxr_d3d11_pbo_readback", 0) > 0:
+            failed.append("d3d11_pbo_readback")
+        if stats.get("openxr_no_renderable", 0) > 0 and screen_present <= 0:
+            failed.append("no_renderable_without_quad_reuse")
+        if stats.get("openxr_effect_submit_count", 0) <= 0 and stats.get("openxr_effect_source_reused_safe", 0) <= 0:
+            missing.append("effect_submit_or_safe_reuse")
+        if stats.get("openxr_background_layer_failed", 0) > 0 and screen_present <= 0:
+            failed.append("background_failure_blocked_screen")
+        return OpenXRAsyncValidation(not missing and not failed, tuple(missing), tuple(failed))
+
+    def validate_openxr_async(self) -> OpenXRAsyncValidation:
+        with self.lock:
+            stats = dict(self.stats)
+        return self._validate_openxr_async_stats(stats)
+
     def add_runtime_timing(self, runtime_result) -> None:
         if not self.enabled:
             return
@@ -138,6 +170,10 @@ class FPSBreakdown:
             for key, value in sorted(stats.items())
             if key.startswith("openxr_quad_unavailable_") and value
         ) or "none"
+
+        async_validation = self._validate_openxr_async_stats(stats)
+        async_missing = ",".join(async_validation.missing) or "none"
+        async_failed = ",".join(async_validation.failed) or "none"
 
         print(
             "[FPSBreakdown] "
@@ -287,6 +323,9 @@ class FPSBreakdown:
             f"rt_fill={stats.get('rt_fill_backend', 'n/a')} "
             f"rt_fused={stats.get('rt_fast_plus_fused_backend', 'n/a')} "
             f"rt_fused_skip={stats.get('rt_fast_plus_fused_skip', 'n/a')} "
-            f"rt_fused_temporal_bypass={stats.get('rt_fast_plus_fused_temporal_bypass', 'n/a')}",
+            f"rt_fused_temporal_bypass={stats.get('rt_fast_plus_fused_temporal_bypass', 'n/a')} "
+            f"openxr_async_ok={int(async_validation.passed)} "
+            f"openxr_async_missing={async_missing} "
+            f"openxr_async_failed={async_failed}",
             flush=True,
         )

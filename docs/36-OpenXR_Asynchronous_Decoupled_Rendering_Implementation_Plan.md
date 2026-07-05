@@ -111,6 +111,7 @@ External Unity/Blender bake or packaged panorama asset
   - `openxr_end_frame`
   - `openxr_layer_count`
 - 记录每帧使用的是 `new_screen_frame` 还是 `reused_screen_frame`。
+- 当前落地：`FPSBreakdown.validate_openxr_async()` 和日志字段 `openxr_async_ok/missing/failed` 汇总 screen present、Quad 失败、D3D11 PBO readback、effect submit/safe reuse 等硬性验收证据，避免只靠人工解读长日志。
 
 验收：
 

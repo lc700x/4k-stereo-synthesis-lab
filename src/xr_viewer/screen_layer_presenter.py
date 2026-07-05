@@ -113,19 +113,22 @@ class ScreenLayerPresenter:
         if mark_perf:
             mark_perf('border')
 
-    def projection_layer_needed(self):
+    def projection_layer_needed(self, *, background_projection_fallback=None):
         viewer = self.viewer
-        background_renderer = getattr(viewer, '_background_layer_renderer', None)
-        if background_renderer is None:
-            background_renderer = BackgroundLayerRenderer(viewer)
-            viewer._background_layer_renderer = background_renderer
-        try:
-            if background_renderer.panorama_ready() and not background_renderer.native_background_available():
-                return True
-        except Exception as exc:
-            print(f"[OpenXRViewer] Background projection gate failed: {type(exc).__name__}: {exc}")
-            viewer._breakdown_inc('openxr_background_layer_failed')
+        if background_projection_fallback is True:
             return True
+        if background_projection_fallback is None:
+            background_renderer = getattr(viewer, '_background_layer_renderer', None)
+            if background_renderer is None:
+                background_renderer = BackgroundLayerRenderer(viewer)
+                viewer._background_layer_renderer = background_renderer
+            try:
+                if background_renderer.panorama_ready() and not background_renderer.native_background_available():
+                    return True
+            except Exception as exc:
+                print(f"[OpenXRViewer] Background projection gate failed: {type(exc).__name__}: {exc}")
+                viewer._breakdown_inc('openxr_background_layer_failed')
+                return True
         if viewer._keyboard_visible and viewer._keyboard_tex is not None:
             return True
         if viewer._aim_mat_l is not None or viewer._aim_mat_r is not None:
@@ -175,7 +178,9 @@ class ScreenLayerPresenter:
             background_layer_headers, background_projection_fallback = [], True
             self._frame_background_layers = []
         self.prepare_projection_frame_state()
-        render_projection_layer = self.projection_layer_needed() or background_projection_fallback
+        render_projection_layer = self.projection_layer_needed(
+            background_projection_fallback=background_projection_fallback
+        )
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')
         return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer, background_layer_headers

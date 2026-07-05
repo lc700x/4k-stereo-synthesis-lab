@@ -721,6 +721,56 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     assert viewer._background_layer_renderer is not None
 
 
+def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch):
+    import ctypes
+    from types import SimpleNamespace
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    viewer = _make_default_viewer(monkeypatch)
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._background_layer_renderer = SimpleNamespace(
+        make_background_layers=lambda: ([], False),
+        panorama_ready=lambda: (_ for _ in ()).throw(AssertionError("background gate should not run twice")),
+        native_background_available=lambda: (_ for _ in ()).throw(AssertionError("background gate should not run twice")),
+    )
+    viewer._update_quad_layer_swapchains = lambda force=False: [0]
+    viewer._make_quad_layer = lambda _eye_index: ctypes.c_int(9)
+    viewer._keyboard_visible = False
+    viewer._keyboard_tex = None
+    viewer._aim_mat_l = None
+    viewer._aim_mat_r = None
+    viewer._grip_mat_l = None
+    viewer._grip_mat_r = None
+    viewer._border_alpha = 0.0
+    viewer._depth_osd_tex = None
+    viewer._screen_osd_tex = None
+    viewer._preset_osd_tex = None
+    viewer._seat_adjust_osd_tex = None
+    viewer._brand_osd_tex = None
+    viewer._hand_fps_visible = False
+    viewer._overlay_tex = None
+    viewer._team_fps_visible = False
+    viewer._team_status_tex = None
+    viewer._calibration_mode = False
+    viewer._fps_overlay_visible = False
+    viewer._help_tex = None
+    viewer._team_status_visible = False
+    viewer._team_help_visible = False
+    viewer._team_help_tex = None
+
+    quad_layers, quad_headers, updated, render_projection, background_headers = ScreenLayerPresenter(viewer).prepare_frame_layers(
+        screen_frame_uploaded=True
+    )
+
+    assert len(quad_layers) == 1
+    assert len(quad_headers) == 1
+    assert updated == [0]
+    assert render_projection is False
+    assert background_headers == []
+    assert ("openxr_projection_layer_skipped", 1) in inc_calls
+
+
 def test_screen_layer_presenter_keeps_quad_when_background_layer_build_fails(monkeypatch):
     import ctypes
     from types import SimpleNamespace
@@ -735,7 +785,7 @@ def test_screen_layer_presenter_keeps_quad_when_background_layer_build_fails(mon
     viewer._update_quad_layer_swapchains = lambda force=False: [0]
     viewer._make_quad_layer = lambda _eye_index: ctypes.c_int(9)
     presenter = ScreenLayerPresenter(viewer)
-    presenter.projection_layer_needed = lambda: False
+    presenter.projection_layer_needed = lambda **kwargs: kwargs.get("background_projection_fallback", False)
 
     quad_layers, quad_headers, updated, render_projection, background_headers = presenter.prepare_frame_layers(
         screen_frame_uploaded=True

@@ -610,16 +610,16 @@ def test_panorama_background_is_preloaded_outside_render_path():
         "if perf_enabled:", 1
     )[0]
     assert "from .background_presenter import BackgroundPresenter" in impl_text
-    assert "projection_screen_enabled=draw_projection_screen" in eye_background
+    assert "projection_screen_enabled" not in eye_background
     assert "background_presenter.projection_fallback_needed()" not in eye_background
     assert "def projection_fallback_needed" in background_presenter
     assert "BackgroundLayerRenderer" in background_presenter
     assert "ready = getattr(self.viewer, '_panorama_texture_ready', None)" in background_layer_renderer
-    assert "enabled = bool(projection_screen_enabled or has_panorama)" in background_presenter
+    assert "projection_screen_enabled" not in background_presenter
     assert "if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in background_presenter
     assert "viewer._breakdown_inc('openxr_background_panorama')" in background_presenter
     assert "if eye_index == 0:" in background_presenter
-    assert background_presenter.count("if eye_index == 0:") == 2
+    assert background_presenter.count("if eye_index == 0:") == 1
 
 
 def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
@@ -629,11 +629,11 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
 
     assert "_openxr_projection_screen_unavailable_reason" in screen_presenter
-    assert "draw_projection_screen = bool(self._openxr_draw_projection_screen)" in render_eye
-    assert "getattr(self, '_openxr_draw_projection_screen'" not in render_eye
-    assert "projection_screen_enabled=draw_projection_screen" in render_eye
-    assert "screen_presenter.render_projection_screen(" in render_eye
-    assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in screen_presenter
+    assert "draw_projection_screen" not in render_eye
+    assert "_openxr_draw_projection_screen" not in render_eye
+    assert "projection_screen_enabled=" not in render_eye
+    assert "screen_presenter.render_projection_screen(" not in render_eye
+    assert "def render_projection_screen" not in screen_presenter
     assert "background_presenter.projection_fallback_needed()" not in render_eye
     assert "and not panorama_configured" not in background_presenter
     assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" not in background_presenter
@@ -828,7 +828,6 @@ def test_background_presenter_skips_background_without_projection_screen_or_pano
         object(),
         object(),
         eye_index=0,
-        projection_screen_enabled=False,
     )
 
     assert rendered is False
@@ -871,7 +870,6 @@ def test_background_presenter_keeps_panorama_projection_fallback_without_screen(
         object(),
         object(),
         eye_index=0,
-        projection_screen_enabled=False,
     )
 
     assert rendered is True
@@ -907,7 +905,6 @@ def test_background_presenter_skips_configured_panorama_until_texture_ready(monk
         object(),
         object(),
         eye_index=0,
-        projection_screen_enabled=False,
     )
 
     assert rendered is False
@@ -1645,7 +1642,7 @@ def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
     assert "def _try_update_runtime_effect_source_texture_gpu" in core_text
     assert "CudaGlTextureUploader" in core_text
     assert "ensure_staging(self.ctx, w, h)" in core_text
-    assert "ctx.texture((w, h), 4, dtype='f1')" in scheduler_text
+    assert "slot.tex = ctx.texture(size, 4, dtype='f1')" in scheduler_text
     gpu_upload_func = core_text.split("def _try_update_runtime_effect_source_texture_gpu", 1)[1].split("def _update_runtime_effect_source_texture", 1)[0]
     assert "torch.cuda.current_stream(device_index).synchronize()" not in gpu_upload_func
     assert "ready_event.synchronize()" not in core_text

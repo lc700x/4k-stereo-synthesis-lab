@@ -69,6 +69,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_background_env_model", 1)
     breakdown.inc("openxr_background_env_model_failed", 4)
     breakdown.inc("openxr_background_idle", 3)
+    breakdown.inc("openxr_effect_ready_age_record_failed", 1)
     breakdown.inc("openxr_effect_source_ready_publish", 3)
     breakdown.inc("openxr_effect_source_safe_publish", 2)
     breakdown.inc("openxr_effect_source_promote_reuse", 1)
@@ -144,6 +145,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "source_lat=15.00ms" in output
     assert "fx_submit=7.00ms" in output
     assert "fx_age=4.00f" in output
+    assert "fx_age_failed=1.0" in output
     assert "fx_ready=3.0" in output
     assert "fx_safe=2.0" in output
     assert "fx_promote_reuse=1.0" in output

@@ -180,6 +180,7 @@ class FPSBreakdown:
             f"fx_upload={avg_ms('runtime_effect_source_upload'):.2f}ms "
             f"fx_submit={avg_ms('openxr_effect_submit'):.2f}ms "
             f"fx_age={avg_value('openxr_effect_ready_age_frames'):.2f}f "
+            f"fx_age_failed={rate('openxr_effect_ready_age_record_failed'):.1f} "
             f"fx_ready={rate('openxr_effect_source_ready_publish'):.1f} "
             f"fx_safe={rate('openxr_effect_source_safe_publish'):.1f} "
             f"fx_promote_reuse={rate('openxr_effect_source_promote_reuse'):.1f} "

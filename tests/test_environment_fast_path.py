@@ -188,6 +188,20 @@ def test_runtime_effect_source_promote_failure_reuses_existing_safe_texture(monk
     assert inc_calls.count(("openxr_effect_source_promote_failed", 1)) == 3
 
 
+def test_screen_effect_age_diagnostic_failure_does_not_break_effect_source(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    source_tex = object()
+    inc_calls = []
+    viewer._frame_count = 9
+    viewer._runtime_effect_safe_source_frame_id = 7
+    viewer._breakdown_add_value = lambda *_args: (_ for _ in ()).throw(RuntimeError("stats failed"))
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    viewer._record_screen_effect_safe_age(source_tex)
+
+    assert ("openxr_effect_ready_age_record_failed", 1) in inc_calls
+
+
 def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
     viewer = _make_default_viewer(monkeypatch)
     room = tmp_path / "PanoramaRoom"

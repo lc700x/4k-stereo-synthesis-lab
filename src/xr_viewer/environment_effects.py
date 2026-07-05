@@ -144,7 +144,10 @@ class EnvironmentEffectsMixin:
             if getattr(self, '_screen_effect_age_record_key', None) == age_key:
                 return
             self._screen_effect_age_record_key = age_key
-            self._breakdown_add_value('openxr_effect_ready_age_frames', float(current_frame - safe_frame_id))
+            try:
+                self._breakdown_add_value('openxr_effect_ready_age_frames', float(current_frame - safe_frame_id))
+            except Exception:
+                self._breakdown_inc("openxr_effect_ready_age_record_failed")
 
     def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)

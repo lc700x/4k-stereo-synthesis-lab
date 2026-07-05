@@ -127,6 +127,9 @@ class EffectScheduler:
         self.safe_downsample_tex = None
         self.safe_downsample_size = None
         self.safe_downsample_frame_id = 0
+        self.safe_light_probe_tex = None
+        self.safe_light_probe_size = None
+        self.safe_light_probe_frame_id = 0
 
     def queue_source(self, source):
         overwritten = self.pending_source is not None
@@ -185,8 +188,16 @@ class EffectScheduler:
     def latest_safe_glow(self):
         return self.latest_safe()
 
+    def publish_light_probe(self, tex, size, frame_id):
+        self.safe_light_probe_tex = tex
+        self.safe_light_probe_size = tuple(size) if size is not None else getattr(tex, 'size', None)
+        self.safe_light_probe_frame_id = int(frame_id or 0)
+
     def latest_safe_light_probe(self):
-        return self.latest_safe()
+        _source_tex, _source_size, source_frame_id = self.latest_safe()
+        if self.safe_light_probe_frame_id != int(source_frame_id or 0):
+            return None, None, source_frame_id
+        return self.safe_light_probe_tex, self.safe_light_probe_size, source_frame_id
 
     def release(self):
         self.pool.release()

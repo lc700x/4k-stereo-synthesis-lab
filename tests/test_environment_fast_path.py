@@ -1615,10 +1615,9 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
     assert "scheduler.latest_safe_light_probe()" in source_func
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_record_screen_effect_safe_age" in source_func
-    assert "latest_safe_downsample(" in source_func
+    assert "latest_safe_downsample(" not in runtime_direct_block
     assert "_prepare_glow_downsample_texture" not in source_func
     assert "_cached_glow_downsample_texture" not in runtime_direct_block
-    assert "_glow_ds_size" in source_func
     assert "value = (None, None)" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
@@ -1631,7 +1630,7 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     viewer._frame_count = 12
     viewer._runtime_direct_source = True
     _set_runtime_effect_safe(viewer, source_tex, (1920, 1080), 3)
-    viewer._runtime_effect_submit_scheduler().publish_downsample(light_tex, (96, 54), 3)
+    viewer._runtime_effect_submit_scheduler().publish_light_probe(light_tex, (96, 54), 3)
     viewer._age_count = 0
     viewer._prepare_count = 0
     inc_calls = []

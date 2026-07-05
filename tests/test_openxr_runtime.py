@@ -2198,6 +2198,9 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "self.viewer._openxr_projection_screen_source_ready" in screen_presenter_text
     assert "self.viewer._openxr_projection_screen_effects_enabled" in screen_presenter_text
     assert "def render_projection_screen" in screen_presenter_text
+    projection_screen = screen_presenter_text.split("def render_projection_screen", 1)[1].split("def render_quad_screen_overlay", 1)[0]
+    assert "_render_screen_background_effects" not in projection_screen
+    assert "_render_screen_foreground_effects" not in projection_screen
     assert "screen_presenter.render_projection_screen(" in render_eye_block
     assert "render_quad_screen_overlay(" in render_eye_block
     assert "openxr_projection_screen_skipped" not in render_eye_block
@@ -2600,8 +2603,6 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     viewer._should_render_source_screen_effects = lambda: True
     assert presenter.projection_screen_source_ready(0) is True
     assert presenter.projection_screen_source_ready(1) is False
-    assert presenter.projection_screen_effects_enabled() is True
-    viewer._should_render_source_screen_effects = lambda: False
     assert presenter.projection_screen_effects_enabled() is False
     viewer._runtime_direct_source = False
     assert presenter.projection_screen_source_ready(0) is True

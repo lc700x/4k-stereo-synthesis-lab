@@ -119,24 +119,13 @@ class ScreenLayerPresenter:
         return getattr(viewer, 'color_tex', None) is not None and getattr(viewer, 'depth_tex', None) is not None
 
     def projection_screen_effects_enabled(self):
-        if not self.projection_screen_needed():
-            return False
-        viewer = self.viewer
-        if not getattr(viewer, '_screen_effects_enabled', True):
-            return False
-        if getattr(viewer, 'screen_height', None) is None:
-            return False
-        should_render = getattr(viewer, '_should_render_source_screen_effects', None)
-        return bool(should_render()) if callable(should_render) else True
+        return False
 
     def render_projection_screen(self, *, eye_index, mgl_fbo, vp_mat, swapchain_size, mark_perf=None):
         viewer = self.viewer
         sc_w, sc_h = swapchain_size
-        draw_projection_screen_effects = bool(viewer._openxr_projection_screen_effects_enabled)
         quad_unavailable_reason = viewer._openxr_projection_screen_unavailable_reason or 'unknown'
         viewer._breakdown_inc(f"openxr_quad_unavailable_{quad_unavailable_reason}")
-        if draw_projection_screen_effects:
-            viewer._render_screen_background_effects(mgl_fbo, vp_mat)
         if mark_perf:
             mark_perf('bgfx')
 
@@ -288,8 +277,6 @@ class ScreenLayerPresenter:
         if mark_perf:
             mark_perf('border')
 
-        if draw_projection_screen_effects:
-            viewer._render_screen_foreground_effects(mgl_fbo, vp_mat)
         if mark_perf:
             mark_perf('fgfx')
         return True

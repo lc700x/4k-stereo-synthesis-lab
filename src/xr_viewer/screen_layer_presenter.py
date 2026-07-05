@@ -100,9 +100,17 @@ class ScreenLayerPresenter:
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 
+    def projection_screen_needed(self):
+        return not self.viewer._quad_layer_screen_presentable()
+
+    def projection_screen_unavailable_reason(self):
+        if not self.projection_screen_needed():
+            return None
+        return self.viewer._quad_layer_unavailable_reason()
+
     def projection_layer_needed(self):
         viewer = self.viewer
-        if not viewer._quad_layer_screen_presentable():
+        if self.projection_screen_needed():
             return True
         background_presenter = getattr(viewer, '_background_presenter', None)
         if background_presenter is None:
@@ -142,6 +150,8 @@ class ScreenLayerPresenter:
         updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
         quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
         self._frame_quad_layers = quad_layers
+        self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()
+        self.viewer._openxr_projection_screen_unavailable_reason = self.projection_screen_unavailable_reason()
         render_projection_layer = self.projection_layer_needed()
         if not render_projection_layer:
             self.viewer._breakdown_inc('openxr_projection_layer_skipped')

@@ -2003,8 +2003,11 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "openxr_projection_layer_skipped" in screen_presenter_text
     assert "xr.CompositionLayerProjection(" in screen_presenter_text
     render_eye = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye_prefix, render_eye_block = render_eye.split("draw_projection_screen = not self._quad_layer_screen_presentable()", 1)
+    render_eye_prefix, render_eye_block = render_eye.split("draw_projection_screen = bool(getattr(self, '_openxr_draw_projection_screen', True))", 1)
     assert "quad_unavailable_reason == 'missing_source_texture'" not in render_eye_prefix
+    assert "not self._quad_layer_screen_presentable()" not in render_eye_prefix
+    assert "_openxr_projection_screen_unavailable_reason" in render_eye_block
+    assert "self.viewer._openxr_draw_projection_screen = self.projection_screen_needed()" in screen_presenter_text
     source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
     assert "if draw_projection_screen:" in source_gate
     assert "self._runtime_eye_textures[eye_index] is None" in source_gate

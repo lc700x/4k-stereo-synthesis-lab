@@ -2181,8 +2181,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self.ctx.screen.use()
             return
 
-        quad_unavailable_reason = self._quad_layer_unavailable_reason()
-        draw_projection_screen = not self._quad_layer_screen_presentable()
+        draw_projection_screen = bool(getattr(self, '_openxr_draw_projection_screen', True))
+        quad_unavailable_reason = getattr(self, '_openxr_projection_screen_unavailable_reason', None) or 'unknown'
         if draw_projection_screen:
             if self._runtime_direct_source:
                 if self._runtime_eye_textures[eye_index] is None:

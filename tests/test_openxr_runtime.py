@@ -1648,19 +1648,86 @@ def test_preview_only_frame_does_not_flush_soft_effect_submit():
 
 
 def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
-    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    session_ready_idle = implementation.split("if self._session_ready_pending:", 1)[1].split(
-        "if not self._has_fresh_source_frame(now):", 1
-    )[0]
-    no_renderable = implementation.split("self._breakdown_inc('openxr_no_renderable')", 1)[1].split(
-        "if frame_state.should_render:", 1
-    )[0]
+    from xr_viewer.openxr_frame_gate import OpenXRFrameGate
 
-    assert "frame_submitter.submit(" in session_ready_idle
-    assert "frame_submitter.submit(" in no_renderable
-    assert "self._flush_runtime_effect_submit()" not in session_ready_idle
-    assert "self._flush_runtime_effect_submit()" not in no_renderable
-    assert "time.sleep" not in no_renderable
+    class Submitter:
+        def __init__(self):
+            self.calls = []
+
+        def submit(self, layers, *, display_time, submit_start=0.0):
+            self.calls.append((layers, display_time, submit_start))
+
+    class Viewer:
+        def __init__(self):
+            self._session_ready_pending = True
+            self._hard_idle_active = False
+            self._session_idle_render_timeout = 3.0
+            self._source_resume_grace = 0.5
+            self._headset_wait_inference_deadline = 1.0
+            self._headset_wait_inference_paused = False
+            self.inc_calls = []
+            self.actions = []
+
+        def _track_session_idle_render(self, should_render, now=None):
+            self.actions.append(("idle_track", should_render, now))
+            return True
+
+        def _breakdown_inc(self, name, amount=1):
+            self.inc_calls.append((name, amount))
+
+        def _has_fresh_source_frame(self, now):
+            return False
+
+        def _pause_xr_output_for_source_stall(self):
+            self.actions.append("pause")
+
+        def _has_renderable_source_frame(self):
+            return False
+
+        def _resume_source_inference(self):
+            self.actions.append("resume")
+
+        def _set_render_active(self, value):
+            self.actions.append(("render_active", value))
+
+        def _set_source_active(self, value):
+            self.actions.append(("source_active", value))
+
+        def _enter_hard_idle_wait(self):
+            self.actions.append("hard_idle")
+
+    viewer = Viewer()
+    submitter = Submitter()
+    gate = OpenXRFrameGate(viewer, submitter)
+    frame_state = SimpleNamespace(should_render=False, predicted_display_time=123)
+
+    skip, idle_timeout = gate.handle_ready_or_stall(
+        frame_state=frame_state,
+        now=10.0,
+        composition_layers=[],
+        submit_start=1.0,
+    )
+
+    assert skip is True
+    assert idle_timeout is True
+    assert submitter.calls == [([], 123, 1.0)]
+    assert ("openxr_no_render", 1) in viewer.inc_calls
+    assert "hard_idle" in viewer.actions
+
+    viewer._session_ready_pending = False
+    submitter.calls.clear()
+    skip, _idle_timeout = gate.handle_ready_or_stall(
+        frame_state=SimpleNamespace(should_render=True, predicted_display_time=456),
+        now=11.0,
+        composition_layers=[],
+        submit_start=2.0,
+    )
+
+    assert skip is True
+    assert submitter.calls == [([], 456, 2.0)]
+    assert ("openxr_no_fresh", 1) in viewer.inc_calls
+    assert ("openxr_no_renderable", 1) in viewer.inc_calls
+    assert "pause" in viewer.actions
 
 
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():

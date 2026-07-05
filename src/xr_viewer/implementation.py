@@ -151,6 +151,7 @@ from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
 from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
+from .openxr_frame_gate import OpenXRFrameGate
 from .openxr_frame_renderer import OpenXRFrameRenderer
 from .filters import *
 
@@ -4470,57 +4471,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             frame_submitter = getattr(self, '_frame_submitter', None)
             if frame_submitter is None:
                 frame_submitter = self._frame_submitter = FrameSubmitter(self)
+            frame_gate = getattr(self, '_openxr_frame_gate', None)
+            if frame_gate is None:
+                frame_gate = self._openxr_frame_gate = OpenXRFrameGate(self, frame_submitter)
 
-            session_idle_timeout = self._track_session_idle_render(frame_state.should_render, now)
-            if frame_state.should_render:
-                self._breakdown_inc('openxr_should_render')
-            else:
-                self._breakdown_inc('openxr_no_render')
-
-            if self._session_ready_pending:
-                if frame_state.should_render:
-                    self._session_ready_pending = False
-                    self._preview_only_mode = False
-                    self._waiting_for_headset = False
-                    self._resume_source_inference()
-                    self._set_render_active(True)
-                    self._source_resume_grace_until = (
-                        time.perf_counter() + self._source_resume_grace
-                    )
-                    print("[OpenXRViewer] Headset detected, render confirmed")
-                else:
-                    frame_submitter.submit(
-                        composition_layers,
-                        display_time=frame_state.predicted_display_time,
-                        submit_start=submit_start,
-                    )
-                    if loop_trace_enabled:
-                        _loop_mark('end_frame')
-                    if session_idle_timeout:
-                        if not self._hard_idle_active:
-                            print(
-                                f"[OpenXRViewer] Session idle for {self._session_idle_render_timeout:.0f}s; "
-                                "source/render paused, keeping OpenXR session"
-                            )
-                            self._headset_wait_inference_deadline = 0.0
-                            self._headset_wait_inference_paused = True
-                            self._set_source_active(False)
-                            self._enter_hard_idle_wait()
-                    continue
-
-            if not self._has_fresh_source_frame(now):
-                self._breakdown_inc('openxr_no_fresh')
-                self._pause_xr_output_for_source_stall()
-                if not self._has_renderable_source_frame():
-                    self._breakdown_inc('openxr_no_renderable')
-                    frame_submitter.submit(
-                        composition_layers,
-                        display_time=frame_state.predicted_display_time,
-                        submit_start=submit_start,
-                    )
-                    if loop_trace_enabled:
-                        _loop_mark('end_frame')
-                    continue
+            skip_render, session_idle_timeout = frame_gate.handle_ready_or_stall(
+                frame_state=frame_state,
+                now=now,
+                composition_layers=composition_layers,
+                submit_start=submit_start,
+            )
+            if skip_render:
+                if loop_trace_enabled:
+                    _loop_mark('end_frame')
+                continue
 
             screen_frame_uploaded = False
             if frame_state.should_render:
@@ -4577,15 +4541,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     )
 
             if session_idle_timeout:
-                if not self._hard_idle_active:
-                    print(
-                        f"[OpenXRViewer] Session idle for {self._session_idle_render_timeout:.0f}s; "
-                        "source/render paused, keeping OpenXR session"
-                    )
-                    self._headset_wait_inference_deadline = 0.0
-                    self._headset_wait_inference_paused = True
-                    self._set_source_active(False)
-                    self._enter_hard_idle_wait()
+                frame_gate.enter_idle_if_needed(session_idle_timeout)
                 continue
 
             # Timestamp-ring FPS: (N-1) frames / (last_ts - first_ts) -exact, O(1)

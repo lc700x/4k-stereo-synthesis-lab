@@ -13,6 +13,14 @@ class ScreenLayerPresenter:
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 
+    def prepare_frame_layers(self, *, screen_frame_uploaded=False):
+        updated_quad_eyes = self.update_or_reuse(screen_frame_uploaded=screen_frame_uploaded)
+        quad_layers, quad_layer_headers, updated_quad_eyes = self.make_quad_layers(updated_quad_eyes)
+        render_projection_layer = self.viewer._projection_layer_needed()
+        if not render_projection_layer:
+            self.viewer._breakdown_inc('openxr_projection_layer_skipped')
+        return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer
+
     def make_quad_layers(self, updated_quad_eyes):
         viewer = self.viewer
         quad_layers = []

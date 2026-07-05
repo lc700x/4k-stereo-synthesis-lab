@@ -4600,29 +4600,22 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     self._reset_screen_to_default(show_border=False)
                     self._screen_eye_init = True
 
-                quad_layers = []
-                quad_layer_headers = []
                 quad_update_start = time.perf_counter()
                 screen_presenter = getattr(self, '_screen_layer_presenter', None)
                 if screen_presenter is None:
                     screen_presenter = ScreenLayerPresenter(self)
                     self._screen_layer_presenter = screen_presenter
-                updated_quad_eyes = screen_presenter.update_or_reuse(
-                    screen_frame_uploaded=screen_frame_uploaded
+                quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer = (
+                    screen_presenter.prepare_frame_layers(screen_frame_uploaded=screen_frame_uploaded)
                 )
                 self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
                 if loop_trace_enabled:
                     _loop_mark('quad_update')
 
-                quad_layers, quad_layer_headers, updated_quad_eyes = screen_presenter.make_quad_layers(
-                    updated_quad_eyes
-                )
-
                 eye_layer_views = []
-                render_projection_layer = self._projection_layer_needed()
 
                 if not render_projection_layer:
-                    self._breakdown_inc('openxr_projection_layer_skipped')
+                    pass
                 elif self._use_d3d11:
                     # D3D11 rendering-----
                     #

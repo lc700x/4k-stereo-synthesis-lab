@@ -340,11 +340,6 @@ class CoreRuntimeEyeMixin:
         self._breakdown_inc("openxr_effect_source_reused_safe")
 
     def _submit_runtime_effect_source_texture(self, frame):
-        if bool(getattr(self, '_openxr_effect_submit_budget_skip_armed', False)):
-            self._openxr_effect_submit_budget_skip_armed = False
-            self._breakdown_inc("openxr_effect_submit_budget_skip")
-            self._breakdown_inc("openxr_effect_source_reused_safe")
-            return False
         submit_start = time.perf_counter()
         self._update_runtime_effect_source_texture(frame)
         elapsed = time.perf_counter() - submit_start

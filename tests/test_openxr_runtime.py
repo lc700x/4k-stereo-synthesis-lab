@@ -747,7 +747,7 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     viewer._prewarm_runtime_effect_downsample()
 
 
-def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
+def test_runtime_effect_submit_budget_skip_does_not_call_submit():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter
 
@@ -758,19 +758,22 @@ def test_runtime_effect_submit_budget_skip_does_not_prewarm_downsample():
     submitter = EffectSubmitter(viewer)
     inc_calls = []
     pending = object()
+    viewer._openxr_effect_submit_budget_skip_armed = True
     viewer._runtime_effect_submit_scheduler().queue_source(pending)
-    viewer._submit_runtime_effect_source_texture = lambda _value: False
-    viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
+    viewer._submit_runtime_effect_source_texture = lambda _value: pytest.fail("budget skip should not submit")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is pending
-    assert ("openxr_effect_downsample_prewarm_skip", 1) in inc_calls
+    assert viewer._openxr_effect_submit_budget_skip_armed is False
+    assert ("openxr_effect_submit_budget_skip", 1) in inc_calls
+    assert ("openxr_effect_source_reused_safe", 1) in inc_calls
 
-    viewer._submit_runtime_effect_source_texture = lambda _value: None
-    viewer._prewarm_runtime_effect_downsample = lambda: None
+    submitted = []
+    viewer._submit_runtime_effect_source_texture = lambda value: submitted.append(value)
     assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert submitted == [pending]
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
 
@@ -1076,7 +1079,7 @@ def test_effect_scheduler_promotes_ready_once_per_frame():
     assert pool.calls == 2
 
 
-def test_runtime_effect_submit_budget_reuses_safe_texture_on_next_frame(monkeypatch):
+def test_runtime_effect_submit_budget_arms_next_frame_skip(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
 
@@ -1087,9 +1090,8 @@ def test_runtime_effect_submit_budget_reuses_safe_texture_on_next_frame(monkeypa
     viewer._openxr_effect_submit_budget_ms = 0.001
     viewer._openxr_effect_submit_budget_skip_armed = False
     viewer._updated = 0
-    inc_calls = []
     time_calls = []
-    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_inc = lambda name, amount=1: None
     viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
 
     def _update(_frame):
@@ -1099,13 +1101,10 @@ def test_runtime_effect_submit_budget_reuses_safe_texture_on_next_frame(monkeypa
     viewer._update_runtime_effect_source_texture = _update
 
     assert viewer._submit_runtime_effect_source_texture(object()) is True
-    assert viewer._submit_runtime_effect_source_texture(object()) is False
 
     assert viewer._updated == 1
-    assert viewer._openxr_effect_submit_budget_skip_armed is False
+    assert viewer._openxr_effect_submit_budget_skip_armed is True
     assert any(name == "openxr_effect_submit" for name, _seconds in time_calls)
-    assert ("openxr_effect_submit_budget_skip", 1) in inc_calls
-    assert ("openxr_effect_source_reused_safe", 1) in inc_calls
 
 
 def test_runtime_effect_source_missing_frame_reuses_safe_texture(monkeypatch):

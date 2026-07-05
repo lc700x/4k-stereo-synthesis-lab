@@ -17,6 +17,11 @@ class EffectSubmitter:
         scheduler = viewer._runtime_effect_submit_scheduler()
         if scheduler.pending_source is None:
             return False
+        if bool(getattr(viewer, "_openxr_effect_submit_budget_skip_armed", False)):
+            viewer._openxr_effect_submit_budget_skip_armed = False
+            self._breakdown_inc("openxr_effect_submit_budget_skip")
+            self._breakdown_inc("openxr_effect_source_reused_safe")
+            return False
 
         def _promote_ready():
             try:

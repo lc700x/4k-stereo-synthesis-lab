@@ -2237,7 +2237,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         draw_projection_screen = quad_unavailable_reason is not None
         background_start = time.perf_counter()
         background_rendered = False
-        if getattr(self, '_panorama_background_path', None):
+        if draw_projection_screen and getattr(self, '_panorama_background_path', None):
             if self._render_panorama_background(mgl_fbo, view_mat, proj_mat):
                 if eye_index == 0:
                     self._breakdown_inc('openxr_background_panorama')

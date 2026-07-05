@@ -1235,6 +1235,11 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     append_idx = frame_block.index("for quad_layer_header in quad_layer_headers:")
     assert poll_idx < update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
     assert "openxr_projection_layer_skipped" in render_tail
+    render_eye_block = implementation.split("draw_projection_screen = quad_unavailable_reason is not None", 1)[1].split(
+        "if draw_projection_screen:", 1
+    )[0]
+    assert "if draw_projection_screen and getattr(self, '_panorama_background_path', None):" in render_eye_block
+    assert "if getattr(self, '_panorama_background_path', None):" not in render_eye_block
     quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
     assert "composition_layers.append(quad_layer_header)" in quad_layer_block
 

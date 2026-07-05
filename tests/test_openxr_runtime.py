@@ -1259,7 +1259,7 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     )
 
 
-def test_active_openxr_presenter_gates_effect_flush_on_screen_upload_frames():
+def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
     submit_tail = run_body.rsplit("_submit_openxr_frame(composition_layers)", 1)[1].split(
@@ -1267,7 +1267,9 @@ def test_active_openxr_presenter_gates_effect_flush_on_screen_upload_frames():
     )[0]
 
     assert "should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)" in submit_tail
-    assert "if not screen_frame_uploaded or not callable(should_submit_effect_source) or should_submit_effect_source():" in submit_tail
+    assert "if not screen_frame_uploaded and (" in submit_tail
+    assert "not callable(should_submit_effect_source) or should_submit_effect_source()" in submit_tail
+    assert "if not screen_frame_uploaded or" not in submit_tail
     assert submit_tail.index("openxr_submit_frame") < submit_tail.index("should_submit_effect_source =")
     assert submit_tail.index("should_submit_effect_source =") < submit_tail.index("self._flush_runtime_effect_submit()")
 

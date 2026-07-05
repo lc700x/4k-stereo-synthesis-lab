@@ -814,6 +814,25 @@ def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
     assert len(prepare_calls) == 2
 
 
+def test_runtime_effect_submit_budget_includes_prewarm():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_submitter import EffectSubmitter
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._openxr_effect_submit_budget_ms = 0.001
+    viewer._openxr_effect_submit_budget_skip_armed = False
+    viewer._runtime_effect_submit_scheduler().queue_source(object())
+    viewer._submit_runtime_effect_source_texture = lambda _value: None
+    viewer._prewarm_runtime_effect_downsample = lambda: time.sleep(0.001)
+
+    assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=True)
+
+    assert viewer._openxr_effect_submit_budget_skip_armed is True
+
+
 def test_runtime_effect_submit_budget_skip_does_not_call_submit():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter

@@ -1,3 +1,6 @@
+import time
+
+
 class EffectSubmitter:
     def __init__(self, viewer):
         self.viewer = viewer
@@ -43,6 +46,7 @@ class EffectSubmitter:
             elif result == "promoted":
                 self._breakdown_inc("openxr_effect_source_safe_publish")
 
+        submit_start = time.perf_counter()
         try:
             status = scheduler.flush_pending_source(
                 viewer._submit_runtime_effect_source_texture,
@@ -59,4 +63,7 @@ class EffectSubmitter:
             prewarm = getattr(viewer, "_prewarm_runtime_effect_downsample", None)
             if callable(prewarm):
                 prewarm()
+        budget_ms = float(getattr(viewer, "_openxr_effect_submit_budget_ms", 0.0) or 0.0)
+        if budget_ms > 0.0:
+            viewer._openxr_effect_submit_budget_skip_armed = ((time.perf_counter() - submit_start) * 1000.0) > budget_ms
         return True

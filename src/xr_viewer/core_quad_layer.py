@@ -72,7 +72,14 @@ class CoreQuadLayerMixin:
     def _quad_layer_source_texture(self, eye_index=0):
         if not self._runtime_direct_source:
             return None, None, True
-        return self._runtime_eye_textures[eye_index], self._runtime_eye_texture_size, True
+        textures = getattr(self, '_runtime_eye_textures', [None, None])
+        source_tex = textures[eye_index] if eye_index < len(textures) else None
+        if source_tex is None:
+            for candidate in textures:
+                if candidate is not None:
+                    source_tex = candidate
+                    break
+        return source_tex, self._runtime_eye_texture_size, True
 
     def _quad_layer_unavailable_reason(self):
         if not getattr(self, '_xr_quad_layer_enabled', False):

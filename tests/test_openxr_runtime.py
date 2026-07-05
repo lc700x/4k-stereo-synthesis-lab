@@ -1070,11 +1070,17 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     assert viewer._quad_layer_can_replace_projection_screen() is True
     assert viewer._quad_layer_unavailable_reason() is None
 
+    left_tex = viewer._runtime_eye_textures[0]
     viewer._runtime_eye_textures[1] = None
+    assert viewer._quad_layer_source_texture(1)[0] is left_tex
+    assert viewer._quad_layer_unavailable_reason() is None
+    assert viewer._quad_layer_can_replace_projection_screen() is True
+
+    viewer._runtime_eye_textures[0] = None
     assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
-    viewer._runtime_eye_textures[1] = object()
+    viewer._runtime_eye_textures = [object(), object()]
     viewer._screen_curved = True
     assert viewer._quad_layer_unavailable_reason() == "curved_screen"
     assert viewer._quad_layer_can_replace_projection_screen() is False

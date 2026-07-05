@@ -729,9 +729,23 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     viewer._background_equirect_size = (1024, 512)
     viewer._xr_space = "space"
     viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 0, (0.5, 0.5), (0.25, 0.25))
+    viewer._background_equirect_uploaded_key = None
+    viewer._background_equirect_pending_tex = None
     renderer = BackgroundLayerRenderer(viewer)
     uploads = []
-    monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda value: uploads.append(value))
+
+    def _upload(value):
+        uploads.append(value)
+        viewer._background_equirect_uploaded_key = renderer._source_key(value)
+
+    monkeypatch.setattr(renderer, "_upload_equirect_texture", _upload)
+    headers, projection_fallback = renderer.make_background_layers()
+
+    assert headers == []
+    assert projection_fallback is True
+    assert viewer._background_equirect_pending_tex is tex
+    assert uploads == []
+    assert renderer.flush_pending_upload_after_submit() is True
     headers, projection_fallback = renderer.make_background_layers()
 
     assert len(headers) == 1
@@ -748,7 +762,7 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 1, (0.5, 0.5), (0.25, 0.25))
     renderer = BackgroundLayerRenderer(viewer)
     uploads = []
-    monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda value: uploads.append(value))
+    monkeypatch.setattr(renderer, "_upload_equirect_texture", _upload)
     headers, projection_fallback = renderer.make_background_layers()
 
     assert len(headers) == 2
@@ -764,7 +778,7 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
         "offset": {"x": 512, "y": 0},
         "extent": {"width": 512, "height": 512},
     }
-    assert uploads == [tex]
+    assert uploads == []
 
     presenter = ScreenLayerPresenter(viewer)
     composition_layers = []

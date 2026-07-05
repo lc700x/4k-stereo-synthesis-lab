@@ -911,6 +911,9 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "self.frame_submitter.submit(" in frame_pipeline
     assert "openxr_submit_frame" in frame_submitter_text
     assert frame_pipeline.index("self.frame_submitter.submit(") < frame_pipeline.index(
+        "background_renderer.flush_pending_upload_after_submit()"
+    )
+    assert frame_pipeline.index("self.frame_submitter.submit(") < frame_pipeline.index(
         "self.effect_submitter.flush_after_submit("
     )
     assert "self._runtime_effect_safe_source_frame_id = pool.safe_frame_id" not in runtime_eye

@@ -70,15 +70,18 @@ class BackgroundLayerRenderer:
         cache[key] = (mgl_fbo, raw_fbo, width, height)
         return mgl_fbo
 
+    def _source_key(self, tex):
+        return (
+            int(getattr(tex, 'glo', 0) or 0),
+            tuple(getattr(tex, 'size', ()) or ()),
+            getattr(self.viewer, '_panorama_tex_path', None),
+        )
+
     def _upload_equirect_texture(self, tex):
         viewer = self.viewer
         swapchain = viewer._background_equirect_swapchain
         width, height = viewer._background_equirect_size
-        source_key = (
-            int(getattr(tex, 'glo', 0) or 0),
-            tuple(getattr(tex, 'size', ()) or ()),
-            getattr(viewer, '_panorama_tex_path', None),
-        )
+        source_key = self._source_key(tex)
         if viewer._background_equirect_uploaded_key == source_key:
             return
         img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
@@ -147,7 +150,10 @@ class BackgroundLayerRenderer:
         tex = self._panorama_texture()
         if tex is None:
             return None
-        self._upload_equirect_texture(tex)
+        source_key = self._source_key(tex)
+        if self.viewer._background_equirect_uploaded_key != source_key:
+            self.viewer._background_equirect_pending_tex = tex
+            return None
         width, height = self.viewer._background_equirect_size
         if self._panorama_stereo_layout() == 1:
             eye_w = int(width) // 2
@@ -156,6 +162,14 @@ class BackgroundLayerRenderer:
                 self._make_equirect_layer(xr.EyeVisibility.RIGHT, eye_w, eye_w, height),
             ]
         return [self._make_equirect_layer(xr.EyeVisibility.BOTH, 0, width, height)]
+
+    def flush_pending_upload_after_submit(self):
+        tex = getattr(self.viewer, '_background_equirect_pending_tex', None)
+        if tex is None:
+            return False
+        self.viewer._background_equirect_pending_tex = None
+        self._upload_equirect_texture(tex)
+        return True
 
     def make_background_layers(self):
         self._frame_background_layers = []

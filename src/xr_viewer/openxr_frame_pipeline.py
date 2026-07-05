@@ -170,6 +170,9 @@ class OpenXRFramePipeline:
             submit_start=submit_start,
         )
         mark('end_frame')
+        background_renderer = getattr(viewer, '_background_layer_renderer', None)
+        if background_renderer is not None:
+            background_renderer.flush_pending_upload_after_submit()
         self.effect_submitter.flush_after_submit(
             should_render=frame_state.should_render,
             screen_frame_uploaded=screen_frame_uploaded,

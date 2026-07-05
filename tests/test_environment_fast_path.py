@@ -1041,18 +1041,23 @@ def test_screen_quality_pass_restores_gl_state_on_failure():
 def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
     render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     source_func = render_text.split("def _screen_light_source_texture", 1)[1].split("def _apply_cinema_light_uniforms", 1)[0]
+    runtime_direct_block = source_func.split("if getattr(self, '_runtime_direct_source', False):", 1)[1].split(
+        "source_tex = getattr(self, 'color_tex'", 1
+    )[0]
 
     assert "_runtime_effect_safe_source_tex" in source_func
     assert "_runtime_effect_safe_source_size" in source_func
     assert "_promote_runtime_effect_ready_texture" in source_func
     assert "_record_screen_effect_safe_age" in source_func
     assert "_prepare_glow_downsample_texture" in source_func
+    assert "_prepare_glow_downsample_texture" not in runtime_direct_block
+    assert "_glow_ds_cache_key" in runtime_direct_block
     assert "_glow_ds_size" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
 
 
-def test_screen_light_source_texture_is_cached_per_frame(monkeypatch):
+def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     source_tex = type("Tex", (), {"glo": 7})()
     light_tex = object()
@@ -1061,6 +1066,9 @@ def test_screen_light_source_texture_is_cached_per_frame(monkeypatch):
     viewer._runtime_effect_safe_source_tex = source_tex
     viewer._runtime_effect_safe_source_size = (1920, 1080)
     viewer._runtime_effect_safe_source_frame_id = 3
+    viewer._glow_ds_tex = light_tex
+    viewer._glow_ds_size = (96, 54)
+    viewer._glow_ds_cache_key = (3, 7, 1920, 1080, 96, 54)
     viewer._promote_count = 0
     viewer._age_count = 0
     viewer._prepare_count = 0
@@ -1073,16 +1081,17 @@ def test_screen_light_source_texture_is_cached_per_frame(monkeypatch):
 
     def _prepare(_source_tex, _source_size):
         viewer._prepare_count += 1
-        return light_tex
+        return object()
 
     viewer._promote_runtime_effect_ready_texture = _promote
     viewer._prepare_glow_downsample_texture = _prepare
 
-    assert viewer._screen_light_source_texture() == (light_tex, None)
-    assert viewer._screen_light_source_texture() == (light_tex, None)
+    assert viewer._screen_light_source_texture() == (light_tex, (96, 54))
+    assert viewer._screen_light_source_texture() == (light_tex, (96, 54))
     assert viewer._promote_count == 1
     assert viewer._age_count == 1
-    assert viewer._prepare_count == 1
+    assert viewer._prepare_count == 0
+    assert ("openxr_screen_light_downsample_source", 1) in inc_calls
     assert ("openxr_screen_light_source_reuse", 1) in inc_calls
 
 
@@ -1090,8 +1099,6 @@ def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatc
     viewer = _make_default_viewer(monkeypatch)
     first_tex = type("Tex", (), {"glo": 31})()
     next_tex = type("Tex", (), {"glo": 32})()
-    first_light = object()
-    next_light = object()
     viewer._frame_count = 12
     viewer._runtime_direct_source = True
     viewer._runtime_effect_safe_source_tex = first_tex
@@ -1099,26 +1106,28 @@ def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatc
     viewer._runtime_effect_safe_source_frame_id = 3
     viewer._promote_count = 0
     viewer._age_count = 0
+    viewer._prepare_count = 0
     viewer._breakdown_inc = lambda *args, **kwargs: None
-    light_by_tex = {first_tex: first_light, next_tex: next_light}
     viewer._record_screen_effect_safe_age = lambda _source_tex: setattr(viewer, "_age_count", viewer._age_count + 1)
 
     def _promote():
         viewer._promote_count += 1
 
-    def _prepare(source_tex, _source_size):
-        return light_by_tex[source_tex]
+    def _prepare(_source_tex, _source_size):
+        viewer._prepare_count += 1
+        return object()
 
     viewer._promote_runtime_effect_ready_texture = _promote
     viewer._prepare_glow_downsample_texture = _prepare
 
-    assert viewer._screen_light_source_texture() == (first_light, None)
+    assert viewer._screen_light_source_texture() == (first_tex, (1920, 1080))
     viewer._runtime_effect_safe_source_tex = next_tex
     viewer._runtime_effect_safe_source_frame_id = 4
-    assert viewer._screen_light_source_texture() == (next_light, None)
+    assert viewer._screen_light_source_texture() == (next_tex, (1920, 1080))
 
     assert viewer._promote_count == 2
     assert viewer._age_count == 2
+    assert viewer._prepare_count == 0
 
 
 def test_runtime_effect_source_texture_is_prepared_for_all_glow_modes(monkeypatch):

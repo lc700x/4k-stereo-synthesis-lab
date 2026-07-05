@@ -1071,6 +1071,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     screen_quality = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
+    background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
     breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
 
     for name in (
@@ -1117,6 +1118,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
             or name in environment_renderer
             or name in screen_quality
             or name in screen_presenter
+            or name in background_presenter
         )
 
     assert "wall_mask=" in breakdown
@@ -1409,11 +1411,15 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
     assert "if draw_projection_screen:" in source_gate
     assert "self._runtime_eye_textures[eye_index] is None" in source_gate
-    background_gate = render_eye_block.split("background_start = time.perf_counter()", 1)[1].split(
-        "# -3. Environment model", 1
+    background_gate = render_eye_block.split("background_presenter = getattr(self, '_background_presenter', None)", 1)[1].split(
+        "if perf_enabled:", 1
     )[0]
-    assert "if draw_projection_screen and getattr(self, '_panorama_background_path', None):" in background_gate
-    assert "if getattr(self, '_panorama_background_path', None):" not in background_gate
+    background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
+    assert "BackgroundPresenter(self)" in background_gate
+    assert "background_presenter.render_projection_background(" in background_gate
+    assert "enabled=draw_projection_screen" in background_gate
+    assert "if enabled and getattr(viewer, '_panorama_background_path', None):" in background_presenter
+    assert "if getattr(viewer, '_panorama_background_path', None):" not in background_presenter
     quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
     assert "composition_layers.append(quad_layer_header)" in quad_layer_block
 

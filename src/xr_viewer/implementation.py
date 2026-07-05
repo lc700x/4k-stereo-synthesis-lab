@@ -148,6 +148,7 @@ from .core_openxr_opengl import CoreOpenXROpenGLMixin
 from .core_source_state import CoreSourceStateMixin
 from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
+from .background_presenter import BackgroundPresenter
 from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
 
@@ -2237,28 +2238,18 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # reflection light disabled while the second eye rendered it enabled
         # (left-eye flicker).
         self._ensure_screen_dimensions()
-        background_start = time.perf_counter()
-        background_rendered = False
-        if draw_projection_screen and getattr(self, '_panorama_background_path', None):
-            if self._render_panorama_background(mgl_fbo, view_mat, proj_mat):
-                if eye_index == 0:
-                    self._breakdown_inc('openxr_background_panorama')
-                background_rendered = True
-                mgl_fbo.use()
-                glClear(GL_DEPTH_BUFFER_BIT)
-        # -3. Environment model (glTF 3D scene, very back) -projection fallback only.
-        # The Quad screen path must not wait on complex room mesh rendering.
-        if draw_projection_screen and self._env_model_visible and self._env_model_prims:
-            if eye_index == 0:
-                self._breakdown_inc('openxr_background_env_model')
-            background_rendered = True
-            self._render_env_model(mgl_fbo, vp_mat, view_mat)
-            mgl_fbo.use()
-            glClear(GL_DEPTH_BUFFER_BIT)
-        if not background_rendered:
-            if eye_index == 0:
-                self._breakdown_inc('openxr_background_idle')
-        self._breakdown_add_time('openxr_background', time.perf_counter() - background_start)
+        background_presenter = getattr(self, '_background_presenter', None)
+        if background_presenter is None:
+            background_presenter = BackgroundPresenter(self)
+            self._background_presenter = background_presenter
+        background_presenter.render_projection_background(
+            mgl_fbo,
+            view_mat,
+            proj_mat,
+            vp_mat,
+            eye_index=eye_index,
+            enabled=draw_projection_screen,
+        )
         if perf_enabled:
             _mark_perf('env')
 

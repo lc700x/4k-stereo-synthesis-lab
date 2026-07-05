@@ -598,36 +598,79 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "_panorama_render_settings_key" in settings_func
     assert "_panorama_light_mask_path_from_settings" in render_text
     assert "_panorama_light_mask_path_key" in render_text
-    eye_background = impl_text.split("background_start = time.perf_counter()", 1)[1].split(
-        "self._breakdown_add_time('openxr_background'", 1
+    background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
+    eye_background = impl_text.split("background_presenter = getattr(self, '_background_presenter', None)", 1)[1].split(
+        "if perf_enabled:", 1
     )[0]
-    assert "if self._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in eye_background
-    assert "self._breakdown_inc('openxr_background_panorama')" in eye_background
-    assert "if eye_index == 0:" in eye_background
-    assert eye_background.count("if eye_index == 0:") == 3
+    assert "from .background_presenter import BackgroundPresenter" in impl_text
+    assert "BackgroundPresenter(self)" in eye_background
+    assert "background_presenter.render_projection_background(" in eye_background
+    assert "enabled=draw_projection_screen" in eye_background
+    assert "if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in background_presenter
+    assert "viewer._breakdown_inc('openxr_background_panorama')" in background_presenter
+    assert "if eye_index == 0:" in background_presenter
+    assert background_presenter.count("if eye_index == 0:") == 2
 
 
 def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_eye = impl_text.split("def _render_eye", 1)[1].split("# 3. Keyboard", 1)[0]
-    env_block = render_eye.split("# -3. Environment model", 1)[1].split("if not background_rendered:", 1)[0]
+    background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
 
     assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
     assert "draw_projection_screen = not self._quad_layer_screen_presentable()" in render_eye
-    assert "if draw_projection_screen and self._env_model_visible and self._env_model_prims:" in env_block
-    assert "self._render_env_model(mgl_fbo, vp_mat, view_mat)" in env_block
+    assert "enabled=draw_projection_screen" in render_eye
+    assert "if enabled and getattr(viewer, '_env_model_visible', False)" in background_presenter
+    assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" in background_presenter
+
+
+def test_background_presenter_skips_background_when_projection_screen_is_not_used(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.background_presenter import BackgroundPresenter
+
+    class Fbo:
+        def use(self):
+            raise AssertionError("background FBO should not be touched")
+
+    class Viewer:
+        pass
+
+    viewer = Viewer()
+    viewer._panorama_background_path = "room.hdr"
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+    inc_calls = []
+    time_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
+    viewer._render_panorama_background = lambda *_args: pytest.fail("panorama should be skipped")
+    viewer._render_env_model = lambda *_args: pytest.fail("env model should be skipped")
+
+    rendered = BackgroundPresenter(viewer).render_projection_background(
+        Fbo(),
+        object(),
+        object(),
+        object(),
+        eye_index=0,
+        enabled=False,
+    )
+
+    assert rendered is False
+    assert ("openxr_background_idle", 1) in inc_calls
+    assert any(name == "openxr_background" for name, _seconds in time_calls)
 
 
 def test_quad_layer_build_failure_happens_before_projection_fallback_render():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
 
-    quad_build_idx = run_body.index("for quad_eye_index in updated_quad_eyes:")
-    failure_idx = run_body.index("self._xr_quad_layer_failed = True", quad_build_idx)
-    render_idx = run_body.index("self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat", failure_idx)
+    quad_build_idx = run_body.index("screen_presenter.make_quad_layers(")
+    render_idx = run_body.index("self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat", quad_build_idx)
     append_idx = run_body.index("for quad_layer_header in quad_layer_headers:", render_idx)
+    presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
 
-    assert quad_build_idx < failure_idx < render_idx < append_idx
+    assert "viewer._xr_quad_layer_failed = True" in presenter_text
+    assert quad_build_idx < render_idx < append_idx
 
 
 def test_env_model_render_failure_restores_gl_state():

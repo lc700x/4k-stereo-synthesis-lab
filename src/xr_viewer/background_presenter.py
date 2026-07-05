@@ -14,7 +14,8 @@ class BackgroundPresenter:
         if renderer is None:
             renderer = BackgroundLayerRenderer(self.viewer)
             self.viewer._background_layer_renderer = renderer
-        return renderer.panorama_ready() and not renderer.native_background_available()
+        panorama_ready = renderer.panorama_ready()
+        return panorama_ready and not renderer.native_background_available(panorama_ready=panorama_ready)
 
     def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, projection_fallback_needed=None):
         viewer = self.viewer

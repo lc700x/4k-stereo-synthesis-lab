@@ -124,7 +124,8 @@ class ScreenLayerPresenter:
                 background_renderer = BackgroundLayerRenderer(viewer)
                 viewer._background_layer_renderer = background_renderer
             try:
-                if background_renderer.panorama_ready() and not background_renderer.native_background_available():
+                panorama_ready = background_renderer.panorama_ready()
+                if panorama_ready and not background_renderer.native_background_available(panorama_ready=panorama_ready):
                     return True
             except Exception as exc:
                 print(f"[OpenXRViewer] Background projection gate failed: {type(exc).__name__}: {exc}")

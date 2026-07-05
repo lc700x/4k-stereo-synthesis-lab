@@ -733,7 +733,7 @@ def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch)
     viewer._background_layer_renderer = SimpleNamespace(
         make_background_layers=lambda: ([], False),
         panorama_ready=lambda: (_ for _ in ()).throw(AssertionError("background gate should not run twice")),
-        native_background_available=lambda: (_ for _ in ()).throw(AssertionError("background gate should not run twice")),
+        native_background_available=lambda **_kwargs: (_ for _ in ()).throw(AssertionError("background gate should not run twice")),
     )
     viewer._update_quad_layer_swapchains = lambda force=False: [0]
     viewer._make_quad_layer = lambda _eye_index: ctypes.c_int(9)
@@ -801,6 +801,31 @@ def test_screen_layer_presenter_keeps_quad_when_background_layer_build_fails(mon
     assert background_headers == []
     assert presenter._frame_background_projection_fallback is True
     assert ("openxr_background_layer_failed", 1) in inc_calls
+
+
+def test_background_layer_renderer_reuses_panorama_ready_for_native_gate(monkeypatch):
+    monkeypatch.chdir(SRC)
+    import xr_viewer.background_layer_renderer as layer_module
+    from xr_viewer.background_layer_renderer import BackgroundLayerRenderer
+
+    monkeypatch.setattr(layer_module, "xr", type("XR", (), {"CompositionLayerEquirect2KHR": object})())
+
+    class Viewer:
+        pass
+
+    viewer = Viewer()
+    calls = []
+    viewer._panorama_texture_ready = lambda: calls.append("ready") or object()
+    viewer._openxr_equirect_background_supported = False
+    viewer._background_equirect_swapchain = None
+    viewer._background_equirect_size = None
+    viewer._breakdown_inc = lambda *_args, **_kwargs: None
+
+    headers, projection_fallback = BackgroundLayerRenderer(viewer).make_background_layers()
+
+    assert headers == []
+    assert projection_fallback is True
+    assert calls == ["ready"]
 
 
 def test_background_layer_renderer_prefers_native_layer_before_projection_and_quad(monkeypatch):

@@ -2929,7 +2929,7 @@ def test_screen_layer_presenter_quad_failure_produces_no_screen_layer():
         make_background_layers=lambda: ([], False),
         _frame_background_layers=[],
         panorama_ready=lambda: False,
-        native_background_available=lambda: False,
+        native_background_available=lambda **_kwargs: False,
     )
     viewer._keyboard_visible = False
     viewer._keyboard_tex = None

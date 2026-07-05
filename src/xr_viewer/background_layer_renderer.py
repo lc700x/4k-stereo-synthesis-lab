@@ -34,8 +34,10 @@ class BackgroundLayerRenderer:
     def panorama_ready(self):
         return self._panorama_texture() is not None
 
-    def native_background_available(self):
-        if xr is None or not hasattr(xr, 'CompositionLayerEquirect2KHR') or not self.panorama_ready():
+    def native_background_available(self, *, panorama_ready=None):
+        if panorama_ready is None:
+            panorama_ready = self.panorama_ready()
+        if xr is None or not hasattr(xr, 'CompositionLayerEquirect2KHR') or not panorama_ready:
             return False
         return bool(
             getattr(self.viewer, '_openxr_equirect_background_supported', False)
@@ -196,9 +198,10 @@ class BackgroundLayerRenderer:
 
     def make_background_layers(self):
         self._frame_background_layers = []
-        if not self.panorama_ready():
+        panorama_ready = self.panorama_ready()
+        if not panorama_ready:
             return [], False
-        if not self.native_background_available():
+        if not self.native_background_available(panorama_ready=panorama_ready):
             self.viewer._breakdown_inc('openxr_background_projection_fallback')
             return [], True
         make_layer = getattr(self.viewer, '_make_equirect_background_layer', None)

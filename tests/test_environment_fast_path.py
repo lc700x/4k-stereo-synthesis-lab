@@ -120,6 +120,7 @@ def test_default_profile_starts_with_surround_glow():
     profile_path = SRC / "xr_viewer" / "environments" / "Default" / "profile.json"
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
+    assert "xr_quad_layer_enabled" not in profile
     assert profile["glow_mode"] == "surround"
     assert profile["controller_hdr_lighting"] is False
     assert profile["glow_intensity_multiplier"] == 0.0
@@ -128,6 +129,15 @@ def test_default_profile_starts_with_surround_glow():
     assert profile["frosted_glow_thickness"] == 2.40
     assert profile["lighting_preset_index"] == 0
     assert profile["lighting_presets"][0]["glow_mode"] == "surround"
+
+
+def test_builtin_environment_profiles_do_not_disable_quad_layer():
+    import json
+
+    for name in ("Default", "Cinema"):
+        profile_path = SRC / "xr_viewer" / "environments" / name / "profile.json"
+        profile = json.loads(profile_path.read_text(encoding="utf-8"))
+        assert "xr_quad_layer_enabled" not in profile
 
 
 def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):

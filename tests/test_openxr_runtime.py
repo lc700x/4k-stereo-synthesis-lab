@@ -895,6 +895,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     scheduler_text = (SRC / "xr_viewer" / "effect_scheduler.py").read_text(encoding="utf-8")
     submitter_text = (SRC / "xr_viewer" / "effect_submitter.py").read_text(encoding="utf-8")
+    worker_text = (SRC / "xr_viewer" / "effect_worker.py").read_text(encoding="utf-8")
 
     assert "class EffectResultSlot" in scheduler_text
     assert "class AsyncEffectResultPool" in scheduler_text
@@ -938,6 +939,10 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     ).read_text(encoding="utf-8")
     assert "openxr_screen_light_source_reuse" in environment_renderer
     assert "openxr_effect_source_safe_publish" in submitter_text
+    assert "class EffectWorker" in worker_text
+    assert "prewarm_after_submit" in submitter_text
+    assert "_prewarm_runtime_effect_downsample" not in submitter_text
+    assert "_prewarm_runtime_effect_downsample" in worker_text
     assert "openxr_screen_effect_source_reuse" in effects
     assert "scheduler.latest_safe_downsample(" in environment_renderer
     assert "scheduler.latest_safe_light_probe()" in environment_renderer

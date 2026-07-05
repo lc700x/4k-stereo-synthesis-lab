@@ -1,9 +1,12 @@
 import time
 
+from .effect_worker import EffectWorker
+
 
 class EffectSubmitter:
     def __init__(self, viewer):
         self.viewer = viewer
+        self.worker = EffectWorker(viewer)
 
     def _breakdown_inc(self, name, amount=1):
         callback = getattr(self.viewer, "_breakdown_inc", None)
@@ -60,9 +63,7 @@ class EffectSubmitter:
         if status == "skipped":
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
         elif status == "submitted":
-            prewarm = getattr(viewer, "_prewarm_runtime_effect_downsample", None)
-            if callable(prewarm):
-                prewarm()
+            self.worker.prewarm_after_submit()
         budget_ms = float(getattr(viewer, "_openxr_effect_submit_budget_ms", 0.0) or 0.0)
         if budget_ms > 0.0:
             viewer._openxr_effect_submit_budget_skip_armed = ((time.perf_counter() - submit_start) * 1000.0) > budget_ms

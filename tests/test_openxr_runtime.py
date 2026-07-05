@@ -1097,6 +1097,18 @@ def test_effect_scheduler_publishes_completed_result_before_consumers_read_safe(
     assert scheduler.latest_safe() == (staging, (8, 4), 21)
 
 
+def test_effect_scheduler_downsample_does_not_fallback_to_full_safe_texture(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.effect_scheduler import EffectScheduler
+
+    scheduler = EffectScheduler()
+    scheduler.pool.safe_tex = object()
+    scheduler.pool.safe_size = (1920, 1080)
+    scheduler.pool.safe_frame_id = 9
+
+    assert scheduler.latest_safe_downsample() == (None, None, 9)
+
+
 def test_effect_scheduler_owns_safe_downsample_lookup(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.effect_scheduler import EffectScheduler

@@ -1484,6 +1484,10 @@ def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused():
     assert viewer._update_quad_layer_swapchains(force=False) == [0, 1]
     assert ("openxr_quad_reused_screen_frame", 1) in inc_calls
 
+    viewer._xr_quad_layer_failed = True
+    assert viewer._update_quad_layer_swapchains(force=False) == []
+    viewer._xr_quad_layer_failed = False
+
     updated = []
     viewer._update_quad_layer_swapchain = lambda eye_index: updated.append(eye_index) or True
     assert viewer._update_quad_layer_swapchains(force=True) == [0, 1]

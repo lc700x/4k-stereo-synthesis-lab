@@ -170,8 +170,10 @@ class CoreQuadLayerMixin:
 
     def _update_quad_layer_swapchains(self, *, force=False):
         if not force and self._quad_layer_has_presented_frame():
-            self._breakdown_inc('openxr_quad_reused_screen_frame')
-            return [0, 1]
+            if self._quad_layer_screen_presentable():
+                self._breakdown_inc('openxr_quad_reused_screen_frame')
+                return [0, 1]
+            return []
         if not self._quad_layer_can_replace_projection_screen():
             return []
         self._quad_swapchain_presented_eyes = getattr(self, '_quad_swapchain_presented_eyes', set())

@@ -405,13 +405,16 @@ class CoreSourceStateMixin:
         prepare = getattr(self, "_prepare_glow_downsample_texture", None)
         if not callable(prepare):
             return
+        start = time.perf_counter()
         try:
             tex = prepare(source_tex, source_size)
         except Exception as exc:
+            self._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
             print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
             self._runtime_effect_downsample_failed_key = source_key
             self._breakdown_inc("openxr_effect_downsample_prewarm_failed")
             return
+        self._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
         self._runtime_effect_downsample_failed_key = None
         if tex is not None:
             self._breakdown_inc("openxr_effect_downsample_prewarm")

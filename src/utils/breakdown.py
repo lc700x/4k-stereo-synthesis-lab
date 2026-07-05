@@ -194,6 +194,7 @@ class FPSBreakdown:
             f"fx_ds_render={rate('openxr_glow_downsample_render'):.1f} "
             f"fx_ds_reuse={rate('openxr_glow_downsample_reuse'):.1f} "
             f"fx_ds_prewarm={rate('openxr_effect_downsample_prewarm'):.1f} "
+            f"fx_ds_prewarm_ms={avg_ms('openxr_effect_downsample_prewarm'):.2f}ms "
             f"fx_ds_failed={rate('openxr_glow_downsample_failed'):.1f},"
             f"prewarm:{rate('openxr_effect_downsample_prewarm_failed'):.1f},"
             f"prewarm_skip:{rate('openxr_effect_downsample_prewarm_skip'):.1f} "

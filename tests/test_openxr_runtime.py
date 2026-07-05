@@ -793,8 +793,10 @@ def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
     viewer._glow_shell_intensity_multiplier = 0.0
     viewer._screen_light_intensity = 0.0
     inc_calls = []
+    time_calls = []
     prepare_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
     viewer._prepare_glow_downsample_texture = lambda *args: prepare_calls.append(args) or (_ for _ in ()).throw(RuntimeError("downsample failed"))
 
     viewer._prewarm_runtime_effect_downsample()
@@ -805,6 +807,10 @@ def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
     assert inc_calls.count(("openxr_effect_downsample_prewarm_failed", 1)) == 2
     assert ("openxr_effect_downsample_prewarm_suppressed", 1) in inc_calls
     assert ("openxr_effect_downsample_prewarm", 1) not in inc_calls
+    assert [name for name, _seconds in time_calls] == [
+        "openxr_effect_downsample_prewarm",
+        "openxr_effect_downsample_prewarm",
+    ]
     assert len(prepare_calls) == 2
 
 

@@ -1310,6 +1310,15 @@ def test_runtime_direct_upload_failure_reuses_previous_frame_without_cpu_readbac
     assert "_runtime_eye_has_frame" in renderable_block
 
 
+def test_preview_only_frame_does_not_flush_soft_effect_submit():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    preview_frame = implementation.split("def _render_preview_only_frame", 1)[1].split(
+        "def _screen_uv_to_world", 1
+    )[0]
+
+    assert "self._flush_runtime_effect_submit()" not in preview_frame
+
+
 def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     session_ready_idle = implementation.split("if self._session_ready_pending:", 1)[1].split(

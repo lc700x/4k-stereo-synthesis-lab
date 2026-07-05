@@ -1768,7 +1768,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 glBlitFramebuffer(0, 0, sc_w, sc_h, 0, 0, pw, ph,
                                                   GL_COLOR_BUFFER_BIT, GL_LINEAR)
             glfw.swap_buffers(self.window)
-        self._flush_runtime_effect_submit()
         return True
 
     def _screen_uv_to_world(self, u, v):

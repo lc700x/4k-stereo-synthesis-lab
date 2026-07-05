@@ -614,7 +614,7 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     env_block = render_eye.split("# -3. Environment model", 1)[1].split("if not background_rendered:", 1)[0]
 
     assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
-    assert "draw_projection_screen = quad_unavailable_reason is not None" in render_eye
+    assert "draw_projection_screen = not self._quad_layer_screen_presentable()" in render_eye
     assert "if draw_projection_screen and self._env_model_visible and self._env_model_prims:" in env_block
     assert "self._render_env_model(mgl_fbo, vp_mat, view_mat)" in env_block
 

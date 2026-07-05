@@ -483,6 +483,17 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert eye_background.count("if eye_index == 0:") == 3
 
 
+def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    render_eye = impl_text.split("def _render_eye", 1)[1].split("# 3. Keyboard", 1)[0]
+    env_block = render_eye.split("# -3. Environment model", 1)[1].split("if not background_rendered:", 1)[0]
+
+    assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
+    assert "draw_projection_screen = quad_unavailable_reason is not None" in render_eye
+    assert "if draw_projection_screen and self._env_model_visible and self._env_model_prims:" in env_block
+    assert "self._render_env_model(mgl_fbo, vp_mat, view_mat)" in env_block
+
+
 def test_env_model_render_failure_restores_gl_state():
     render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
     render_func = render_text.split("def _render_env_model", 1)[1]

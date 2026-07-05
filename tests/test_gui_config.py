@@ -1187,6 +1187,17 @@ def test_stream_url_local_ip_detection_runs_async_after_gui_update():
     assert "self._local_ip_task = None" in gui_text
 
 
+def test_controller_model_dropdown_scans_xr_viewer_controller_assets():
+    builders_text = _file_text("builders.py")
+    controller_root = GUI_PKG.parent / "xr_viewer" / "controllers"
+    brands = sorted(p.name for p in controller_root.iterdir() if p.is_dir())
+
+    assert {"HP", "INDEX", "PICO", "QUEST", "VIVE", "YVR"}.issubset(brands)
+    assert 'os.path.join(BASE_DIR, "xr_viewer", "controllers")' in builders_text
+    assert 'os.path.join(BASE_DIR, "controllers")' not in builders_text
+    assert 'ctrl_dirs = sorted(' in builders_text
+
+
 def test_openxr_headset_preset_dropdown_is_visible_only_for_openxr_and_saved():
     config_text = _config_source().read_text(encoding="utf-8")
     builders_text = _file_text("builders.py")

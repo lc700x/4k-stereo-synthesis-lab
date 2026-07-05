@@ -510,8 +510,8 @@ class GUIBuilderMixin:
             value="Half-SBS", width=S(130))
         self.controller_label = ft.Text("Controller:", size=FONT_SIZE, width=S(130))
         try:
-            ctrl_base = os.path.join(BASE_DIR, "controllers")
-            ctrl_dirs = [d for d in os.listdir(ctrl_base) if os.path.isdir(os.path.join(ctrl_base, d))]
+            ctrl_base = os.path.join(BASE_DIR, "xr_viewer", "controllers")
+            ctrl_dirs = sorted(d for d in os.listdir(ctrl_base) if os.path.isdir(os.path.join(ctrl_base, d)))
         except (FileNotFoundError, OSError):
             ctrl_dirs = []
         if not ctrl_dirs:

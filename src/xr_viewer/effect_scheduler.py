@@ -1,98 +1,171 @@
 import moderngl
+from dataclasses import dataclass
+
+
+@dataclass
+class EffectResultSlot:
+    tex: object = None
+    size: tuple[int, int] | None = None
+    frame_id: int = 0
+    state: str = 'idle'
 
 
 class AsyncEffectResultPool:
     def __init__(self):
-        self.staging_tex = None
-        self.staging_size = None
-        self.ready_tex = None
-        self.ready_size = None
-        self.ready_frame_id = 0
-        self.safe_tex = None
-        self.safe_size = None
-        self.spare_tex = None
-        self.spare_size = None
-        self.safe_frame_id = 0
+        self.slots = [EffectResultSlot() for _ in range(3)]
+        self.writing_slot = None
+        self.ready_slot = None
+        self.safe_slot = None
+        self._safe_frame_id = 0
         self.state = 'idle'
 
     def release(self):
         released = set()
-        for tex in (self.staging_tex, self.ready_tex, self.safe_tex, self.spare_tex):
+        for slot in self.slots:
+            tex = slot.tex
             if tex is not None and id(tex) not in released:
                 released.add(id(tex))
                 try:
                     tex.release()
                 except Exception:
                     pass
-        self.staging_tex = None
-        self.staging_size = None
-        self.ready_tex = None
-        self.ready_size = None
-        self.ready_frame_id = 0
-        self.safe_tex = None
-        self.safe_size = None
-        self.spare_tex = None
-        self.spare_size = None
-        self.safe_frame_id = 0
+            slot.tex = None
+            slot.size = None
+            slot.frame_id = 0
+            slot.state = 'idle'
+        self.writing_slot = None
+        self.ready_slot = None
+        self.safe_slot = None
+        self._safe_frame_id = 0
         self.state = 'idle'
 
     def ensure_staging(self, ctx, w, h):
-        if self.staging_size == (w, h) and self.staging_tex is not None:
+        size = (int(w), int(h))
+        if self.writing_slot is not None and self.writing_slot.size == size and self.writing_slot.tex is not None:
             self.state = 'writing'
-            return self.staging_tex
-        if self.staging_tex is not None:
+            return self.writing_slot.tex
+        slot = self._idle_slot()
+        if slot.tex is not None and slot.size != size:
             try:
-                self.staging_tex.release()
+                slot.tex.release()
             except Exception:
                 pass
-        tex = ctx.texture((w, h), 4, dtype='f1')
-        tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
-        self.staging_tex = tex
-        self.staging_size = (w, h)
+            slot.tex = None
+        if slot.tex is None:
+            slot.tex = ctx.texture(size, 4, dtype='f1')
+            slot.tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+        slot.size = size
+        slot.frame_id = 0
+        slot.state = 'writing'
+        self.writing_slot = slot
         self.state = 'writing'
-        return tex
+        return slot.tex
 
     def mark_ready(self, w, h, frame_id):
-        old_ready_tex = self.ready_tex
-        old_ready_size = self.ready_size
-        if old_ready_tex is not None and old_ready_tex is not self.staging_tex:
-            if self.spare_tex is None:
-                self.spare_tex = old_ready_tex
-                self.spare_size = old_ready_size
-            else:
-                try:
-                    old_ready_tex.release()
-                except Exception:
-                    pass
-        self.ready_tex = self.staging_tex
-        self.ready_size = (w, h)
-        self.ready_frame_id = int(frame_id or 0)
-        self.staging_tex = None
-        self.staging_size = None
+        if self.writing_slot is None:
+            return False
+        if self.ready_slot is not None and self.ready_slot is not self.writing_slot:
+            self.ready_slot.state = 'idle'
+        slot = self.writing_slot
+        slot.size = (int(w), int(h))
+        slot.frame_id = int(frame_id or 0)
+        slot.state = 'ready'
+        self.ready_slot = slot
+        self.writing_slot = None
         self.state = 'ready'
+        return True
 
     def promote_ready(self):
-        if self.ready_tex is None:
-            self.state = 'safe' if self.safe_tex is not None else 'idle'
+        if self.ready_slot is None:
+            self.state = 'safe' if self.safe_slot is not None else 'idle'
             return False
-        old_safe_tex = self.safe_tex
-        old_safe_size = self.safe_size
-        self.safe_tex = self.ready_tex
-        self.safe_size = self.ready_size
-        self.safe_frame_id = self.ready_frame_id
-        self.ready_tex = None
-        self.ready_size = None
-        self.ready_frame_id = 0
-        self.staging_tex = self.spare_tex
-        self.staging_size = self.spare_size
-        self.spare_tex = old_safe_tex
-        self.spare_size = old_safe_size
+        if self.safe_slot is not None and self.safe_slot is not self.ready_slot:
+            self.safe_slot.state = 'idle'
+        self.safe_slot = self.ready_slot
+        self.safe_slot.state = 'safe'
+        self._safe_frame_id = self.safe_slot.frame_id
+        self.ready_slot = None
         self.state = 'safe'
         return True
 
     def publish(self, w, h, frame_id):
-        self.mark_ready(w, h, frame_id)
-        return True
+        return self.mark_ready(w, h, frame_id)
+
+    def _idle_slot(self):
+        for slot in self.slots:
+            if slot.state == 'idle':
+                return slot
+        if self.ready_slot is not None:
+            slot = self.ready_slot
+            self.ready_slot = None
+            slot.state = 'idle'
+            return slot
+        for slot in self.slots:
+            if slot is not self.safe_slot and slot is not self.writing_slot:
+                slot.state = 'idle'
+                return slot
+        raise RuntimeError("no writable effect result slot")
+
+    @property
+    def staging_tex(self):
+        return self.writing_slot.tex if self.writing_slot is not None else None
+
+    @property
+    def staging_size(self):
+        return self.writing_slot.size if self.writing_slot is not None else None
+
+    @property
+    def ready_tex(self):
+        return self.ready_slot.tex if self.ready_slot is not None else None
+
+    @ready_tex.setter
+    def ready_tex(self, tex):
+        slot = self.ready_slot or self._idle_slot()
+        slot.tex = tex
+        slot.state = 'ready' if tex is not None else 'idle'
+        self.ready_slot = slot if tex is not None else None
+
+    @property
+    def ready_size(self):
+        return self.ready_slot.size if self.ready_slot is not None else None
+
+    @property
+    def ready_frame_id(self):
+        return self.ready_slot.frame_id if self.ready_slot is not None else 0
+
+    @property
+    def safe_tex(self):
+        return self.safe_slot.tex if self.safe_slot is not None else None
+
+    @safe_tex.setter
+    def safe_tex(self, tex):
+        slot = self.safe_slot or self._idle_slot()
+        slot.tex = tex
+        slot.state = 'safe' if tex is not None else 'idle'
+        self.safe_slot = slot if tex is not None else None
+
+    @property
+    def safe_size(self):
+        return self.safe_slot.size if self.safe_slot is not None else None
+
+    @safe_size.setter
+    def safe_size(self, size):
+        if self.safe_slot is None:
+            self.safe_slot = self._idle_slot()
+            self.safe_slot.state = 'safe'
+        self.safe_slot.size = size
+
+    @property
+    def safe_frame_id(self):
+        return self.safe_slot.frame_id if self.safe_slot is not None else self._safe_frame_id
+
+    @safe_frame_id.setter
+    def safe_frame_id(self, frame_id):
+        self._safe_frame_id = int(frame_id or 0)
+        if self.safe_slot is None:
+            self.safe_slot = self._idle_slot()
+            self.safe_slot.state = 'safe'
+        self.safe_slot.frame_id = self._safe_frame_id
 
 
 class EffectScheduler:

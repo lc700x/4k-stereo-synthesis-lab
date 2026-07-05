@@ -2001,15 +2001,13 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
     assert "if draw_projection_screen:" in source_gate
     assert "self._runtime_eye_textures[eye_index] is None" in source_gate
-    background_gate = render_eye_block.split("background_presenter = getattr(self, '_background_presenter', None)", 1)[1].split(
+    background_gate = render_eye_block.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1
     )[0]
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
-    assert "BackgroundPresenter(self)" in background_gate
-    assert "background_presenter.render_projection_background(" in background_gate
-    assert "enabled=draw_projection_screen" in background_gate
-    assert "if enabled and getattr(viewer, '_panorama_background_path', None):" in background_presenter
-    assert "if getattr(viewer, '_panorama_background_path', None):" not in background_presenter
+    assert "enabled=draw_projection_screen or background_presenter.projection_fallback_needed()" in background_gate
+    assert "def projection_fallback_needed" in background_presenter
+    assert "if enabled and has_panorama:" in background_presenter
     layer_append_block = render_frame.split("self.screen_presenter.append_frame_layers(", 1)[1]
     assert "projection_views=eye_layer_views" in layer_append_block
     assert "projection_space=viewer._xr_space" in layer_append_block

@@ -2122,7 +2122,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
     def _projection_layer_needed(self):
         if not self._quad_layer_screen_presentable():
             return True
-        if getattr(self, '_panorama_background_path', None):
+        background_presenter = getattr(self, '_background_presenter', None)
+        if background_presenter is None:
+            background_presenter = BackgroundPresenter(self)
+            self._background_presenter = background_presenter
+        if background_presenter.projection_fallback_needed():
             return True
         if self._keyboard_visible and self._keyboard_tex is not None:
             return True
@@ -2250,7 +2254,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             proj_mat,
             vp_mat,
             eye_index=eye_index,
-            enabled=draw_projection_screen or bool(getattr(self, '_panorama_background_path', None)),
+            enabled=draw_projection_screen or background_presenter.projection_fallback_needed(),
         )
         if perf_enabled:
             _mark_perf('env')

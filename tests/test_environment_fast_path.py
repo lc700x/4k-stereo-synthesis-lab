@@ -605,13 +605,12 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "_panorama_light_mask_path_from_settings" in render_text
     assert "_panorama_light_mask_path_key" in render_text
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
-    eye_background = impl_text.split("background_presenter = getattr(self, '_background_presenter', None)", 1)[1].split(
+    eye_background = impl_text.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1
     )[0]
     assert "from .background_presenter import BackgroundPresenter" in impl_text
-    assert "BackgroundPresenter(self)" in eye_background
-    assert "background_presenter.render_projection_background(" in eye_background
-    assert "enabled=draw_projection_screen" in eye_background
+    assert "background_presenter.projection_fallback_needed()" in eye_background
+    assert "def projection_fallback_needed" in background_presenter
     assert "if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in background_presenter
     assert "viewer._breakdown_inc('openxr_background_panorama')" in background_presenter
     assert "if eye_index == 0:" in background_presenter
@@ -625,8 +624,8 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
 
     assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
     assert "draw_projection_screen = not self._quad_layer_screen_presentable()" in render_eye
-    assert "enabled=draw_projection_screen or bool(getattr(self, '_panorama_background_path', None))" in render_eye
-    assert "and not getattr(viewer, '_panorama_background_path', None)" in background_presenter
+    assert "enabled=draw_projection_screen or background_presenter.projection_fallback_needed()" in render_eye
+    assert "and not has_panorama" in background_presenter
     assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" in background_presenter
 
 

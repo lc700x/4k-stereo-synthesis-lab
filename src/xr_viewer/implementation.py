@@ -4287,13 +4287,24 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             _U32.SystemParametersInfoW(0x0020, 1200, None, 0)  # SPI_SETDOUBLECLICKTIME
 
         # Upload the first frame supplied by main.py
+        first_source_frame = None
         if first_runtime_result is not None:
             effect_source_rgb = self._update_runtime_frame(first_runtime_result)
             self._queue_runtime_effect_submit(effect_source_rgb)
+            first_source_frame = (first_runtime_result, first_frame_ts)
             if first_frame_ts is not None:
                 self.total_latency = (time.perf_counter() - first_frame_ts) * 1000.0
         elif first_rgb is not None and first_depth is not None:
             self._update_frame(first_rgb, first_depth)
+            first_source_frame = (first_rgb, first_depth, first_frame_ts)
+        if first_source_frame is not None:
+            bridge = self._screen_frame_bridge()
+            bridge.latest_frame = first_source_frame
+            bridge.frame_id += 1
+            bridge.latest_frame_id = bridge.frame_id
+            bridge.source_timestamp = first_frame_ts
+            bridge.mark_presented(first_source_frame)
+            self._mark_source_frame_received()
 
         # Default fallback projection (used before first locate_views succeeds)
         _default_fov = xr.Fovf(

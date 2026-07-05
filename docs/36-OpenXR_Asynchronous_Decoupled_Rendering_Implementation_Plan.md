@@ -227,7 +227,7 @@ External Unity/Blender bake or packaged panorama asset
 - 当前落地：`EffectWorker` 已从 submitter/source state 中拆出，`xrEndFrame` 后按 `D2S_OPENXR_EFFECT_WORKER_INTERVAL` 低频预热 glow/light downsample，并只向 scheduler 发布 safe downsample；panorama/controller/glow 消费者只读取 safe result，不在 render 消费路径生成 downsample；worker 异常会记录并禁用后续 soft effect 预热，不影响 screen quad 和 OpenXR submit。
 - 当前落地：GPU glow/downsample 复用已有 cache key，新增 `fx_ds_render` / `fx_ds_reuse` 诊断，用于确认 soft effect 是否复用旧结果；no-room 与 environment glow pass 都隔离异常并恢复 GL 状态，effect 失败不污染 screen submit 后续帧。
 - 当前落地：screen light source 同帧缓存已接入，环境光、panorama、controller 反射等多消费者复用同一个 prepared light texture，并记录 `light_reuse`。
-- 当前落地：`EffectScheduler` 已把 full safe source/downsample 与 safe light probe 分离；屏幕光消费者只读取同 frame id 的 `safe_light_probe`，不再把 full safe source 或 glow downsample 隐式当作 light probe。
+- 当前落地：`EffectScheduler` 已把 full safe source/downsample 与 safe light probe 分离；屏幕光消费者只读取同 frame id 的 3x3 低频 `safe_light_probe`，不再把 full safe source 或 glow downsample 隐式当作 light probe。
 - 当前落地：screen effect source 同帧缓存已接入，Glow/veil/shell 多 pass 复用同一个 safe source lookup，并记录 `fx_source_reuse`。
 - 当前落地：`fx_age` 按每帧每个 safe effect texture 去重记录，避免 Glow、screen light、panorama 等多消费者重复放大 age 样本。
 
@@ -255,7 +255,7 @@ External Unity/Blender bake or packaged panorama asset
   - `final = panorama + mask * delayed_screen_light_color * intensity`
   - 所有输入都来自 safe result。
 - 对简单房间提供数学 mask fallback；对复杂房间使用外部工具或 profile 提供的 `wall_light_mask`，项目内只提供 `wall_light_mask: "auto"` 的基础 UV mask 生成。
-- 当前落地：panorama shader 已可用数学 mask fallback 或 profile `wall_light_mask` 图片消费 latest safe light probe texture，并使用 3x3 GPU light probe 采样低频屏幕光；复杂房间 mask 由外部工具或 profile 资产提供，项目内不实现复杂房间 bake。
+- 当前落地：panorama shader 已可用数学 mask fallback 或 profile `wall_light_mask` 图片消费 latest safe light probe texture，并使用异步 worker 发布的 3x3 GPU light probe 采样低频屏幕光；复杂房间 mask 由外部工具或 profile 资产提供，项目内不实现复杂房间 bake。
 - 当前落地：`BackgroundBakeService` 已支持 profile `wall_light_mask: "auto"`，在配置期生成并缓存与 panorama UV 对齐的灰度 mask PNG；实时渲染路径只加载缓存纹理，不做 CPU 屏幕采样。它不是 GLB panorama/cubemap bake 服务。
 
 验收：

@@ -1749,6 +1749,9 @@ def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():
         def _breakdown_add_time(self, name, seconds):
             self.time_calls.append(name)
 
+        def _breakdown_inc(self, name, amount=1):
+            self.calls.append(("inc", name, amount))
+
     viewer = Viewer()
     renderer = OpenXRFrameRenderer(viewer)
     renderer.view_tracker = SimpleNamespace(
@@ -1793,6 +1796,30 @@ def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():
     assert viewer.calls[4][2]["background_layer_headers"] == ["background_header"]
     assert viewer.calls[4][2]["quad_layer_headers"] == ["quad_header"]
     assert "openxr_quad_update" in viewer.time_calls
+
+    renderer.projection_presenter = SimpleNamespace(
+        render_projection=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("projection failed"))
+    )
+    composition_layers = []
+    viewer.calls.clear()
+
+    uploaded, adjusted, rendered = renderer.render_frame(
+        composition_layers=composition_layers,
+        display_time=124,
+        default_fov="fov",
+        default_proj="proj",
+        default_proj_d3d="proj_d3d",
+    )
+
+    assert uploaded is True
+    assert adjusted is True
+    assert rendered is False
+    assert composition_layers == ["layer"]
+    assert ("inc", "openxr_projection_render_failed", 1) in viewer.calls
+    append_call = next(call for call in viewer.calls if call[0] == "append")
+    assert append_call[2]["projection_views"] == []
+    assert append_call[2]["background_layer_headers"] == ["background_header"]
+    assert append_call[2]["quad_layer_headers"] == ["quad_header"]
 
 
 def test_view_pose_tracker_owns_locate_cache_and_startup_screen(monkeypatch):

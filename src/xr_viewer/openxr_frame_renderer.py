@@ -24,14 +24,19 @@ class OpenXRFrameRenderer:
         )
         viewer._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
 
-        eye_layer_views = self.projection_presenter.render_projection(
-            enabled=render_projection_layer,
-            views=views,
-            default_fov=default_fov,
-            default_proj=default_proj,
-            default_proj_d3d=default_proj_d3d,
-            updated_quad_eyes=updated_quad_eyes,
-        )
+        try:
+            eye_layer_views = self.projection_presenter.render_projection(
+                enabled=render_projection_layer,
+                views=views,
+                default_fov=default_fov,
+                default_proj=default_proj,
+                default_proj_d3d=default_proj_d3d,
+                updated_quad_eyes=updated_quad_eyes,
+            )
+        except Exception as exc:
+            print(f"[OpenXRViewer] Projection layer render failed: {type(exc).__name__}: {exc}")
+            viewer._breakdown_inc('openxr_projection_render_failed')
+            eye_layer_views = []
         self.screen_presenter.append_frame_layers(
             composition_layers,
             projection_views=eye_layer_views,

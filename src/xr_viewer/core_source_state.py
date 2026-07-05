@@ -12,6 +12,7 @@ from OpenGL.GL import glDeleteBuffers
 class ScreenFramePoll:
     frame: Optional[Any]
     frame_id: int
+    source_timestamp: Optional[float] = None
     dequeued: int = 0
     dropped: int = 0
     is_new: bool = False
@@ -28,6 +29,17 @@ class ScreenFrameBridge:
         self.frame_id = 0
         self.latest_frame_id = 0
         self.last_presented_frame_id = 0
+        self.source_timestamp = None
+        self.last_presented_source_timestamp = None
+
+    @staticmethod
+    def _source_timestamp(frame):
+        if isinstance(frame, tuple):
+            if len(frame) == 2 and hasattr(frame[0], "left_eye"):
+                return frame[1]
+            if len(frame) == 3:
+                return frame[2]
+        return None
 
     def drain_latest(self):
         latest = None
@@ -47,9 +59,11 @@ class ScreenFrameBridge:
         self.latest_frame = latest
         self.frame_id += 1
         self.latest_frame_id = self.frame_id
+        self.source_timestamp = self._source_timestamp(latest)
         return ScreenFramePoll(
             latest,
             self.latest_frame_id,
+            source_timestamp=self.source_timestamp,
             dequeued=dequeued,
             dropped=max(0, dequeued - 1),
             is_new=True,
@@ -63,7 +77,14 @@ class ScreenFrameBridge:
         is_new = self.last_presented_frame_id != self.latest_frame_id
         self.last_presented_frame = frame
         self.last_presented_frame_id = self.latest_frame_id
-        return ScreenFramePoll(frame, self.last_presented_frame_id, is_new=is_new, reused=not is_new)
+        self.last_presented_source_timestamp = self.source_timestamp
+        return ScreenFramePoll(
+            frame,
+            self.last_presented_frame_id,
+            source_timestamp=self.last_presented_source_timestamp,
+            is_new=is_new,
+            reused=not is_new,
+        )
 
     def reuse_presented(self):
         if self.last_presented_frame is None:
@@ -71,6 +92,7 @@ class ScreenFrameBridge:
         return ScreenFramePoll(
             self.last_presented_frame,
             self.last_presented_frame_id,
+            source_timestamp=self.last_presented_source_timestamp,
             reused=True,
         )
 
@@ -299,12 +321,58 @@ class CoreSourceStateMixin:
         except Exception:
             pass
 
+    def _breakdown_add_value(self, name, value):
+        callback = getattr(self, "_fps_breakdown_add_value", None)
+        if not callable(callback):
+            return
+        try:
+            callback(name, value)
+        except Exception:
+            pass
+
     def _screen_frame_bridge(self):
         bridge = getattr(self, "_openxr_screen_frame_bridge", None)
         if bridge is None or bridge.source_q is not self.depth_q:
             bridge = ScreenFrameBridge(self.depth_q)
             self._openxr_screen_frame_bridge = bridge
         return bridge
+
+    def _record_screen_frame_bridge_age(self, bridge):
+        age = max(0, int(bridge.latest_frame_id) - int(bridge.last_presented_frame_id))
+        self._breakdown_add_value("openxr_screen_frame_age_frames", float(age))
+
+    def _record_screen_frame_source_latency(self, source_timestamp):
+        if source_timestamp is None:
+            return
+        self._breakdown_add_time("openxr_source_latency", time.perf_counter() - float(source_timestamp))
+
+    def _queue_runtime_effect_submit(self, effect_source_rgb):
+        if effect_source_rgb is None:
+            return
+        needs_effect_source = getattr(self, "_runtime_effects_need_source_texture", None)
+        if callable(needs_effect_source):
+            try:
+                if not needs_effect_source():
+                    release_effect_source = getattr(self, "_release_runtime_effect_source_texture", None)
+                    if callable(release_effect_source):
+                        release_effect_source()
+                    return
+            except Exception:
+                pass
+        if getattr(self, "_pending_runtime_effect_source", None) is not None:
+            self._breakdown_inc("openxr_effect_submit_overwrite")
+        self._pending_runtime_effect_source = effect_source_rgb
+
+    def _flush_runtime_effect_submit(self):
+        effect_source_rgb = getattr(self, "_pending_runtime_effect_source", None)
+        if effect_source_rgb is None:
+            return
+        self._pending_runtime_effect_source = None
+        try:
+            self._submit_runtime_effect_source_texture(effect_source_rgb)
+        except Exception as exc:
+            print(f"[OpenXRViewer] Runtime effect submit failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_effect_submit_failed")
 
     def _poll_source_frame(self, upload=False):
         poll_start = time.perf_counter()
@@ -327,25 +395,24 @@ class CoreSourceStateMixin:
             return latest is not None
 
         if self._pending_source_frame is None:
-            if getattr(self, "_openxr_async_present_enabled", False):
-                reuse = bridge.reuse_presented()
-                if reuse.frame is not None:
-                    self._breakdown_inc("openxr_reused_screen_frame")
+            reuse = bridge.reuse_presented()
+            if reuse.frame is not None:
+                self._breakdown_inc("openxr_reused_screen_frame")
+                self._record_screen_frame_bridge_age(bridge)
+                self._record_screen_frame_source_latency(reuse.source_timestamp)
             self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
 
         budget_ms = float(getattr(self, "_openxr_screen_upload_budget_ms", 0.0) or 0.0)
         skip_armed = bool(getattr(self, "_openxr_screen_upload_budget_skip_armed", False))
-        if (
-            getattr(self, "_openxr_async_present_enabled", False)
-            and budget_ms > 0.0
-            and skip_armed
-        ):
+        if budget_ms > 0.0 and skip_armed:
             reuse = bridge.reuse_presented()
             if reuse.frame is not None:
                 self._openxr_screen_upload_budget_skip_armed = False
                 self._breakdown_inc("openxr_reused_screen_frame")
                 self._breakdown_inc("openxr_screen_upload_budget_skip")
+                self._record_screen_frame_bridge_age(bridge)
+                self._record_screen_frame_source_latency(reuse.source_timestamp)
                 self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
                 return False
 
@@ -354,20 +421,22 @@ class CoreSourceStateMixin:
         self._pending_source_frame = None
 
         upload_start = time.perf_counter()
+        effect_source_rgb = None
         if self._is_runtime_result(source_frame):
-            self._update_runtime_frame(source_frame)
+            effect_source_rgb = self._update_runtime_frame(source_frame)
         else:
             rgb, depth = source_frame
             self._update_frame(rgb, depth)
         upload_elapsed = time.perf_counter() - upload_start
         upload_elapsed_ms = upload_elapsed * 1000.0
-        self._last_openxr_screen_upload_ms = upload_elapsed_ms
         if budget_ms > 0.0:
             self._openxr_screen_upload_budget_skip_armed = upload_elapsed_ms > budget_ms
-        bridge.mark_presented(pending_frame)
+        presented = bridge.mark_presented(pending_frame)
+        self._record_screen_frame_bridge_age(bridge)
+        self._record_screen_frame_source_latency(presented.source_timestamp)
         self._breakdown_inc("openxr_new_screen_frame")
         self._breakdown_add_time("openxr_upload", upload_elapsed)
-        self._breakdown_add_time("openxr_screen_upload_ms", upload_elapsed)
+        self._queue_runtime_effect_submit(effect_source_rgb)
         if frame_ts is not None:
             self.total_latency = (time.perf_counter() - frame_ts) * 1000.0
         sbs_now = time.perf_counter()

@@ -19,8 +19,8 @@ class CoreLaserRenderMixin:
         if view_mat is None:
             return float(fallback_m)
         try:
-            view_inv = np.linalg.inv(view_mat)
-            eye_pos = view_inv[:3, 3].astype(np.float64)
+            r_t = view_mat[:3, :3].T
+            eye_pos = (-r_t @ view_mat[:3, 3]).astype(np.float64)
             hit = np.asarray(hit_pos, dtype=np.float64)
             dist = float(np.linalg.norm(hit - eye_pos))
         except Exception:
@@ -358,6 +358,8 @@ class CoreLaserRenderMixin:
         """Render controller models with Blinn-Phong lighting."""
         now = self._frame_now
         controllers = []
+        r_t = view_mat[:3, :3].T
+        eye_pos = -r_t @ view_mat[:3, 3]
         for grip_mat, prims, last_move_attr, press_attr in [
             (self._grip_mat_l, self._ctrl_prims_l, "_laser_last_move_l", "_ctrl_press_l"),
             (self._grip_mat_r, self._ctrl_prims_r, "_laser_last_move_r", "_ctrl_press_r"),
@@ -366,8 +368,6 @@ class CoreLaserRenderMixin:
                 continue
             if grip_mat is None or not prims:
                 continue
-            r_t = view_mat[:3, :3].T
-            eye_pos = -r_t @ view_mat[:3, 3]
             dist = float(np.linalg.norm(grip_mat[:3, 3].astype(np.float64) - eye_pos.astype(np.float64)))
             press_map = getattr(self, press_attr, {}) or {}
             controllers.append((dist, grip_mat, prims, press_map))
@@ -394,12 +394,11 @@ class CoreLaserRenderMixin:
 
         controllers.sort(key=lambda x: x[0], reverse=True)
         mgl_fbo.use()
-        view_inv = np.linalg.inv(view_mat)
-        cam_pos = view_inv[:3, 3].astype(np.float32)
+        cam_pos = eye_pos.astype(np.float32)
         env_tex = None
-        if getattr(self, '_controller_hdr_lighting', True) and getattr(self, '_panorama_background_path', None) and hasattr(self, '_get_panorama_texture'):
+        if getattr(self, '_controller_hdr_lighting', True) and getattr(self, '_panorama_background_path', None) and hasattr(self, '_panorama_texture_ready'):
             try:
-                env_tex = self._get_panorama_texture()
+                env_tex = self._panorama_texture_ready()
             except Exception:
                 env_tex = None
         if env_tex is not None:
@@ -417,22 +416,14 @@ class CoreLaserRenderMixin:
             self._controller_prog['u_env_intensity'].value = 0.0
         screen_tex = None
         if getattr(self, '_controller_hdr_lighting', True):
-            if hasattr(self, '_screen_light_source_texture'):
+            if hasattr(self, '_bind_screen_light_source_texture'):
                 try:
-                    screen_tex, _screen_size = self._screen_light_source_texture()
+                    screen_tex = self._bind_screen_light_source_texture(location=10)
                 except Exception:
                     screen_tex = None
-            elif getattr(self, '_runtime_direct_source', False):
-                eye_index = int(getattr(self, '_current_eye_index', 0) or 0)
-                runtime_textures = getattr(self, '_runtime_eye_textures', []) or []
-                if 0 <= eye_index < len(runtime_textures):
-                    screen_tex = runtime_textures[eye_index]
-            else:
-                screen_tex = getattr(self, 'color_tex', None)
         if screen_tex is not None and getattr(self, 'screen_height', None) is not None:
             try:
                 sh, screen_pos, r_ax, u_ax, screen_n = self._screen_basis()
-                screen_tex.use(location=10)
                 self._controller_prog['u_screen_light_tex'].value = 10
                 self._controller_prog['u_screen_light_enabled'].value = 1
                 self._controller_prog['u_screen_light_pos'].value = tuple(float(x) for x in screen_pos)

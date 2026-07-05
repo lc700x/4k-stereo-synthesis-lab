@@ -169,15 +169,36 @@ void main() {
 _PANORAMA_FRAG = """
 #version 330
 uniform sampler2D u_tex;
+uniform sampler2D u_screen_light_tex;
+uniform sampler2D u_wall_light_mask_tex;
 uniform mat4 u_inv_proj;
 uniform mat4 u_inv_view_rot;
 uniform float u_yaw_offset;
 uniform float u_exposure;
 uniform int u_flip_y;
+uniform int u_screen_light_enabled;
+uniform int u_wall_light_mask_enabled;
+uniform float u_screen_light_intensity;
+uniform vec2 u_screen_light_uv;
+uniform vec2 u_screen_light_radius;
 in vec2 v_ndc;
 out vec4 fragColor;
 
 const float PI = 3.14159265358979323846;
+
+vec3 screen_light_probe_color() {
+    vec3 color = vec3(0.0);
+    color += textureLod(u_screen_light_tex, vec2(0.25, 0.25), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.50, 0.25), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.75, 0.25), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.25, 0.50), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.50, 0.50), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.75, 0.50), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.25, 0.75), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.50, 0.75), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.75, 0.75), 0.0).rgb;
+    return color * (1.0 / 9.0);
+}
 
 void main() {
     vec4 view_h = u_inv_proj * vec4(v_ndc, 1.0, 1.0);
@@ -190,7 +211,17 @@ void main() {
         v = 1.0 - v;
     }
 
-    vec3 color = texture(u_tex, vec2(fract(u), clamp(v, 0.0, 1.0))).rgb;
+    vec2 pano_uv = vec2(fract(u), clamp(v, 0.0, 1.0));
+    vec3 color = texture(u_tex, pano_uv).rgb;
+    if (u_screen_light_enabled == 1) {
+        vec2 d = (pano_uv - u_screen_light_uv) / max(u_screen_light_radius, vec2(0.001));
+        float mask = exp(-dot(d, d));
+        if (u_wall_light_mask_enabled == 1) {
+            mask *= textureLod(u_wall_light_mask_tex, pano_uv, 0.0).r;
+        }
+        vec3 screen_col = screen_light_probe_color();
+        color += screen_col * mask * u_screen_light_intensity;
+    }
     fragColor = vec4(color * u_exposure, 1.0);
 }
 """
@@ -814,8 +845,7 @@ void main() {
 """
 
 # Fullscreen swizzle blit: copies an RGBA texture into a target that the
-# compositor reads as BGRA. Used by the EXT_memory_object interop path when the
-# OpenXR runtime hands us a BGRA swapchain.
+# compositor reads as BGRA.
 _BLIT_FRAG = """
 #version 330
 uniform sampler2D u_src;

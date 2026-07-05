@@ -823,7 +823,7 @@ Environment profile/assets -> BackgroundBakeService -> panorama/cubemap backgrou
 首轮实施顺序：
 
 ```text
-1. 增加 D2S_OPENXR_ASYNC_PRESENT / D2S_OPENXR_SCREEN_QUAD / D2S_OPENXR_ASYNC_EFFECTS / D2S_OPENXR_PANORAMA_BACKGROUND 开关和分段诊断。
+1. 固定启用 OpenXR async present 主路径，保留 D2S_OPENXR_SCREEN_QUAD / D2S_OPENXR_ASYNC_EFFECTS / D2S_OPENXR_PANORAMA_BACKGROUND 开关和分段诊断。
 2. 增加 ScreenFrameBridge，非阻塞 drain latest runtime result，缺帧时复用 last good screen texture。
 3. 推进 Quad-layer screen presenter，保持 controller raycast 使用同一个 logical screen plane。
 4. 验证复杂环境下 screen present FPS 与环境渲染成本解耦。

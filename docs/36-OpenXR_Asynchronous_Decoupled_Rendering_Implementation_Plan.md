@@ -28,7 +28,7 @@
 | OpenXR Quad 层 | `src/xr_viewer/core_quad_layer.py` | 改为显示器硬实时主路径，而不是调试/候选路径 |
 | OpenXR runtime eye 上传 | `src/xr_viewer/core_runtime_eye.py` | 提供最新显示器纹理，后续接入独立 screen swapchain |
 | OpenXR 环境 | `src/xr_viewer/environment_renderer.py`, `environment_model.py`, `environment_profiles.py` | 由每帧复杂房间渲染迁移到 panorama/cubemap 背景路径 |
-| Glow/屏幕光 | `src/xr_viewer/core_glow.py`, `src/xr_viewer/core_screen_quality.py`, `src/xr_viewer/environment_effects.py`, `docs/20-openxr-gpu-glow-guide.md` | 以现有 GPU glow/downsample/shader 采样为基础，迁移到异步效果结果池；禁止 CPU 采样 |
+| Glow/屏幕光 | `src/xr_viewer/core_screen_quality.py`, `src/xr_viewer/environment_effects.py`, `src/xr_viewer/environment_renderer.py`, `docs/20-openxr-gpu-glow-guide.md` | 以现有 GPU glow/downsample/shader 采样为基础，迁移到异步效果结果池；禁止 CPU 采样 |
 | Runtime pipeline | `src/stereo_runtime/pipeline.py`, `runtime.py` | 继续产出 latest runtime result，不被 viewer present 反压拖慢 |
 | OpenXR 状态 | `src/stereo_runtime/openxr_state.py` | 维护 render/source gate 和 hot config，不承载显示层同步细节 |
 | 队列语义 | `src/utils/queue_utils.py` | 保留 latest/overwrite/drop 模型，扩展统计而不是改成阻塞队列 |
@@ -94,20 +94,22 @@ Environment asset/profile
 
 任务：
 
-- 新增运行开关：
-  - `D2S_OPENXR_ASYNC_PRESENT=0/1`
+- 新增运行开关；异步 present 是固定主路径，不再提供关闭旧路径：
   - `D2S_OPENXR_SCREEN_QUAD=0/1`
   - `D2S_OPENXR_ASYNC_EFFECTS=0/1`
   - `D2S_OPENXR_PANORAMA_BACKGROUND=0/1`
+  - `D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS`：screen texture 上传预算，超预算下一帧复用上一张 screen texture。
+  - `D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS`：effect source submit 预算，超预算下一帧复用 latest safe effect texture。
 - 在 GUI/OpenXR config 中保留隐藏或高级开关，不影响普通用户默认路径。
 - 在 `FPSBreakdown` 中新增指标：
-  - `openxr_screen_upload_ms`
+  - `openxr_upload`
   - `openxr_quad_update_ms`
   - `openxr_background_ms`
   - `openxr_effect_submit_ms`
   - `openxr_effect_ready_age_frames`
-  - `openxr_xr_wait_ms`
-  - `openxr_xr_submit_ms`
+  - `openxr_screen_frame_age_frames`
+  - `openxr_wait_frame`
+  - `openxr_end_frame`
   - `openxr_layer_count`
 - 记录每帧使用的是 `new_screen_frame` 还是 `reused_screen_frame`。
 
@@ -159,6 +161,9 @@ Environment asset/profile
 - 对 runtime result 的处理拆分：
   - screen upload 必须有预算上限。
   - 超预算时可跳过本帧 upload，复用上一帧 screen texture。
+  - effect source submit 使用独立预算；超预算时只能跳过 effect submit，不能影响 screen upload 或 `xrEndFrame`。
+- 当前落地：screen upload 和 effect submit 已拆成独立预算和独立计时，effect source submit 不再计入 `openxr_upload` 或 `openxr_submit_frame`，并延后到 `xrEndFrame` 后 flush；`screen_age` / `fx_age` 使用帧数 value 统计，不再伪装成 time metric。
+- 当前落地：effect source pending 为 latest-only 单槽；flush 跟不上时覆盖旧 pending 并记录 `openxr_effect_submit_overwrite` / `fx_overwrite`。
 - 避免在 present 路径中执行：
   - 每帧 CPU tensor readback
   - 每帧模型/环境资源加载
@@ -170,7 +175,7 @@ Environment asset/profile
 
 - 人为让 runtime 降到 30 FPS 时，OpenXR frame loop 仍按头显节奏提交，屏幕复用旧帧但头动/层合成不阻塞。
 - 人为让环境渲染耗时升高时，screen quad 仍可按最新可用帧刷新。
-- 日志能显示 reused frame 比例和 effect age。
+- 日志能显示 reused frame 比例、effect age 和 swapchain image wait 耗时。
 
 ### 阶段 3：静态房间背景 panorama/cubemap
 
@@ -216,6 +221,11 @@ Environment asset/profile
   - 使用 `safe_glow_texture` 叠加 screen glow / surround glow / frosted glow。
   - 初始或 worker 失败时使用透明纹理。
 - 先以 OpenGL FBO/低频 pass 实现逻辑正确性；后续按平台升级到 D3D11 compute、D3D12/Vulkan async compute queue。
+- 当前落地：runtime effect source 已抽出轻量 result pool，具备 staging/ready/safe/spare texture 语义和 safe publish 诊断；独立 worker 仍待拆分。
+- 当前落地：GPU glow/downsample 复用已有 cache key，新增 `fx_ds_render` / `fx_ds_reuse` 诊断，用于确认 soft effect 是否复用旧结果而非每个消费者重复生成。
+- 当前落地：screen light source 同帧缓存已接入，环境光、panorama、controller 反射等多消费者复用同一个 prepared light texture，并记录 `light_reuse`。
+- 当前落地：screen effect source 同帧缓存已接入，Glow/veil/shell 多 pass 复用同一个 safe source lookup，并记录 `fx_source_reuse`。
+- 当前落地：`fx_age` 按每帧每个 safe effect texture 去重记录，避免 Glow、screen light、panorama 等多消费者重复放大 age 样本。
 
 验收：
 
@@ -241,6 +251,8 @@ Environment asset/profile
   - `final = panorama + mask * delayed_screen_light_color * intensity`
   - 所有输入都来自 safe result。
 - 对简单房间提供数学 mask fallback；对复杂房间支持离线 bake。
+- 当前落地：panorama shader 已可用数学 mask fallback 或 profile `wall_light_mask` 图片消费 latest safe screen texture，并使用 3x3 GPU light probe 采样低频屏幕光；复杂房间 mask bake 仍待接入。
+- 当前落地：`BackgroundBakeService` 已支持 profile `wall_light_mask: "auto"`，在配置期生成并缓存与 panorama UV 对齐的灰度 mask PNG；实时渲染路径只加载缓存纹理，不做 CPU 屏幕采样。
 
 验收：
 
@@ -283,6 +295,7 @@ BackgroundPresenter
 
 - 后端替换不改变 OpenXR 主 loop 的 no-wait 规则。
 - GL/D3D11/D3D12/Vulkan 任一后端失败，都能回退到透明 effect + projection fallback。
+- 旧 EXT memory / `render.py` / `d3d11_backend.py` 路径不再参与 OpenXR 热路径；PBO readback 仅作为明确告警的 fallback。
 
 ## 5. 关键设计约束
 

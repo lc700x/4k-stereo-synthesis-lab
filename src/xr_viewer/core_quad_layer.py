@@ -74,22 +74,27 @@ class CoreQuadLayerMixin:
             return None, None, True
         return self._runtime_eye_textures[eye_index], self._runtime_eye_texture_size, True
 
-    def _quad_layer_can_replace_projection_screen(self):
+    def _quad_layer_unavailable_reason(self):
         if not getattr(self, '_xr_quad_layer_enabled', False):
-            return False
+            return "disabled"
         if not getattr(self, '_xr_quad_layer_active', False):
-            return False
+            return "inactive"
         if getattr(self, '_xr_quad_layer_failed', False):
-            return False
+            return "failed"
         if getattr(self, '_screen_curved', False):
-            return False
+            return "curved_screen"
         if not getattr(self, '_runtime_direct_source', False):
-            return False
+            return "not_runtime_direct"
         if 0 not in self._quad_swapchains or 1 not in self._quad_swapchains:
-            return False
+            return "missing_swapchain"
         source0, size0, _flip0 = self._quad_layer_source_texture(0)
         source1, size1, _flip1 = self._quad_layer_source_texture(1)
-        return source0 is not None and source1 is not None and size0 is not None and size1 is not None
+        if source0 is None or source1 is None or size0 is None or size1 is None:
+            return "missing_source_texture"
+        return None
+
+    def _quad_layer_can_replace_projection_screen(self):
+        return self._quad_layer_unavailable_reason() is None
 
     def _update_quad_layer_swapchain(self, eye_index):
         if not (self._xr_quad_layer_active and eye_index in self._quad_swapchains):
@@ -100,8 +105,10 @@ class CoreQuadLayerMixin:
         quad_w, quad_h = self._quad_swapchain_sizes[eye_index]
         swapchain = self._quad_swapchains[eye_index]
         img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-        xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
+        self._wait_swapchain_image(swapchain)
         released = False
+        prev_viewport = None
+        prev_depth_mask = None
         try:
             sc_image = self._quad_swapchain_images[eye_index][img_index]
             mgl_fbo = self._get_or_create_quad_fbo(eye_index, img_index, sc_image.image, quad_w, quad_h)
@@ -115,9 +122,6 @@ class CoreQuadLayerMixin:
             source_tex.use(location=0)
             self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
             self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
-            self.ctx.viewport = prev_viewport
-            self.ctx.depth_mask = prev_depth_mask
-            self.ctx.enable(moderngl.DEPTH_TEST)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True
             return True
@@ -132,6 +136,11 @@ class CoreQuadLayerMixin:
                     xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
                 except Exception:
                     pass
+            if prev_viewport is not None:
+                self.ctx.viewport = prev_viewport
+            if prev_depth_mask is not None:
+                self.ctx.depth_mask = prev_depth_mask
+            self.ctx.enable(moderngl.DEPTH_TEST)
 
     def _update_quad_layer_swapchains(self):
         if not self._quad_layer_can_replace_projection_screen():
@@ -155,8 +164,10 @@ class CoreQuadLayerMixin:
         quad_w, quad_h = self._quad_swapchain_sizes[0]
         swapchain = self._quad_swapchains[0]
         img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-        xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
+        self._wait_swapchain_image(swapchain)
         released = False
+        prev_viewport = None
+        prev_depth_mask = None
         try:
             sc_image = self._quad_swapchain_images[0][img_index]
             prev_viewport = self.ctx.viewport
@@ -171,9 +182,6 @@ class CoreQuadLayerMixin:
                 source_tex.use(location=0)
                 self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
-            self.ctx.viewport = prev_viewport
-            self.ctx.depth_mask = prev_depth_mask
-            self.ctx.enable(moderngl.DEPTH_TEST)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True
             return [0, 1]
@@ -188,6 +196,11 @@ class CoreQuadLayerMixin:
                     xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
                 except Exception:
                     pass
+            if prev_viewport is not None:
+                self.ctx.viewport = prev_viewport
+            if prev_depth_mask is not None:
+                self.ctx.depth_mask = prev_depth_mask
+            self.ctx.enable(moderngl.DEPTH_TEST)
 
     def _screen_pose_quat_xyzw(self):
         cy = math.cos(self.screen_yaw * 0.5)
@@ -215,17 +228,29 @@ class CoreQuadLayerMixin:
         q /= np.linalg.norm(q) + 1e-12
         return float(q[0]), float(q[1]), float(q[2]), float(q[3])
 
-    def _make_quad_layer(self, eye_index):
-        if not (self._xr_quad_layer_active and eye_index in self._quad_swapchains):
-            return None
+    def _quad_layer_pose_state(self):
         self._ensure_screen_dimensions()
-        qx, qy, qz, qw = self._screen_pose_quat_xyzw()
+        offset = float(getattr(self, '_xr_quad_layer_debug_offset', 0.0))
+        key = (
+            int(getattr(self, '_frame_count', 0) or 0),
+            float(self.screen_yaw),
+            float(self.screen_pitch),
+            float(self.screen_roll),
+            float(self.screen_pan_x),
+            float(self.screen_pan_y),
+            float(self.screen_distance),
+            float(self.screen_width),
+            float(self.screen_height),
+            offset,
+        )
+        if getattr(self, '_quad_layer_pose_state_key', None) == key:
+            return self._quad_layer_pose_state_value
+        q = self._screen_pose_quat_xyzw()
         cp = math.cos(self.screen_pitch)
         sp = math.sin(self.screen_pitch)
         sy = math.sin(self.screen_yaw)
         cy = math.cos(self.screen_yaw)
         normal = np.array([cp * sy, -sp, cp * cy], dtype=np.float64)
-        offset = float(getattr(self, '_xr_quad_layer_debug_offset', 0.0))
         pos = np.array([
             float(self.screen_pan_x),
             float(self.screen_pan_y),
@@ -236,6 +261,15 @@ class CoreQuadLayerMixin:
             if not self._xr_quad_layer_debug_logged:
                 print(f"[OpenXRViewer] Quad layer debug offset active: {offset:.3f}m toward viewer")
                 self._xr_quad_layer_debug_logged = True
+        value = (q, pos, (float(self.screen_width), float(self.screen_height)))
+        self._quad_layer_pose_state_key = key
+        self._quad_layer_pose_state_value = value
+        return value
+
+    def _make_quad_layer(self, eye_index):
+        if not (self._xr_quad_layer_active and eye_index in self._quad_swapchains):
+            return None
+        (qx, qy, qz, qw), pos, (screen_width, screen_height) = self._quad_layer_pose_state()
         return xr.CompositionLayerQuad(
             space=self._xr_space,
             eye_visibility=xr.EyeVisibility.LEFT if eye_index == 0 else xr.EyeVisibility.RIGHT,
@@ -259,7 +293,7 @@ class CoreQuadLayerMixin:
                 ),
             ),
             size=xr.Extent2Df(
-                width=float(self.screen_width),
-                height=float(self.screen_height),
+                width=screen_width,
+                height=screen_height,
             ),
         )

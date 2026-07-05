@@ -1,7 +1,17 @@
 # Desktop2Stereo OpenXR viewer: environment shader and model rendering helpers.
 
 from .implementation import *
-from .render import _view_mat_inv
+
+
+def _view_mat_inv(view_mat):
+    """Fast inverse of a rigid-body view matrix."""
+    rot = view_mat[:3, :3]
+    trans = view_mat[:3, 3]
+    rot_t = rot.T
+    inv = np.eye(4, dtype=np.float32)
+    inv[:3, :3] = rot_t
+    inv[:3, 3] = -(rot_t @ trans)
+    return inv
 
 
 def _read_radiance_hdr(path):
@@ -85,14 +95,79 @@ class EnvironmentRendererMixin:
     """Environment shader uniforms and GL primitive rendering."""
 
     def _screen_light_source_texture(self):
+        frame_id = int(getattr(self, '_frame_count', 0) or 0)
         if getattr(self, '_runtime_direct_source', False):
-            return (
-                getattr(self, '_runtime_effect_safe_source_tex', None),
-                getattr(self, '_runtime_effect_safe_source_size', None),
+            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
+            source_size = getattr(self, '_runtime_effect_safe_source_size', None)
+            cache_key = (
+                frame_id,
+                int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
+                int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
+                tuple(source_size) if source_size is not None else None,
             )
+            if getattr(self, '_screen_light_source_cache_key', None) == cache_key:
+                self._breakdown_inc("openxr_screen_light_source_reuse")
+                return getattr(self, '_screen_light_source_cache_value', (source_tex, source_size))
+            promote_ready = getattr(self, '_promote_runtime_effect_ready_texture', None)
+            if callable(promote_ready):
+                promote_ready()
+            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
+            source_size = getattr(self, '_runtime_effect_safe_source_size', None)
+            cache_key = (
+                frame_id,
+                int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
+                int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
+                tuple(source_size) if source_size is not None else None,
+            )
+            record_age = getattr(self, '_record_screen_effect_safe_age', None)
+            if callable(record_age):
+                record_age(source_tex)
+            prepare_light_tex = getattr(self, '_prepare_glow_downsample_texture', None)
+            if source_tex is not None and source_size is not None and callable(prepare_light_tex):
+                light_tex = prepare_light_tex(source_tex, source_size)
+                if light_tex is not None:
+                    self._breakdown_inc("openxr_screen_light_downsample_source")
+                    value = (light_tex, getattr(self, '_glow_ds_size', None))
+                    self._screen_light_source_cache_key = cache_key
+                    self._screen_light_source_cache_frame = frame_id
+                    self._screen_light_source_cache_value = value
+                    return value
+            value = (source_tex, source_size)
+            self._screen_light_source_cache_key = cache_key
+            self._screen_light_source_cache_frame = frame_id
+            self._screen_light_source_cache_value = value
+            return value
         source_tex = getattr(self, 'color_tex', None)
         source_size = getattr(self, '_texture_size', None)
-        return source_tex, source_size
+        cache_key = (
+            frame_id,
+            int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
+            tuple(source_size) if source_size is not None else None,
+        )
+        if getattr(self, '_screen_light_source_cache_key', None) == cache_key:
+            self._breakdown_inc("openxr_screen_light_source_reuse")
+            return getattr(self, '_screen_light_source_cache_value', (source_tex, source_size))
+        prepare_light_tex = getattr(self, '_prepare_glow_downsample_texture', None)
+        if source_tex is not None and source_size is not None and callable(prepare_light_tex):
+            light_tex = prepare_light_tex(source_tex, source_size)
+            if light_tex is not None:
+                self._breakdown_inc("openxr_screen_light_downsample_source")
+                value = (light_tex, getattr(self, '_glow_ds_size', None))
+                self._screen_light_source_cache_key = cache_key
+                self._screen_light_source_cache_frame = frame_id
+                self._screen_light_source_cache_value = value
+                return value
+        value = (source_tex, source_size)
+        self._screen_light_source_cache_key = cache_key
+        self._screen_light_source_cache_frame = frame_id
+        self._screen_light_source_cache_value = value
+        return value
+
+    def _bind_screen_light_source_texture(self, location=8):
+        source_tex, _source_size = self._screen_light_source_texture()
+        if source_tex is not None:
+            source_tex.use(location=location)
+        return source_tex
 
     def _apply_cinema_light_uniforms(self, mgl_fbo=None):
         """Push current screen area-light uniforms to the environment shader."""
@@ -101,6 +176,7 @@ class EnvironmentRendererMixin:
             self._cl_light_state_key = None
             self._cl_uniform_frame = -5
             return
+        self._bind_screen_light_source_texture()
         fc = getattr(self, '_frame_count', 0)
         pose_key = (
             self.screen_yaw, self.screen_pitch, self.screen_roll,
@@ -121,23 +197,18 @@ class EnvironmentRendererMixin:
             self._cl_up = (sy_ * sp, cp, cy * sp)
             self._cl_half = (float(self.screen_width) * 0.5, float(self.screen_height) * 0.5)
             self._cl_pose_key = pose_key
-        dynamic = bool(getattr(self, '_screen_light_dynamic', False))
         state_key = (
             pose_key,
             getattr(self, '_active_environment', None),
             float(self._screen_light_intensity),
-            dynamic,
         )
         last_state_key = getattr(self, '_cl_light_state_key', None)
         last_frame = getattr(self, '_cl_uniform_frame', -999)
-        update_interval = 1 if dynamic else 5
-        if state_key == last_state_key and (fc - last_frame) < update_interval:
+        if state_key == last_state_key and (fc - last_frame) < 5:
             return
         self._cl_light_state_key = state_key
         self._cl_uniform_frame = fc
-        self._advance_glow_color(lerp=float(getattr(self, '_screen_light_lerp', 0.14)))
         sc = getattr(self, '_glow_color', (0.30, 0.55, 1.0))
-        source_tex, _source_size = self._screen_light_source_texture()
         intensity = float(self._screen_light_intensity)
         if getattr(self, '_active_environment', None) == 'Dark Room':
             intensity *= 0.9
@@ -148,8 +219,6 @@ class EnvironmentRendererMixin:
         self._env_prog['u_screen_light_up'].value = self._cl_up
         self._env_prog['u_screen_light_half_size'].value = self._cl_half
         self._env_prog['u_screen_light_color'].value = (float(sc[0]), float(sc[1]), float(sc[2]))
-        if source_tex is not None:
-            source_tex.use(location=8)
         self._env_prog['u_screen_light_intensity'].value = intensity
 
 
@@ -207,13 +276,104 @@ class EnvironmentRendererMixin:
             return None
 
 
-    def _render_panorama_background(self, mgl_fbo, view_mat, proj_mat):
-        if self._panorama_prog is None or self._panorama_vao is None:
-            return
-        tex = self._get_panorama_texture()
-        if tex is None:
-            return
+    def _panorama_texture_ready(self):
+        path = getattr(self, '_panorama_background_path', None)
+        if not path or self._panorama_tex is None:
+            return None
+        if self._panorama_tex_path != os.path.abspath(path):
+            return None
+        return self._panorama_tex
+
+
+    def _get_panorama_light_mask_texture(self):
+        path = self._panorama_light_mask_path_from_settings()
+        if path is None:
+            self._record_panorama_light_mask_disabled()
+            return None
+        if self._panorama_light_mask_tex is not None and self._panorama_light_mask_path == path:
+            return self._panorama_light_mask_tex
+        if self._panorama_light_mask_tex is not None:
+            try:
+                self._panorama_light_mask_tex.release()
+            except Exception:
+                pass
+            self._panorama_light_mask_tex = None
+            self._panorama_light_mask_path = None
+            self._panorama_light_mask_missing_path = None
+        if not os.path.isfile(path):
+            if getattr(self, '_panorama_light_mask_missing_path', None) != path:
+                print(f"[OpenXRViewer] Panorama wall light mask missing: {path}")
+                self._panorama_light_mask_missing_path = path
+                self._breakdown_inc("openxr_wall_light_mask_missing")
+            return None
+        try:
+            img = Image.open(path).convert('L')
+            tex = self.ctx.texture(img.size, 1, np.asarray(img, dtype=np.uint8).tobytes())
+            tex.filter = (moderngl.LINEAR, moderngl.LINEAR)
+            self._panorama_light_mask_tex = tex
+            self._panorama_light_mask_path = path
+            self._panorama_light_mask_missing_path = None
+            print(f"[OpenXRViewer] Panorama wall light mask loaded: {path} ({img.size[0]}x{img.size[1]})")
+            self._breakdown_inc("openxr_wall_light_mask_loaded")
+            return tex
+        except Exception as exc:
+            print(f"[OpenXRViewer] Panorama wall light mask load failed: {exc}")
+            self._breakdown_inc("openxr_wall_light_mask_failed")
+            return None
+
+    def _panorama_light_mask_path_from_settings(self):
         settings = getattr(self, '_panorama_background_settings', {}) or {}
+        mask_name = settings.get('wall_light_mask') or settings.get('light_mask')
+        if not mask_name:
+            return None
+        cache_key = (id(settings), str(mask_name), getattr(self, '_panorama_background_path', None))
+        if getattr(self, '_panorama_light_mask_path_key', None) == cache_key:
+            return getattr(self, '_panorama_light_mask_resolved_path', None)
+        base_path = getattr(self, '_panorama_background_path', None)
+        base_dir = os.path.dirname(os.path.abspath(base_path)) if base_path else os.getcwd()
+        path = str(mask_name)
+        path = path if os.path.isabs(path) else os.path.join(base_dir, path)
+        path = os.path.abspath(path)
+        self._panorama_light_mask_path_key = cache_key
+        self._panorama_light_mask_resolved_path = path
+        return path
+
+
+    def _record_panorama_light_mask_disabled(self):
+        settings = getattr(self, '_panorama_background_settings', {}) or {}
+        key = (id(settings), getattr(self, '_panorama_background_path', None))
+        if getattr(self, '_panorama_light_mask_disabled_key', None) == key:
+            return
+        self._panorama_light_mask_disabled_key = key
+        self._breakdown_inc("openxr_wall_light_mask_disabled")
+
+
+    def _panorama_light_mask_texture_ready(self):
+        tex = getattr(self, '_panorama_light_mask_tex', None)
+        if tex is None:
+            return None
+        path = self._panorama_light_mask_path_from_settings()
+        if path is None:
+            self._record_panorama_light_mask_disabled()
+            return None
+        if getattr(self, '_panorama_light_mask_path', None) != path:
+            return None
+        return tex
+
+    def _panorama_render_settings(self):
+        settings = getattr(self, '_panorama_background_settings', {}) or {}
+        cache_key = (
+            id(settings),
+            settings.get('yaw_offset_deg'),
+            settings.get('exposure'),
+            settings.get('flip_y'),
+            repr(settings.get('screen_light_layout')),
+            repr(settings.get('screen_light_uv')),
+            repr(settings.get('screen_light_radius')),
+        )
+        if getattr(self, '_panorama_render_settings_key', None) == cache_key:
+            return self._panorama_render_settings_value
+
         try:
             yaw_offset = math.radians(float(settings.get('yaw_offset_deg', 0.0))) / (2.0 * math.pi)
         except (TypeError, ValueError):
@@ -223,33 +383,84 @@ class EnvironmentRendererMixin:
         except (TypeError, ValueError):
             exposure = 1.0
         flip_y = 1 if bool(settings.get('flip_y', False)) else 0
+        light_layout = settings.get('screen_light_layout')
+        if not isinstance(light_layout, dict):
+            light_layout = {}
+        light_uv = light_layout.get('uv', light_layout.get('center', settings.get('screen_light_uv', (0.5, 0.58))))
+        if not isinstance(light_uv, (list, tuple)) or len(light_uv) < 2:
+            light_uv = (0.5, 0.58)
+        try:
+            light_uv = (float(light_uv[0]), float(light_uv[1]))
+        except (TypeError, ValueError):
+            light_uv = (0.5, 0.58)
+        light_radius = light_layout.get('radius', light_layout.get('size', settings.get('screen_light_radius', (0.18, 0.11))))
+        if not isinstance(light_radius, (list, tuple)) or len(light_radius) < 2:
+            light_radius = (0.18, 0.11)
+        try:
+            light_radius = (max(0.001, float(light_radius[0])), max(0.001, float(light_radius[1])))
+        except (TypeError, ValueError):
+            light_radius = (0.18, 0.11)
+
+        value = (yaw_offset, exposure, flip_y, light_uv, light_radius)
+        self._panorama_render_settings_key = cache_key
+        self._panorama_render_settings_value = value
+        return value
+
+
+    def _render_panorama_background(self, mgl_fbo, view_mat, proj_mat):
+        if self._panorama_prog is None or self._panorama_vao is None:
+            return False
+        tex = self._panorama_texture_ready()
+        if tex is None:
+            return False
+        yaw_offset, exposure, flip_y, light_uv, light_radius = self._panorama_render_settings()
 
         view_rot = np.array(view_mat, dtype=np.float32, copy=True)
         view_rot[:3, 3] = 0.0
         try:
             inv_proj = np.linalg.inv(proj_mat.astype(np.float32))
-            inv_view_rot = np.linalg.inv(view_rot)
+            inv_view_rot = _view_mat_inv(view_rot)
         except Exception:
-            return
+            return False
 
         mgl_fbo.use()
-        self.ctx.disable(moderngl.DEPTH_TEST)
-        self.ctx.depth_mask = False
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.disable(moderngl.CULL_FACE)
-        glFrontFace(GL_CCW)
-        tex.use(location=8)
-        self._panorama_prog['u_inv_proj'].write(inv_proj.T.astype('f4').tobytes())
-        self._panorama_prog['u_inv_view_rot'].write(inv_view_rot.T.astype('f4').tobytes())
-        self._panorama_prog['u_yaw_offset'].value = float(yaw_offset)
-        self._panorama_prog['u_exposure'].value = max(0.0, float(exposure))
-        self._panorama_prog['u_flip_y'].value = flip_y
-        self._panorama_vao.render(moderngl.TRIANGLE_STRIP)
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.disable(moderngl.CULL_FACE)
-        self.ctx.depth_mask = True
-        self.ctx.enable(moderngl.DEPTH_TEST)
-        glFrontFace(GL_CCW)
+        previous_depth_mask = self.ctx.depth_mask
+        try:
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.ctx.depth_mask = False
+            self.ctx.disable(moderngl.BLEND)
+            self.ctx.disable(moderngl.CULL_FACE)
+            glFrontFace(GL_CCW)
+            tex.use(location=8)
+            screen_tex = self._bind_screen_light_source_texture(location=10)
+            mask_tex = self._panorama_light_mask_texture_ready()
+            if mask_tex is not None:
+                mask_tex.use(location=11)
+            self._panorama_prog['u_inv_proj'].write(inv_proj.T.astype('f4').tobytes())
+            self._panorama_prog['u_inv_view_rot'].write(inv_view_rot.T.astype('f4').tobytes())
+            self._panorama_prog['u_yaw_offset'].value = float(yaw_offset)
+            self._panorama_prog['u_exposure'].value = max(0.0, float(exposure))
+            self._panorama_prog['u_flip_y'].value = flip_y
+            self._panorama_prog['u_screen_light_enabled'].value = 1 if screen_tex is not None else 0
+            self._panorama_prog['u_wall_light_mask_enabled'].value = 1 if mask_tex is not None else 0
+            self._panorama_prog['u_screen_light_intensity'].value = max(
+                0.0,
+                float(getattr(self, '_screen_light_intensity', 0.0) or 0.0) * 0.12,
+            )
+            self._panorama_prog['u_screen_light_uv'].value = light_uv
+            self._panorama_prog['u_screen_light_radius'].value = light_radius
+            self._panorama_vao.render(moderngl.TRIANGLE_STRIP)
+            return True
+        except Exception as exc:
+            print(f"[OpenXRViewer] Panorama background render failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_background_panorama_failed")
+            return False
+        finally:
+            self.ctx.disable(moderngl.BLEND)
+            self.ctx.disable(moderngl.CULL_FACE)
+            self.ctx.depth_mask = previous_depth_mask
+            self.ctx.enable(moderngl.DEPTH_TEST)
+            glFrontFace(GL_CCW)
 
 
     def _render_env_model(self, mgl_fbo, vp_mat, view_mat):
@@ -337,108 +548,115 @@ class EnvironmentRendererMixin:
 
         self._apply_cinema_light_uniforms(mgl_fbo)
 
+        previous_depth_mask = self.ctx.depth_mask
         glFrontFace(GL_CCW)
 
-        fast_env = self._env_render_quality == 'fast'
-        if fast_env:
-            self._env_prog['u_use_normal_tex'].value = 0
-            self._env_prog['u_use_occlusion_tex'].value = 0
-            self._env_prog['u_use_mr_tex'].value = 0
-            self._env_prog['u_use_emissive_tex'].value = 0
-            self._env_prog['u_normal_scale'].value = 1.0
-            self._env_prog['u_occlusion_strength'].value = 1.0
-            self._env_prog['u_baked_lightmap'].value = 0
+        try:
+            fast_env = self._env_render_quality == 'fast'
+            if fast_env:
+                self._env_prog['u_use_normal_tex'].value = 0
+                self._env_prog['u_use_occlusion_tex'].value = 0
+                self._env_prog['u_use_mr_tex'].value = 0
+                self._env_prog['u_use_emissive_tex'].value = 0
+                self._env_prog['u_normal_scale'].value = 1.0
+                self._env_prog['u_occlusion_strength'].value = 1.0
+                self._env_prog['u_baked_lightmap'].value = 0
 
-        opaque_prims = []
-        blend_prims = []
-        for prim in self._env_model_prims:
-            rs = prim.get('_rs')
-            if rs is None:
-                self._prebake_prim_render_state(prim)
-                rs = prim.get('_rs', {})
-            if rs.get('blend', False):
-                blend_prims.append(prim)
-            else:
-                opaque_prims.append(prim)
+            opaque_prims = []
+            blend_prims = []
+            for prim in self._env_model_prims:
+                rs = prim.get('_rs')
+                if rs is None:
+                    self._prebake_prim_render_state(prim)
+                    rs = prim.get('_rs', {})
+                if rs.get('blend', False):
+                    blend_prims.append(prim)
+                else:
+                    opaque_prims.append(prim)
 
-        if len(blend_prims) > 1:
-            def _blend_sort_key(prim):
-                local_center = prim.get('sort_center_local')
-                if local_center is None:
-                    local_center = np.zeros(3, dtype=np.float32)
-                world_center = self._transform_env_point(local_center, model_mat)
-                delta = world_center - cam_pos
-                return float(np.dot(delta, delta))
+            if len(blend_prims) > 1:
+                def _blend_sort_key(prim):
+                    local_center = prim.get('sort_center_local')
+                    if local_center is None:
+                        local_center = np.zeros(3, dtype=np.float32)
+                    world_center = self._transform_env_point(local_center, model_mat)
+                    delta = world_center - cam_pos
+                    return float(np.dot(delta, delta))
 
-            blend_prims.sort(key=_blend_sort_key, reverse=True)
+                blend_prims.sort(key=_blend_sort_key, reverse=True)
 
-        for prim in opaque_prims + blend_prims:
-            rs = prim.get('_rs')
-            if rs is None:
-                continue
-            if rs['double_sided']:
-                self.ctx.disable(moderngl.CULL_FACE)
-            else:
-                self.ctx.enable(moderngl.CULL_FACE)
+            for prim in opaque_prims + blend_prims:
+                rs = prim.get('_rs')
+                if rs is None:
+                    continue
+                if rs['double_sided']:
+                    self.ctx.disable(moderngl.CULL_FACE)
+                else:
+                    self.ctx.enable(moderngl.CULL_FACE)
 
-            self._env_prog['u_base_color_factor'].value = rs['bc']
-            self._env_prog['u_base_alpha'].value = rs['ba']
-            self._env_prog['u_roughness'].value = rs['rf']
-            self._env_prog['u_metallic'].value = rs['mf']
-            self._env_prog['u_emissive_factor'].value = rs['ef']
-            self._env_prog['u_unlit'].value = rs['unlit']
-            self._env_prog['u_foliage_mode'].value = rs['foliage']
-            self._env_prog['u_alpha_mode'].value = rs['am']
-            self._env_prog['u_alpha_cutoff'].value = rs['ac']
+                self._env_prog['u_base_color_factor'].value = rs['bc']
+                self._env_prog['u_base_alpha'].value = rs['ba']
+                self._env_prog['u_roughness'].value = rs['rf']
+                self._env_prog['u_metallic'].value = rs['mf']
+                self._env_prog['u_emissive_factor'].value = rs['ef']
+                self._env_prog['u_unlit'].value = rs['unlit']
+                self._env_prog['u_foliage_mode'].value = rs['foliage']
+                self._env_prog['u_alpha_mode'].value = rs['am']
+                self._env_prog['u_alpha_cutoff'].value = rs['ac']
 
-            if rs['blend']:
-                self.ctx.enable(moderngl.BLEND)
-                self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-                self.ctx.depth_mask = False
-            else:
-                self.ctx.disable(moderngl.BLEND)
-                self.ctx.depth_mask = True
+                if rs['blend']:
+                    self.ctx.enable(moderngl.BLEND)
+                    self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                    self.ctx.depth_mask = False
+                else:
+                    self.ctx.disable(moderngl.BLEND)
+                    self.ctx.depth_mask = True
 
-            self._env_prog['u_tex_offset'].value = rs['to']
-            self._env_prog['u_tex_scale'].value = rs['ts']
-            self._env_prog['u_tex_rotation'].value = rs['tr']
-            self._env_prog['u_base_texcoord'].value = rs['base_tc']
-            tex_key = rs['tk']
-            if tex_key and tex_key in self._env_model_tex_cache:
-                self._env_model_tex_cache[tex_key].use(location=3)
-                self._env_prog['u_use_texture'].value = 1
-            else:
-                self._env_prog['u_use_texture'].value = 0
+                self._env_prog['u_tex_offset'].value = rs['to']
+                self._env_prog['u_tex_scale'].value = rs['ts']
+                self._env_prog['u_tex_rotation'].value = rs['tr']
+                self._env_prog['u_base_texcoord'].value = rs['base_tc']
+                tex_key = rs['tk']
+                if tex_key and tex_key in self._env_model_tex_cache:
+                    self._env_model_tex_cache[tex_key].use(location=3)
+                    self._env_prog['u_use_texture'].value = 1
+                else:
+                    self._env_prog['u_use_texture'].value = 0
 
-            if not fast_env:
-                for uniform, location in (
-                    ('normal', 4),
-                    ('occlusion', 5),
-                    ('mr', 6),
-                    ('emissive', 7),
-                ):
-                    cache_key = rs[f'{uniform}_key']
-                    use_name = f'u_use_{uniform}_tex'
-                    if cache_key and cache_key in self._env_model_tex_cache:
-                        self._env_model_tex_cache[cache_key].use(location=location)
-                        self._env_prog[use_name].value = 1
-                    else:
-                        self._env_prog[use_name].value = 0
+                if not fast_env:
+                    for uniform, location in (
+                        ('normal', 4),
+                        ('occlusion', 5),
+                        ('mr', 6),
+                        ('emissive', 7),
+                    ):
+                        cache_key = rs[f'{uniform}_key']
+                        use_name = f'u_use_{uniform}_tex'
+                        if cache_key and cache_key in self._env_model_tex_cache:
+                            self._env_model_tex_cache[cache_key].use(location=location)
+                            self._env_prog[use_name].value = 1
+                        else:
+                            self._env_prog[use_name].value = 0
 
-                self._env_prog['u_normal_scale'].value = rs['ns']
-                self._env_prog['u_occlusion_strength'].value = rs['os']
-                self._env_prog['u_normal_texcoord'].value = rs['normal_tc']
-                self._env_prog['u_occlusion_texcoord'].value = rs['occlusion_tc']
-                self._env_prog['u_mr_texcoord'].value = rs['mr_tc']
-                self._env_prog['u_emissive_texcoord'].value = rs['emissive_tc']
-            prim['vao'].render(rs['render_mode'])
-
-        self.ctx.disable(moderngl.CULL_FACE)
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
-        self._env_prog['u_use_texture'].value = 1
-        self._env_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)
-        self._env_prog['u_base_alpha'].value = 1.0
+                    self._env_prog['u_normal_scale'].value = rs['ns']
+                    self._env_prog['u_occlusion_strength'].value = rs['os']
+                    self._env_prog['u_normal_texcoord'].value = rs['normal_tc']
+                    self._env_prog['u_occlusion_texcoord'].value = rs['occlusion_tc']
+                    self._env_prog['u_mr_texcoord'].value = rs['mr_tc']
+                    self._env_prog['u_emissive_texcoord'].value = rs['emissive_tc']
+                prim['vao'].render(rs['render_mode'])
+        except Exception as exc:
+            print(f"[OpenXRViewer] Environment model render failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_background_env_model_failed")
+            return
+        finally:
+            self.ctx.disable(moderngl.CULL_FACE)
+            self.ctx.disable(moderngl.BLEND)
+            self.ctx.depth_mask = previous_depth_mask
+            glFrontFace(GL_CCW)
+            self._env_prog['u_use_texture'].value = 1
+            self._env_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)
+            self._env_prog['u_base_alpha'].value = 1.0
 
         if self._env_perf_log:
             now = time.perf_counter()

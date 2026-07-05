@@ -25,7 +25,6 @@ class ScreenEffectsMixin:
         self._glow_width_m = float(kwargs.get('glow_width_m', 0.30))
         self._glow_ref_screen = float(kwargs.get('glow_ref_screen', 2.4))
         self._glow_color = tuple(kwargs.get('glow_color', (0.30, 0.55, 1.0)))
-        self._glow_target_color = self._glow_color
         self._shadow_opacity = float(kwargs.get('shadow_opacity', 0.8))
         self._ground_light_color = tuple(kwargs.get('ground_light_color', (0.25, 0.45, 1.0)))
         self._ground_light_intensity = float(kwargs.get('ground_light_intensity', 0.10))
@@ -77,6 +76,55 @@ class ScreenEffectsMixin:
             return True
         return should_show_source_border()
 
+    def _screen_effect_source_texture(self):
+        frame_id = int(getattr(self, '_frame_count', 0) or 0)
+        if getattr(self, '_runtime_direct_source', False):
+            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
+            source_size = getattr(self, '_runtime_effect_safe_source_size', None)
+            cache_key = (
+                frame_id,
+                int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
+                int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
+                tuple(source_size) if source_size is not None else None,
+            )
+            if getattr(self, '_screen_effect_source_cache_key', None) == cache_key:
+                self._breakdown_inc("openxr_screen_effect_source_reuse")
+                return getattr(self, '_screen_effect_source_cache_value', (source_tex, source_size))
+            promote_ready = getattr(self, '_promote_runtime_effect_ready_texture', None)
+            if callable(promote_ready):
+                promote_ready()
+            source_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
+            source_size = getattr(self, '_runtime_effect_safe_source_size', None)
+            cache_key = (
+                frame_id,
+                int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0),
+                int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
+                tuple(source_size) if source_size is not None else None,
+            )
+            record_age = getattr(self, '_record_screen_effect_safe_age', None)
+            if callable(record_age):
+                record_age(source_tex)
+            value = (source_tex, source_size)
+            self._screen_effect_source_cache_key = cache_key
+            self._screen_effect_source_cache_frame = frame_id
+            self._screen_effect_source_cache_value = value
+            return value
+        source_tex = getattr(self, 'color_tex', None)
+        source_size = getattr(self, '_texture_size', None)
+        cache_key = (
+            frame_id,
+            int(getattr(source_tex, 'glo', 0) or 0) if source_tex is not None else 0,
+            tuple(source_size) if source_size is not None else None,
+        )
+        if getattr(self, '_screen_effect_source_cache_key', None) == cache_key:
+            self._breakdown_inc("openxr_screen_effect_source_reuse")
+            return getattr(self, '_screen_effect_source_cache_value', (source_tex, source_size))
+        value = (source_tex, source_size)
+        self._screen_effect_source_cache_key = cache_key
+        self._screen_effect_source_cache_frame = frame_id
+        self._screen_effect_source_cache_value = value
+        return value
+
     def _render_screen_background_effects(self, mgl_fbo, vp_mat):
         if not getattr(self, '_screen_effects_enabled', True):
             return
@@ -104,11 +152,6 @@ class ScreenEffectsMixin:
         if intensity <= 0.0:
             return
 
-        glow_color = np.array(getattr(self, '_glow_color', (0.30, 0.55, 1.0)), dtype='f4')
-        glow_target = np.array(getattr(self, '_glow_target_color', tuple(glow_color)), dtype='f4')
-        glow_color = glow_color * 0.88 + glow_target * 0.12
-        self._glow_color = tuple(float(x) for x in glow_color)
-
         screen_long = max(self.screen_width, self.screen_height)
         glow_scale = screen_long / max(float(getattr(self, '_glow_ref_screen', 2.4)), 1e-6)
         glow_width = float(getattr(self, '_glow_width_m', 0.035)) * glow_scale
@@ -119,10 +162,8 @@ class ScreenEffectsMixin:
         uv_glow_width = glow_width / uv_scale
         uv_glow_extent = glow_margin / uv_scale
 
-        glow_tex = self._prepare_glow_downsample_texture(
-            getattr(self, 'color_tex', None),
-            getattr(self, '_texture_size', None),
-        )
+        source_tex, source_size = self._screen_effect_source_texture()
+        glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
 
         self.ctx.depth_mask = False
         self.ctx.enable(moderngl.BLEND)

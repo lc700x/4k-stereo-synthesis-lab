@@ -158,6 +158,11 @@ def test_laser_hit_circle_radius_uses_eye_to_hit_distance(monkeypatch):
     assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -4.0]), 1.0) == 4.0
     assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -0.5]), 4.0) == 0.5
     assert viewer._cursor_ring_specs(0.5)[0][0] < viewer._cursor_ring_specs(4.0)[0][0]
+    laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    cursor_func = laser_text.split("def _cursor_ring_distance_from_eye", 1)[1].split(
+        "def _cursor_ring_model", 1
+    )[0]
+    assert "np.linalg.inv(view_mat)" not in cursor_func
 
 
 def test_laser_hit_circle_model_is_shared_by_screen_and_keyboard(monkeypatch):
@@ -571,19 +576,38 @@ def test_curved_border_is_rendered_behind_screen_not_over_image():
 
 def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_ready():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    quad_text = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
 
-    quad_gate = impl_text.split("def _quad_layer_can_replace_projection_screen(self):", 1)[1]
-    quad_gate = quad_gate.split("def _update_quad_layer_swapchain", 1)[0]
-    assert "getattr(self, '_xr_quad_layer_enabled', False)" in quad_gate
-    assert "getattr(self, '_xr_quad_layer_active', False)" in quad_gate
-    assert "getattr(self, '_runtime_direct_source', False)" in quad_gate
-    assert "getattr(self, '_screen_curved', False)" in quad_gate
-    assert "0 not in self._quad_swapchains or 1 not in self._quad_swapchains" in quad_gate
-    assert "return source0 is not None and source1 is not None and size0 is not None and size1 is not None" in quad_gate
+    quad_reason = quad_text.split("def _quad_layer_unavailable_reason(self):", 1)[1]
+    quad_reason = quad_reason.split("def _quad_layer_can_replace_projection_screen", 1)[0]
+    make_quad = quad_text.split("def _make_quad_layer", 1)[1]
+    update_quad = quad_text.split("def _update_quad_layer_swapchain", 1)[1].split(
+        "def _update_quad_layer_swapchains", 1
+    )[0]
+    update_quad_finally = update_quad.split("finally:", 1)[1]
+    update_quads = quad_text.split("def _update_quad_layer_swapchains", 1)[1].split(
+        "def _screen_pose_quat_xyzw", 1
+    )[0]
+    update_quads_finally = update_quads.split("finally:", 1)[1]
+    assert "return \"disabled\"" in quad_reason
+    assert "return \"inactive\"" in quad_reason
+    assert "return \"not_runtime_direct\"" in quad_reason
+    assert "return \"curved_screen\"" in quad_reason
+    assert "return \"missing_swapchain\"" in quad_reason
+    assert "return \"missing_source_texture\"" in quad_reason
+    assert "return self._quad_layer_unavailable_reason() is None" in quad_text
+    assert "_quad_layer_pose_state()" in make_quad
+    assert "_screen_pose_quat_xyzw()" not in make_quad
+    for finally_block in (update_quad_finally, update_quads_finally):
+        assert "self.ctx.viewport = prev_viewport" in finally_block
+        assert "self.ctx.depth_mask = prev_depth_mask" in finally_block
+        assert "self.ctx.enable(moderngl.DEPTH_TEST)" in finally_block
 
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
     render_eye = render_eye.split("# 3. Keyboard", 1)[0]
-    assert "draw_projection_screen = not self._quad_layer_can_replace_projection_screen()" in render_eye
+    assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
+    assert "draw_projection_screen = quad_unavailable_reason is not None" in render_eye
+    assert "openxr_quad_unavailable_" in render_eye
     assert "if draw_projection_screen:" in render_eye
     assert "self.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_eye
     assert "openxr_projection_screen_skipped" in render_eye

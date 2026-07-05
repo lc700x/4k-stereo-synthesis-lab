@@ -153,14 +153,13 @@ class CoreFrameUploadMixin:
 
         if self._use_d3d11 and self._d3d11_native_renderer is not None:
             try:
+                d3d11_start = time.perf_counter()
                 self._d3d11_native_renderer.update_frame(rgb, depth)
+                self._breakdown_add_time("openxr_d3d11_upload", time.perf_counter() - d3d11_start)
                 if perf_enabled:
                     _mark_upload('d3d11_update_frame')
                 self.frame_size = (w, h)
                 self.screen_height = None
-                self._maybe_sample_glow_target_color(rgb, is_tensor)
-                if perf_enabled:
-                    _mark_upload('sample_glow')
                 if perf_enabled:
                     self._log_upload_perf_if_slow(perf_t0, perf_marks, w, h, 'd3d11')
                 return
@@ -337,9 +336,6 @@ class CoreFrameUploadMixin:
             # No glGenerateMipmap for depth: keep DIBR sampling at full-res
             # to match viewer.py FullSBS numerics.
 
-        self._maybe_sample_glow_target_color(rgb, is_tensor)
-        if perf_enabled:
-            _mark_upload('sample_glow')
         if perf_enabled:
             self._log_upload_perf_if_slow(perf_t0, perf_marks, w, h, 'gpu' if gpu_ok else 'cpu')
 
@@ -349,8 +345,3 @@ class CoreFrameUploadMixin:
             return
         parts = ' '.join(f'{label}={ms:.1f}' for label, ms in perf_marks if ms >= 0.05)
         print(f"[OpenXRViewer] upload segments path={path} size={w}x{h} total_ms={total_ms:.1f} {parts}")
-
-    def _maybe_sample_glow_target_color(self, rgb, is_tensor):
-        """Runtime glow uses the GPU source texture; avoid CPU frame sampling here."""
-        self._glow_color_counter = 0
-        return

@@ -33,6 +33,7 @@ class OpenXRRuntimeCallbacks:
     bootstrap_done_set: Callable
     breakdown_inc: Callable = _noop
     breakdown_add_time: Callable = _noop
+    breakdown_add_value: Callable = _noop
 
 
 def use_environment_viewer(environment_model):
@@ -114,6 +115,7 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
         )
         viewer._fps_breakdown_inc = callbacks.breakdown_inc
         viewer._fps_breakdown_add_time = callbacks.breakdown_add_time
+        viewer._fps_breakdown_add_value = callbacks.breakdown_add_value
         callbacks.source_active_set()
         callbacks.render_active_clear()
         callbacks.wait_idle_clear()

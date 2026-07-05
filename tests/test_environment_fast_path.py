@@ -150,6 +150,53 @@ def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
     assert cfg["image"] == "background.jpg"
     assert cfg["yaw_offset_deg"] == 45.0
 
+    is_panorama, path, cfg = viewer._panorama_profile_config(
+        {
+            "environment_type": "panorama",
+            "panorama": {
+                "image": "background.jpg",
+                "wall_light_mask": "mask.png",
+                "screen_light_layout": {"uv": [0.4, 0.6], "radius": [0.2, 0.1]},
+            },
+        },
+        str(room),
+    )
+
+    assert is_panorama
+    assert path == str(image)
+    assert cfg["wall_light_mask"] == "mask.png"
+    assert cfg["screen_light_layout"]["uv"] == [0.4, 0.6]
+
+
+def test_panorama_profile_auto_wall_mask_bakes_cached_png(monkeypatch, tmp_path):
+    viewer = _make_default_viewer(monkeypatch)
+    room = tmp_path / "PanoramaRoom"
+    room.mkdir()
+    image = room / "background.jpg"
+    image.write_bytes(b"not-a-real-image")
+
+    is_panorama, path, cfg = viewer._panorama_profile_config(
+        {
+            "environment_type": "panorama",
+            "panorama": {
+                "image": "background.jpg",
+                "wall_light_mask": "auto",
+                "wall_light_mask_resolution": [64, 32],
+                "screen_light_layout": {"uv": [0.25, 0.5], "radius": [0.1, 0.2]},
+            },
+        },
+        str(room),
+    )
+
+    mask_path = room / cfg["wall_light_mask"]
+    assert is_panorama
+    assert path == str(image)
+    assert mask_path.is_file()
+    assert mask_path.parent.name == ".d2s_bake"
+    assert cfg["wall_light_mask"].endswith(".png")
+    from PIL import Image
+    assert Image.open(mask_path).size == (64, 32)
+
 
 def test_environment_discovery_includes_panorama_image_folder(monkeypatch, tmp_path):
     viewer = _make_default_viewer(monkeypatch)
@@ -273,6 +320,200 @@ def test_panorama_environment_skips_glb_initialization(monkeypatch):
     assert not viewer._env_model_visible
     assert viewer._env_model_prims == []
     assert viewer._active_environment == "Pano"
+
+
+def test_openxr_loop_uses_fast_env_model_initializer():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    run_body = impl_text.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+
+    assert "def _ensure_env_model_initialized" in impl_text
+    assert "_ensure_env_model_initialized(\"Preview-only\")" in run_body
+    assert "_ensure_env_model_initialized(\"Lazy\")" in run_body
+    assert "_init_env_model()" not in run_body
+
+
+def test_env_model_initializer_skips_panorama_background(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._env_model_init_done = False
+    viewer._environment_enabled = True
+    viewer._panorama_background_path = "background.jpg"
+    viewer._env_model_path = "environment.glb"
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+    viewer._called = False
+    viewer._panorama_called = False
+
+    def _init_env_model():
+        viewer._called = True
+
+    def _get_panorama_texture():
+        viewer._panorama_called = True
+        return object()
+
+    viewer._init_env_model = _init_env_model
+    viewer._get_panorama_texture = _get_panorama_texture
+    viewer._ensure_env_model_initialized("Test")
+
+    assert viewer._env_model_init_done
+    assert not viewer._called
+    assert viewer._panorama_called
+    assert not viewer._env_model_visible
+    assert viewer._env_model_prims == []
+
+
+def test_panorama_background_is_preloaded_outside_render_path():
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
+    model_text = (SRC / "xr_viewer" / "environment_model.py").read_text(encoding="utf-8")
+    init_func = impl_text.split("def _ensure_env_model_initialized", 1)[1].split("    # Main blocking loop", 1)[0]
+    settings_func = render_text.split("def _panorama_render_settings", 1)[1].split("def _render_panorama_background", 1)[0]
+    render_func = render_text.split("def _render_panorama_background", 1)[1].split("def _render_env_model", 1)[0]
+    switch_func = model_text.split("def _switch_environment_model", 1)[1]
+    pano_frag = glsl_text.split("_PANORAMA_FRAG", 1)[1].split("_GLOW_DOWNSAMPLE_FRAG", 1)[0]
+
+    assert "get_panorama_texture()" in init_func
+    assert "_panorama_texture_ready()" in render_func
+    assert "_panorama_light_mask_texture_ready()" in render_func
+    assert "_get_panorama_texture()" not in render_func
+    assert "_get_panorama_light_mask_texture()" not in render_func
+    assert "_panorama_light_mask_path_from_settings()" not in render_func
+    assert "_ensure_env_model_initialized(\"Switch\")" in switch_func
+    assert "_init_env_model()" not in switch_func
+    controller_render = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8").split(
+        "def _render_controllers", 1
+    )[1]
+    assert "_panorama_texture_ready()" in controller_render
+    assert "_get_panorama_texture()" not in controller_render
+    assert "np.linalg.inv(view_mat)" not in controller_render
+    assert "uniform sampler2D u_screen_light_tex" in pano_frag
+    assert "uniform sampler2D u_wall_light_mask_tex" in pano_frag
+    assert "vec3 screen_light_probe_color()" in pano_frag
+    assert "textureLod(u_screen_light_tex" in pano_frag
+    assert "textureLod(u_wall_light_mask_tex" in pano_frag
+    assert "return color * (1.0 / 9.0)" in pano_frag
+    assert "u_screen_light_uv" in pano_frag
+    assert "u_screen_light_radius" in pano_frag
+    assert "screen_light_layout" in settings_func
+    assert "light_layout.get('uv'" in settings_func
+    assert "light_layout.get('radius'" in settings_func
+    assert "return False" in render_func
+    assert "return True" in render_func
+    assert "except Exception as exc:" in render_func
+    assert "openxr_background_panorama_failed" in render_func
+    assert "finally:" in render_func
+    render_finally = render_func.split("finally:", 1)[1]
+    assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+    assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
+    assert "tex.use(location=8)" in render_func
+    assert "_bind_screen_light_source_texture(location=10)" in render_func
+    assert "mask_tex.use(location=11)" in render_func
+    assert "_view_mat_inv(view_rot)" in render_func
+    assert "np.linalg.inv(view_rot)" not in render_func
+    assert "_panorama_render_settings()" in render_func
+    assert "screen_light_layout" not in render_func
+    assert "_panorama_render_settings_key" in settings_func
+    assert "_panorama_light_mask_path_from_settings" in render_text
+    assert "_panorama_light_mask_path_key" in render_text
+    eye_background = impl_text.split("background_start = time.perf_counter()", 1)[1].split(
+        "self._breakdown_add_time('openxr_background'", 1
+    )[0]
+    assert "if self._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in eye_background
+    assert "self._breakdown_inc('openxr_background_panorama')" in eye_background
+    assert "if eye_index == 0:" in eye_background
+    assert eye_background.count("if eye_index == 0:") == 3
+
+
+def test_env_model_render_failure_restores_gl_state():
+    render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    render_func = render_text.split("def _render_env_model", 1)[1]
+    render_body = render_func.split("        if self._env_perf_log:", 1)[0]
+
+    assert "previous_depth_mask = self.ctx.depth_mask" in render_body
+    assert "try:" in render_body
+    assert "except Exception as exc:" in render_body
+    assert "openxr_background_env_model_failed" in render_body
+    assert "finally:" in render_body
+    render_finally = render_body.split("finally:", 1)[1]
+    assert "self.ctx.disable(moderngl.CULL_FACE)" in render_finally
+    assert "self.ctx.disable(moderngl.BLEND)" in render_finally
+    assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+    assert "glFrontFace(GL_CCW)" in render_finally
+    assert "self._env_prog['u_use_texture'].value = 1" in render_finally
+    assert "self._env_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)" in render_finally
+    assert "self._env_prog['u_base_alpha'].value = 1.0" in render_finally
+
+
+def test_env_model_initializer_preloads_panorama_light_mask(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._env_model_init_done = False
+    viewer._environment_enabled = True
+    viewer._panorama_background_path = "background.jpg"
+    viewer._env_model_path = None
+    viewer._panorama_called = False
+    viewer._mask_called = False
+
+    def _get_panorama_texture():
+        viewer._panorama_called = True
+        return object()
+
+    def _get_panorama_light_mask_texture():
+        viewer._mask_called = True
+        return object()
+
+    viewer._get_panorama_texture = _get_panorama_texture
+    viewer._get_panorama_light_mask_texture = _get_panorama_light_mask_texture
+    viewer._ensure_env_model_initialized("Test")
+
+    assert viewer._panorama_called
+    assert viewer._mask_called
+
+
+def test_panorama_wall_light_mask_missing_is_diagnostic(monkeypatch, tmp_path):
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._panorama_background_path = str(tmp_path / "background.jpg")
+    viewer._panorama_background_settings = {"wall_light_mask": "missing-mask.png"}
+    viewer._panorama_light_mask_tex = None
+    viewer._panorama_light_mask_path = None
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._get_panorama_light_mask_texture() is None
+    assert viewer._get_panorama_light_mask_texture() is None
+
+    assert inc_calls == [("openxr_wall_light_mask_missing", 1)]
+    assert viewer._panorama_light_mask_missing_path.endswith("missing-mask.png")
+
+
+def test_panorama_wall_light_mask_disabled_is_diagnostic_once(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    viewer._panorama_background_path = "background.jpg"
+    viewer._panorama_background_settings = {}
+    viewer._panorama_light_mask_tex = object()
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._get_panorama_light_mask_texture() is None
+    assert viewer._get_panorama_light_mask_texture() is None
+    assert viewer._panorama_light_mask_texture_ready() is None
+    assert viewer._panorama_light_mask_texture_ready() is None
+
+    assert inc_calls == [("openxr_wall_light_mask_disabled", 1)]
+
+
+def test_panorama_wall_light_uses_gpu_light_probe_grid():
+    glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
+    pano_frag = glsl_text.split("_PANORAMA_FRAG", 1)[1].split("_GLOW_DOWNSAMPLE_FRAG", 1)[0]
+    probe_func = pano_frag.split("vec3 screen_light_probe_color()", 1)[1].split("void main()", 1)[0]
+
+    assert probe_func.count("textureLod(u_screen_light_tex") == 9
+    assert "vec2(0.25, 0.25)" in probe_func
+    assert "vec2(0.50, 0.50)" in probe_func
+    assert "vec2(0.75, 0.75)" in probe_func
+    assert "screen_light_probe_color()" in pano_frag.split("void main()", 1)[1]
+    assert ".cpu(" not in pano_frag
+    assert ".numpy(" not in pano_frag
+    assert "glReadPixels" not in pano_frag
 
 
 def test_default_glow_on_keeps_background_effect_path(monkeypatch):
@@ -570,12 +811,182 @@ def test_frosted_glow_shader_uses_flat_grid_source_crop():
 def test_screen_effects_do_not_sample_runtime_eye_texture():
     effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
     source_func = effects_text.split("def _screen_effect_source_texture", 1)[1].split("def _render_glow", 1)[0]
+    base_text = (SRC / "xr_viewer" / "base.py").read_text(encoding="utf-8")
+    no_room_glow = base_text.split("def _render_glow", 1)[1].split("def _render_shadow", 1)[0]
 
     assert "def _screen_effect_source_texture(self, *, allow_runtime_eye=True):" in effects_text
     assert effects_text.count("_screen_effect_source_texture(allow_runtime_eye=False)") == 4
     assert "_runtime_effect_safe_source_tex" in source_func
+    assert "_promote_runtime_effect_ready_texture" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
+    assert "def _screen_effect_source_texture(self):" in base_text
+    assert "_runtime_effect_safe_source_tex" in base_text
+    assert "_promote_runtime_effect_ready_texture" in base_text
+    assert "_screen_effect_source_texture()" in no_room_glow
+    assert "getattr(self, 'color_tex', None)" not in no_room_glow
+
+
+def test_screen_effect_source_texture_is_cached_per_frame(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    source_tex = type("Tex", (), {"glo": 11})()
+    viewer._frame_count = 8
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = source_tex
+    viewer._runtime_effect_safe_source_size = (1280, 720)
+    viewer._runtime_effect_safe_source_frame_id = 4
+    viewer._promote_count = 0
+    viewer._age_count = 0
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    def _promote():
+        viewer._promote_count += 1
+
+    def _record_age(_source_tex):
+        viewer._age_count += 1
+
+    viewer._promote_runtime_effect_ready_texture = _promote
+    viewer._record_screen_effect_safe_age = _record_age
+
+    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (source_tex, (1280, 720))
+    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (source_tex, (1280, 720))
+    assert viewer._promote_count == 1
+    assert viewer._age_count == 1
+    assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
+
+
+def test_screen_effect_source_cache_refreshes_when_safe_source_changes(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    first_tex = type("Tex", (), {"glo": 21})()
+    next_tex = type("Tex", (), {"glo": 22})()
+    viewer._frame_count = 8
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = first_tex
+    viewer._runtime_effect_safe_source_size = (1280, 720)
+    viewer._runtime_effect_safe_source_frame_id = 4
+    viewer._promote_count = 0
+    viewer._age_count = 0
+    viewer._breakdown_inc = lambda *args, **kwargs: None
+
+    def _promote():
+        viewer._promote_count += 1
+
+    def _record_age(_source_tex):
+        viewer._age_count += 1
+
+    viewer._promote_runtime_effect_ready_texture = _promote
+    viewer._record_screen_effect_safe_age = _record_age
+
+    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (first_tex, (1280, 720))
+    viewer._runtime_effect_safe_source_tex = next_tex
+    viewer._runtime_effect_safe_source_frame_id = 5
+    assert viewer._screen_effect_source_texture(allow_runtime_eye=False) == (next_tex, (1280, 720))
+
+    assert viewer._promote_count == 2
+    assert viewer._age_count == 2
+
+
+def test_no_room_screen_effect_source_texture_uses_safe_runtime_source(monkeypatch):
+    viewer = _make_no_room_viewer(monkeypatch)
+    source_tex = type("Tex", (), {"glo": 14})()
+    viewer._frame_count = 6
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = source_tex
+    viewer._runtime_effect_safe_source_size = (640, 360)
+    viewer._runtime_effect_safe_source_frame_id = 2
+    viewer._promote_count = 0
+    viewer._age_count = 0
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    def _promote():
+        viewer._promote_count += 1
+
+    def _record_age(_source_tex):
+        viewer._age_count += 1
+
+    viewer._promote_runtime_effect_ready_texture = _promote
+    viewer._record_screen_effect_safe_age = _record_age
+
+    assert viewer._screen_effect_source_texture() == (source_tex, (640, 360))
+    assert viewer._screen_effect_source_texture() == (source_tex, (640, 360))
+    assert viewer._promote_count == 1
+    assert viewer._age_count == 1
+    assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
+
+
+def test_no_room_screen_effect_source_texture_caches_color_source(monkeypatch):
+    viewer = _make_no_room_viewer(monkeypatch)
+    source_tex = type("Tex", (), {"glo": 16})()
+    viewer._frame_count = 7
+    viewer._runtime_direct_source = False
+    viewer.color_tex = source_tex
+    viewer._texture_size = (320, 180)
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    assert viewer._screen_effect_source_texture() == (source_tex, (320, 180))
+    assert viewer._screen_effect_source_texture() == (source_tex, (320, 180))
+
+    assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
+
+
+def test_screen_effect_safe_age_records_once_per_safe_texture_per_frame(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    source_tex = type("Tex", (), {"glo": 12})()
+    other_tex = type("Tex", (), {"glo": 13})()
+    values = []
+    viewer._frame_count = 9
+    viewer._runtime_effect_safe_source_frame_id = 5
+    viewer._breakdown_add_value = lambda name, value: values.append((name, value))
+
+    viewer._record_screen_effect_safe_age(source_tex)
+    viewer._record_screen_effect_safe_age(source_tex)
+    viewer._record_screen_effect_safe_age(other_tex)
+
+    assert values == [
+        ("openxr_effect_ready_age_frames", 4.0),
+        ("openxr_effect_ready_age_frames", 4.0),
+    ]
+
+
+def test_glow_downsample_cache_is_shared_across_eyes():
+    quality_text = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    func = quality_text.split("def _prepare_glow_downsample_texture", 1)[1].split(
+        "def _is_runtime_eye_texture_ready", 1
+    )[0]
+
+    assert "_glow_ds_cache_key" in func
+    assert "_current_eye_index" not in func
+    assert "_runtime_effect_safe_source_frame_id" in func
+    assert "source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)" in func
+    assert "except Exception as exc:" in func
+    assert "openxr_glow_downsample_failed" in func
+    assert "finally:" in func
+    render_finally = func.split("finally:", 1)[1]
+    assert "self.ctx.viewport = prev_viewport" in render_finally
+    assert "self.ctx.depth_mask = prev_depth_mask" in render_finally
+    assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
+    assert "self.ctx.disable(moderngl.BLEND)" in render_finally
+
+
+def test_screen_quality_pass_restores_gl_state_on_failure():
+    quality_text = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    func = quality_text.split("def _prepare_screen_quality_texture", 1)[1].split(
+        "def _ensure_glow_downsample_resources", 1
+    )[0]
+
+    assert "try:" in func
+    assert "except Exception as exc:" in func
+    assert "openxr_screen_quality_failed" in func
+    assert "return None" in func
+    assert "finally:" in func
+    render_finally = func.split("finally:", 1)[1]
+    assert "self.ctx.viewport = prev_viewport" in render_finally
+    assert "self.ctx.depth_mask = prev_depth_mask" in render_finally
+    assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
+    assert "self.ctx.disable(moderngl.BLEND)" in render_finally
 
 
 def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
@@ -584,8 +995,81 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
 
     assert "_runtime_effect_safe_source_tex" in source_func
     assert "_runtime_effect_safe_source_size" in source_func
+    assert "_promote_runtime_effect_ready_texture" in source_func
+    assert "_record_screen_effect_safe_age" in source_func
+    assert "_prepare_glow_downsample_texture" in source_func
+    assert "_glow_ds_size" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
+
+
+def test_screen_light_source_texture_is_cached_per_frame(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    source_tex = type("Tex", (), {"glo": 7})()
+    light_tex = object()
+    viewer._frame_count = 12
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = source_tex
+    viewer._runtime_effect_safe_source_size = (1920, 1080)
+    viewer._runtime_effect_safe_source_frame_id = 3
+    viewer._promote_count = 0
+    viewer._age_count = 0
+    viewer._prepare_count = 0
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._record_screen_effect_safe_age = lambda _source_tex: setattr(viewer, "_age_count", viewer._age_count + 1)
+
+    def _promote():
+        viewer._promote_count += 1
+
+    def _prepare(_source_tex, _source_size):
+        viewer._prepare_count += 1
+        return light_tex
+
+    viewer._promote_runtime_effect_ready_texture = _promote
+    viewer._prepare_glow_downsample_texture = _prepare
+
+    assert viewer._screen_light_source_texture() == (light_tex, None)
+    assert viewer._screen_light_source_texture() == (light_tex, None)
+    assert viewer._promote_count == 1
+    assert viewer._age_count == 1
+    assert viewer._prepare_count == 1
+    assert ("openxr_screen_light_source_reuse", 1) in inc_calls
+
+
+def test_screen_light_source_cache_refreshes_when_safe_source_changes(monkeypatch):
+    viewer = _make_default_viewer(monkeypatch)
+    first_tex = type("Tex", (), {"glo": 31})()
+    next_tex = type("Tex", (), {"glo": 32})()
+    first_light = object()
+    next_light = object()
+    viewer._frame_count = 12
+    viewer._runtime_direct_source = True
+    viewer._runtime_effect_safe_source_tex = first_tex
+    viewer._runtime_effect_safe_source_size = (1920, 1080)
+    viewer._runtime_effect_safe_source_frame_id = 3
+    viewer._promote_count = 0
+    viewer._age_count = 0
+    viewer._breakdown_inc = lambda *args, **kwargs: None
+    light_by_tex = {first_tex: first_light, next_tex: next_light}
+    viewer._record_screen_effect_safe_age = lambda _source_tex: setattr(viewer, "_age_count", viewer._age_count + 1)
+
+    def _promote():
+        viewer._promote_count += 1
+
+    def _prepare(source_tex, _source_size):
+        return light_by_tex[source_tex]
+
+    viewer._promote_runtime_effect_ready_texture = _promote
+    viewer._prepare_glow_downsample_texture = _prepare
+
+    assert viewer._screen_light_source_texture() == (first_light, None)
+    viewer._runtime_effect_safe_source_tex = next_tex
+    viewer._runtime_effect_safe_source_frame_id = 4
+    assert viewer._screen_light_source_texture() == (next_light, None)
+
+    assert viewer._promote_count == 2
+    assert viewer._age_count == 2
 
 
 def test_runtime_effect_source_texture_is_prepared_for_all_glow_modes(monkeypatch):
@@ -609,6 +1093,24 @@ def test_runtime_effect_source_texture_is_prepared_for_all_glow_modes(monkeypatc
 
     assert not viewer._runtime_effects_need_source_texture()
 
+    viewer._screen_light_intensity = 3.5
+    viewer._panorama_background_path = "background.jpg"
+
+    assert viewer._runtime_effects_need_source_texture()
+
+    viewer._panorama_background_path = None
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+
+    assert viewer._runtime_effects_need_source_texture()
+
+    viewer._openxr_async_effects_enabled = False
+    viewer._glow_mode = "screen"
+    viewer._glow_intensity_multiplier = 1.0
+    viewer._glow_shell_intensity_multiplier = 0.0
+
+    assert not viewer._runtime_effects_need_source_texture()
+
 
 def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
     runtime_text = (SRC / "stereo_runtime" / "runtime.py").read_text(encoding="utf-8")
@@ -622,7 +1124,8 @@ def test_openxr_full_synthesis_preserves_effect_source_before_eye_sampling():
     assert "openxr_result_from_stereo_result(runtime_result, source_rgb=runtime_rgb)" in pipeline_text
     assert "def _try_update_runtime_effect_source_texture_gpu" in core_text
     assert "CudaGlTextureUploader" in core_text
-    assert "self.ctx.texture((w, h), 4, dtype='f1')" in core_text
+    assert "ensure_staging(self.ctx, w, h)" in core_text
+    assert "ctx.texture((w, h), 4, dtype='f1')" in core_text
     gpu_upload_func = core_text.split("def _try_update_runtime_effect_source_texture_gpu", 1)[1].split("def _update_runtime_effect_source_texture", 1)[0]
     assert "torch.cuda.current_stream(device_index).synchronize()" not in gpu_upload_func
     assert "ready_event.synchronize()" not in core_text
@@ -651,6 +1154,28 @@ def test_screen_glow_shader_uses_region_color_grid():
     assert "_runtime_effect_safe_source_tex" in effects_text
 
 
+def test_screen_effect_passes_restore_gl_state_on_failure():
+    effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    checks = [
+        ("def _render_glow", "def _render_frosted_glow", "openxr_screen_glow_failed"),
+        ("def _render_frosted_glow", "def _render_frosted_veil", "openxr_frosted_glow_failed"),
+        ("def _render_frosted_veil", "def _render_glow_shell", "openxr_frosted_veil_failed"),
+        ("def _render_glow_shell", "def _render_screen_background_effects", "openxr_glow_shell_failed"),
+    ]
+
+    for start, end, diagnostic in checks:
+        func = effects_text.split(start, 1)[1].split(end, 1)[0]
+        assert "previous_depth_mask = self.ctx.depth_mask" in func
+        assert "try:" in func
+        assert "except Exception as exc:" in func
+        assert diagnostic in func
+        assert "finally:" in func
+        render_finally = func.split("finally:", 1)[1]
+        assert "self.ctx.disable(moderngl.BLEND)" in render_finally
+        assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+        assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
+
+
 def test_surround_glow_shell_uses_screen_border_color():
     glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
 
@@ -674,69 +1199,36 @@ def test_surround_glow_shell_uses_screen_border_color():
 
 def test_realtime_screen_glow_cpu_sampler_is_removed():
     upload_text = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
-    maybe_sample = upload_text.split("def _maybe_sample_glow_target_color", 1)[1]
+    runtime_eye_text = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    renderer_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    base_text = (SRC / "xr_viewer" / "base.py").read_text(encoding="utf-8")
+    source_func = effects_text.split("def _screen_effect_source_texture", 1)[1].split("def _render_glow", 1)[0]
+    light_func = renderer_text.split("def _screen_light_source_texture", 1)[1].split(
+        "def _apply_cinema_light_uniforms", 1
+    )[0]
 
+    assert not (SRC / "xr_viewer" / "core_glow.py").exists()
     assert "def _sample_glow_target_color" not in upload_text
-    assert "np.asarray(rgb" not in maybe_sample
-    assert "self._glow_color_counter = 0" in maybe_sample
-    assert "return" in maybe_sample
-
-
-def test_screen_glow_does_not_trigger_cpu_color_sampling(monkeypatch):
-    viewer = _make_default_viewer(monkeypatch)
-    viewer._glow_intensity = 1.0
-    viewer._glow_intensity_multiplier = 1.0
-    viewer._screen_light_dynamic = False
-    viewer._bg_color_idx = 0
-    viewer._env_model_visible = False
-    viewer._env_model_prims = []
-    viewer._dark_room_prims = []
-    viewer._glow_color_counter = 0
-    viewer._sampled = False
-
-    viewer._maybe_sample_glow_target_color(None, is_tensor=False)
-
-    assert not viewer._sampled
-    assert viewer._glow_color_counter == 0
-
-
-def test_environment_dynamic_light_does_not_trigger_cpu_color_sampling(monkeypatch):
-    viewer = _make_default_viewer(monkeypatch)
-    viewer._glow_intensity = 1.0
-    viewer._glow_intensity_multiplier = 0.0
-    viewer._screen_light_dynamic = True
-    viewer._screen_light_intensity = 2.0
-    viewer._bg_color_idx = 0
-    viewer._env_model_visible = True
-    viewer._env_model_prims = [object()]
-    viewer._dark_room_prims = []
-    viewer._glow_color_counter = 0
-    viewer._sampled = False
-
-    viewer._maybe_sample_glow_target_color(None, is_tensor=False)
-
-    assert not viewer._sampled
-    assert viewer._glow_color_counter == 0
-
-
-def test_default_dark_room_does_not_trigger_cpu_color_sampling(monkeypatch):
-    viewer = _make_default_viewer(monkeypatch)
-    viewer._glow_intensity = 1.0
-    viewer._glow_intensity_multiplier = 0.0
-    viewer._glow_shell_intensity_multiplier = 0.0
-    viewer._screen_light_dynamic = True
-    viewer._screen_light_intensity = 3.5
-    viewer._bg_color_idx = 0
-    viewer._env_model_visible = False
-    viewer._env_model_prims = []
-    viewer._dark_room_prims = [object()]
-    viewer._glow_color_counter = 0
-    viewer._sampled = False
-
-    viewer._maybe_sample_glow_target_color(None, is_tensor=False)
-
-    assert not viewer._sampled
-    assert viewer._glow_color_counter == 0
+    assert "_maybe_sample_glow_target_color" not in upload_text
+    assert "_maybe_sample_glow_target_color" not in runtime_eye_text
+    assert "_mark_upload('sample_glow')" not in upload_text
+    assert "_advance_glow_color" not in effects_text
+    assert "_glow_target_color" not in effects_text
+    assert "_glow_target_color" not in impl_text
+    assert "_glow_target_color" not in base_text
+    assert "_screen_light_target_colors" not in effects_text
+    assert "_screen_light_target_colors" not in impl_text
+    assert "_screen_light_colors" not in effects_text
+    assert "_screen_light_colors" not in impl_text
+    assert "_glow_color_counter" not in impl_text
+    for realtime_func in (source_func, light_func):
+        assert ".cpu(" not in realtime_func
+        assert ".numpy(" not in realtime_func
+        assert "glReadPixels" not in realtime_func
+        assert ".read(" not in realtime_func
+        assert "synchronize(" not in realtime_func
 
 
 def test_frosted_glow_keyboard_adjustment_is_disabled(monkeypatch):
@@ -781,7 +1273,10 @@ def test_controller_shader_uses_panorama_ibl_reflection():
     assert "textureLod(u_screen_light_tex" in ctrl_frag
     assert "u_light_color" not in ctrl_frag
     assert "u_ambient_color" not in ctrl_frag
-    assert "_get_panorama_texture" in render_text
+    assert "_panorama_texture_ready" in render_text
+    assert "_get_panorama_texture" not in render_text
+    assert "_bind_screen_light_source_texture(location=10)" in render_text
+    assert "_runtime_eye_textures" not in render_text
     assert "_controller_hdr_lighting" in render_text
     assert "if getattr(self, '_controller_hdr_lighting', True):" in render_text
     assert "u_use_env_tex" in render_text
@@ -789,6 +1284,29 @@ def test_controller_shader_uses_panorama_ibl_reflection():
     assert "controller_hdr_lighting" in profile_text
     assert "controller_hdr_reflection" in profile_text
     assert "== '.hdr'" in profile_text
+
+
+def test_environment_light_binds_latest_safe_texture_before_uniform_cache_skip():
+    render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    profiles_text = (SRC / "xr_viewer" / "environment_profiles.py").read_text(encoding="utf-8")
+    apply_func = render_text.split("def _apply_cinema_light_uniforms", 1)[1].split("def _get_panorama_texture", 1)[0]
+    before_skip = apply_func.split("if state_key == last_state_key", 1)[0]
+
+    assert not (SRC / "xr_viewer" / "render.py").exists()
+    assert "from .render import" not in render_text
+    assert "def _view_mat_inv" in render_text
+    assert "def _bind_screen_light_source_texture" in render_text
+    assert "self._bind_screen_light_source_texture()" in before_skip
+    assert "source_tex.use(location=8)" not in apply_func
+    assert "_screen_light_dynamic" not in render_text
+    assert "_screen_light_dynamic" not in impl_text
+    assert "_screen_light_dynamic" not in profiles_text
+    assert "_screen_light_sample_interval" not in impl_text
+    assert "_screen_light_sample_interval" not in profiles_text
+    assert "screen_light_lerp" not in render_text
+    assert "screen_light_lerp" not in impl_text
+    assert "screen_light_lerp" not in profiles_text
 
 
 def test_controller_touch_bindings_share_profile_suggestion_call():

@@ -136,6 +136,7 @@ def main(mode="Viewer"):
             shutdown_is_set=shutdown_event.is_set,
             breakdown_inc=runtime_callbacks.breakdown_inc,
             breakdown_add_time=runtime_callbacks.breakdown_add_time,
+            breakdown_add_value=runtime_callbacks.breakdown_add_value,
             log_fps_breakdown=runtime_callbacks.log_fps_breakdown,
             is_window_visible_on_screen=is_window_visible_on_screen,
             set_rtmp_thread=_set_rtmp_thread,

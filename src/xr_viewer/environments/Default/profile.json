@@ -14,12 +14,12 @@
   "xr_quad_layer_enabled": false,
   "xr_quad_layer_debug_offset": 0.0,
   "xr_quad_layer_stereo_boost": 1.0,
-  "glow_mode": "surround",
+  "glow_mode": "veil",
   "glow_intensity": 0.5,
   "glow_width": 1.9,
   "glow_surround_margin": 18.0,
-  "glow_intensity_multiplier": 0.0,
-  "glow_shell_intensity_multiplier": 1.85,
+  "glow_intensity_multiplier": 1.85,
+  "glow_shell_intensity_multiplier": 0.0,
   "glow_shell_radius": 20.0,
   "glow_shell_height": 9.5,
   "frosted_glow_intensity": 3.0,
@@ -103,8 +103,5 @@
     }
   ],
   "controller_hdr_lighting": false,
-  "screen_light_intensity": 3.5,
-  "screen_light_dynamic": true,
-  "screen_light_sample_interval": 3,
-  "screen_light_lerp": 0.35
+  "screen_light_intensity": 3.5
 }

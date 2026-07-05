@@ -3,6 +3,7 @@ import os
 import queue
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 from types import SimpleNamespace
@@ -218,6 +219,9 @@ def test_cpu_fallback_paths_emit_red_console_warnings(monkeypatch):
     monkeypatch.chdir(SRC)
     runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
     frame_upload = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
+    environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    screen_quality = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
     d3d11 = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     viewer = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
@@ -237,7 +241,6 @@ def test_cpu_fallback_paths_emit_red_console_warnings(monkeypatch):
     assert "CudaGlTextureUploader" in runtime_eye
     assert "upload_rgba" in runtime_eye
     assert "runtime_eye_tensor" in runtime_eye
-    assert "runtime_eye_sync" in runtime_eye
     assert "runtime_eye_image" in runtime_eye
     assert "runtime_eye_total" in runtime_eye
     assert "glGenerateMipmap" in gl_uploader
@@ -248,6 +251,9 @@ def test_cpu_fallback_paths_emit_red_console_warnings(monkeypatch):
     assert "D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD" in implementation
     assert "os.environ.get('D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD', '1')" in implementation
     assert "_runtime_eye_texture_components = 4" in implementation
+    assert "OpenXR D3D11 projection submit" in implementation
+    assert "pbo_glreadpixels" in implementation
+    assert "openxr_d3d11_pbo_readback" in implementation
     assert "warn_cpu_fallback" in frame_upload
     assert "OpenXR RGB+depth texture upload" in frame_upload
     assert "OpenXR depth texture upload" in frame_upload
@@ -357,7 +363,8 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
 
     source_q = queue.Queue()
     stale_frame = object()
-    latest_frame = object()
+    latest_result = SimpleNamespace(left_eye=object(), right_eye=object(), depth=object())
+    latest_frame = (latest_result, 12.5)
     source_q.put(stale_frame)
     source_q.put(latest_frame)
 
@@ -369,7 +376,9 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert poll.dropped == 1
     assert poll.is_new
     assert poll.frame_id == 1
+    assert poll.source_timestamp == 12.5
     assert bridge.latest_frame is latest_frame
+    assert bridge.source_timestamp == 12.5
     assert bridge.reuse_presented().frame is None
 
     presented = bridge.mark_presented()
@@ -378,8 +387,10 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert presented.frame is latest_frame
     assert presented.is_new
     assert not presented.reused
+    assert presented.source_timestamp == 12.5
     assert reuse.frame is latest_frame
     assert reuse.frame_id == 1
+    assert reuse.source_timestamp == 12.5
     assert reuse.reused
 
     empty_poll = bridge.drain_latest()
@@ -387,6 +398,12 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert empty_poll.frame is None
     assert empty_poll.dequeued == 0
     assert empty_poll.frame_id == 1
+
+    rgbd_q = queue.Queue()
+    rgbd_q.put(("rgb", "depth", 23.5))
+    rgbd_poll = ScreenFrameBridge(rgbd_q).drain_latest()
+
+    assert rgbd_poll.source_timestamp == 23.5
 
 
 def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pending():
@@ -397,11 +414,13 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
 
     viewer = Viewer()
     viewer.depth_q = queue.Queue()
-    viewer._openxr_async_present_enabled = True
     viewer._openxr_screen_upload_budget_ms = 1.0
     viewer._openxr_screen_upload_budget_skip_armed = True
     viewer._pending_source_frame = object()
-    viewer._fps_breakdown_add_time = lambda *args, **kwargs: None
+    time_calls = []
+    viewer._fps_breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
+    value_calls = []
+    viewer._fps_breakdown_add_value = lambda name, value: value_calls.append((name, value))
     inc_calls = []
     viewer._fps_breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
@@ -418,19 +437,178 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
     assert viewer._openxr_screen_upload_budget_skip_armed is False
     assert ("openxr_reused_screen_frame", 1) in inc_calls
     assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
+    assert ("openxr_screen_frame_age_frames", 0.0) in value_calls
+
+
+def test_openxr_effect_submit_is_timed_outside_screen_upload():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    runtime_result = SimpleNamespace(left_eye=object(), right_eye=object(), depth=object())
+    source_q = queue.Queue()
+    source_q.put((runtime_result, 10.0))
+    viewer = Viewer()
+    viewer.depth_q = source_q
+    viewer._pending_source_frame = None
+    viewer._openxr_screen_upload_budget_ms = 0.0
+    viewer._openxr_screen_upload_budget_skip_armed = False
+    viewer._last_source_frame_time = 0.0
+    viewer._source_resume_grace_until = 0.0
+    viewer._source_stalled = False
+    viewer._source_stall_count = 0
+    viewer._session_running = False
+    viewer._session_ready_pending = False
+    viewer._render_active_event = None
+    viewer._sbs_ts_ring = []
+    time_calls = []
+    viewer._fps_breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
+    viewer._fps_breakdown_add_value = lambda name, value: None
+    viewer._fps_breakdown_inc = lambda name, amount=1: None
+
+    effect_source = object()
+    viewer._update_runtime_frame = lambda result: effect_source
+
+    assert viewer._poll_source_frame(upload=True) is True
+
+    assert viewer._pending_runtime_effect_source is effect_source
+    names = [name for name, _seconds in time_calls]
+    assert names.index("openxr_upload") < names.index("openxr_poll")
+    assert "openxr_effect_submit" not in names
+
+
+def test_runtime_effect_submit_flushes_after_frame_submit():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    submitted = []
+    source = object()
+    newer_source = object()
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._submit_runtime_effect_source_texture = lambda value: submitted.append(value)
+
+    viewer._queue_runtime_effect_submit(source)
+    viewer._queue_runtime_effect_submit(newer_source)
+    assert submitted == []
+    assert ("openxr_effect_submit_overwrite", 1) in inc_calls
+
+    viewer._flush_runtime_effect_submit()
+    assert submitted == [newer_source]
+    assert viewer._pending_runtime_effect_source is None
+
+    viewer._flush_runtime_effect_submit()
+    assert submitted == [newer_source]
+
+    def _fail_submit(_value):
+        raise RuntimeError("effect failed")
+
+    viewer._submit_runtime_effect_source_texture = _fail_submit
+    viewer._queue_runtime_effect_submit(source)
+    viewer._flush_runtime_effect_submit()
+
+    assert viewer._pending_runtime_effect_source is None
+    assert ("openxr_effect_submit_failed", 1) in inc_calls
+
+
+def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    source = object()
+    submitted = []
+    viewer._runtime_effects_need_source_texture = lambda: False
+    viewer._released = False
+    viewer._release_runtime_effect_source_texture = lambda: setattr(viewer, "_released", True)
+    viewer._submit_runtime_effect_source_texture = lambda value: submitted.append(value)
+
+    viewer._queue_runtime_effect_submit(source)
+    viewer._flush_runtime_effect_submit()
+
+    assert getattr(viewer, "_pending_runtime_effect_source", None) is None
+    assert submitted == []
+    assert viewer._released
 
 
 def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
     effects = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
+    environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
-    assert "self._runtime_effect_safe_source_tex = self._runtime_effect_source_staging_tex" in runtime_eye
+    assert "class AsyncEffectResultPool" in runtime_eye
+    assert "def ensure_staging" in runtime_eye
+    assert "def mark_ready" in runtime_eye
+    assert "def promote_ready" in runtime_eye
+    assert "def publish" in runtime_eye
+    assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
+    assert "def _publish_runtime_effect_staging_texture" in runtime_eye
+    assert "def _promote_runtime_effect_ready_texture" in runtime_eye
+    assert "_runtime_effect_spare_source_tex" in runtime_eye
+    assert "self.ready_tex = self.staging_tex" in runtime_eye
+    assert "self.safe_tex = self.ready_tex" in runtime_eye
+    assert "self.staging_tex = self.spare_tex" in runtime_eye
+    assert "self.spare_tex = old_safe_tex" in runtime_eye
     assert "openxr_effect_source_reused_safe" in runtime_eye
+    assert "openxr_effect_source_ready_publish" in runtime_eye
     assert "D2S_OPENXR_EFFECT_SOURCE_INTERVAL" in runtime_eye
     assert "openxr_effect_source_interval_skip" in runtime_eye
+    assert "openxr_effect_submit" in runtime_eye
+    assert "openxr_effect_submit_budget_skip" in runtime_eye
+    assert "openxr_effect_submit_overwrite" in source_state
+    assert "openxr_glow_downsample_render" in (
+        SRC / "xr_viewer" / "core_screen_quality.py"
+    ).read_text(encoding="utf-8")
+    assert "openxr_glow_downsample_reuse" in (
+        SRC / "xr_viewer" / "core_screen_quality.py"
+    ).read_text(encoding="utf-8")
+    assert "openxr_screen_light_source_reuse" in environment_renderer
+    assert "openxr_effect_source_safe_publish" in runtime_eye
+    assert "openxr_screen_effect_source_reuse" in effects
+    assert "_openxr_effect_submit_budget_skip_armed" in runtime_eye
+    assert "self._runtime_effect_result_state = pool.state" in runtime_eye
+    assert "self.state = 'idle'" in runtime_eye
+    assert "self.state = 'writing'" in runtime_eye
+    assert "self.state = 'ready'" in runtime_eye
+    assert "self.state = 'safe'" in runtime_eye
+    assert "return effect_source_rgb" in runtime_eye
+    assert "effect_source_rgb = self._update_runtime_frame(source_frame)" in (
+        SRC / "xr_viewer" / "core_source_state.py"
+    ).read_text(encoding="utf-8")
+    assert "self._queue_runtime_effect_submit(effect_source_rgb)" in (
+        SRC / "xr_viewer" / "core_source_state.py"
+    ).read_text(encoding="utf-8")
+    assert "self._flush_runtime_effect_submit()" in implementation
+    submit_flush_block = implementation.split("_submit_openxr_frame(composition_layers)", 1)[1].split(
+        "if loop_perf_log_enabled:", 1
+    )[0]
+    assert submit_flush_block.index("openxr_submit_frame") < submit_flush_block.index(
+        "self._flush_runtime_effect_submit()"
+    )
+    assert "self._runtime_effect_safe_source_frame_id = pool.safe_frame_id" in runtime_eye
+    assert "self.ready_frame_id = int(frame_id or 0)" in runtime_eye
+    assert "self.safe_frame_id = self.ready_frame_id" in runtime_eye
     update_block = runtime_eye.split("def _update_runtime_effect_source_texture", 1)[1].split(
         "def _release_runtime_eye_texture_resources", 1
     )[0]
+    publish_block = runtime_eye.split("def _publish_runtime_effect_staging_texture", 1)[1].split(
+        "def _promote_runtime_effect_ready_texture", 1
+    )[0]
+    promote_block = runtime_eye.split("def _promote_runtime_effect_ready_texture", 1)[1].split(
+        "def _try_update_runtime_effect_source_texture_gpu", 1
+    )[0]
+    assert "self._ensure_runtime_effect_staging_texture(w, h)" in update_block
+    assert "pool.publish(w, h, getattr(self, '_frame_count', 0))" in publish_block
+    assert "pool.promote_ready()" not in publish_block
+    assert "pool.promote_ready()" in promote_block
     assert "self._release_runtime_effect_source_texture()" not in update_block.split(
         "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1
     )[1]
@@ -439,35 +617,300 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "getattr(self, '_runtime_effect_source_tex', None)" not in effects.split(
         "def _screen_effect_source_texture", 1
     )[1].split("def _render_glow", 1)[0]
+    assert "self._runtime_effect_source_tex" not in implementation
+    assert "getattr(self, '_runtime_effect_source_tex'" not in implementation
+    assert "_runtime_effect_source_size" not in implementation
+
+
+def test_async_effect_result_pool_promotes_ready_without_touching_writing_slot(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import AsyncEffectResultPool
+
+    class Tex:
+        pass
+
+    class Ctx:
+        def __init__(self):
+            self.created = []
+
+        def texture(self, size, components, dtype):
+            tex = Tex()
+            tex.size = size
+            tex.components = components
+            tex.dtype = dtype
+            tex.filter = None
+            self.created.append(tex)
+            return tex
+
+    pool = AsyncEffectResultPool()
+    ctx = Ctx()
+
+    staging = pool.ensure_staging(ctx, 4, 2)
+    assert pool.state == "writing"
+    pool.mark_ready(4, 2, 7)
+    assert pool.state == "ready"
+    assert pool.safe_tex is None
+    assert pool.ready_tex is staging
+    assert pool.staging_tex is None
+
+    assert pool.promote_ready()
+    assert pool.state == "safe"
+    assert pool.safe_tex is staging
+    assert pool.safe_size == (4, 2)
+    assert pool.safe_frame_id == 7
+    assert pool.ready_tex is None
+
+    next_staging = pool.ensure_staging(ctx, 4, 2)
+    assert next_staging is not staging
+    assert pool.publish(4, 2, 8)
+    assert pool.state == "ready"
+    assert pool.ready_tex is next_staging
+    assert pool.safe_tex is staging
+    assert pool.safe_frame_id == 7
+
+    assert pool.promote_ready()
+    assert pool.state == "safe"
+    assert pool.safe_tex is next_staging
+    assert pool.safe_frame_id == 8
+
+
+def test_runtime_effect_ready_promotes_once_per_frame(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
+
+    class Viewer(CoreRuntimeEyeMixin):
+        pass
+
+    ready_tex = object()
+    viewer = Viewer()
+    viewer._frame_count = 11
+    viewer._runtime_effect_result_pool = SimpleNamespace(
+        ready_tex=ready_tex,
+        safe_tex=None,
+        promote_calls=0,
+        promote_ready=lambda: False,
+    )
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._sync_runtime_effect_pool_attrs = lambda: None
+
+    def _promote_ready():
+        viewer._runtime_effect_result_pool.promote_calls += 1
+        viewer._runtime_effect_result_pool.safe_tex = ready_tex
+        viewer._runtime_effect_result_pool.ready_tex = None
+        return True
+
+    viewer._runtime_effect_result_pool.promote_ready = _promote_ready
+
+    assert viewer._promote_runtime_effect_ready_texture() is ready_tex
+    assert viewer._promote_runtime_effect_ready_texture() is ready_tex
+    assert viewer._runtime_effect_result_pool.promote_calls == 1
+    assert ("openxr_effect_source_safe_publish", 1) in inc_calls
+    assert ("openxr_effect_source_promote_reuse", 1) in inc_calls
+
+    viewer._frame_count = 12
+    assert viewer._promote_runtime_effect_ready_texture() is ready_tex
+    assert viewer._runtime_effect_result_pool.promote_calls == 2
+
+
+def test_runtime_effect_submit_budget_reuses_safe_texture_on_next_frame(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
+
+    class Viewer(CoreRuntimeEyeMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._openxr_effect_submit_budget_ms = 0.001
+    viewer._openxr_effect_submit_budget_skip_armed = False
+    viewer._updated = 0
+    inc_calls = []
+    time_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
+
+    def _update(_frame):
+        viewer._updated += 1
+        time.sleep(0.001)
+
+    viewer._update_runtime_effect_source_texture = _update
+
+    viewer._submit_runtime_effect_source_texture(object())
+    viewer._submit_runtime_effect_source_texture(object())
+
+    assert viewer._updated == 1
+    assert viewer._openxr_effect_submit_budget_skip_armed is False
+    assert any(name == "openxr_effect_submit" for name, _seconds in time_calls)
+    assert ("openxr_effect_submit_budget_skip", 1) in inc_calls
+    assert ("openxr_effect_source_reused_safe", 1) in inc_calls
+
+
+def test_runtime_effect_source_missing_frame_reuses_safe_texture(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin
+
+    class Viewer(CoreRuntimeEyeMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._runtime_effects_need_source_texture = lambda: True
+    viewer._released = False
+    viewer._release_runtime_effect_source_texture = lambda: setattr(viewer, "_released", True)
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+
+    viewer._update_runtime_effect_source_texture(None)
+
+    assert not viewer._released
+    assert ("openxr_effect_source_reused_safe", 1) in inc_calls
+
 
 def test_openxr_async_phase0_diagnostics_are_wired():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
+    runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    frame_upload = (SRC / "xr_viewer" / "core_frame_upload.py").read_text(encoding="utf-8")
+    environment_renderer = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")
+    screen_quality = (SRC / "xr_viewer" / "core_screen_quality.py").read_text(encoding="utf-8")
+    breakdown = (SRC / "utils" / "breakdown.py").read_text(encoding="utf-8")
 
     for name in (
-        "openxr_screen_upload_ms",
-        "openxr_xr_wait_ms",
-        "openxr_xr_submit_ms",
+        "openxr_upload",
+        "openxr_wait_frame",
+        "openxr_swapchain_wait",
+        "openxr_end_frame",
+        "openxr_background",
+        "openxr_quad_update",
+        "openxr_quad_layer_failed",
+        "openxr_projection_render_failed",
+        "openxr_overlay_render_failed",
+        "openxr_controller_render_failed",
+        "openxr_laser_render_failed",
+        "openxr_input_trigger_failed",
+        "openxr_effect_submit",
+        "runtime_eye_d3d11",
+        "openxr_d3d11_upload",
         "openxr_layer_count",
         "openxr_new_screen_frame",
         "openxr_reused_screen_frame",
+        "openxr_screen_frame_age_frames",
+        "openxr_source_latency",
+        "openxr_screen_quality_failed",
         "openxr_screen_upload_budget_skip",
         "openxr_projection_screen_skipped",
+        "openxr_background_panorama",
+        "openxr_background_panorama_failed",
+        "openxr_background_env_model",
+        "openxr_background_env_model_failed",
+        "openxr_background_idle",
+        "openxr_effect_source_promote_reuse",
+        "openxr_wall_light_mask_loaded",
+        "openxr_wall_light_mask_missing",
+        "openxr_wall_light_mask_disabled",
+        "openxr_wall_light_mask_failed",
+        "openxr_glow_downsample_failed",
     ):
-        assert name in implementation or name in source_state
+        assert (
+            name in implementation
+            or name in source_state
+            or name in runtime_eye
+            or name in frame_upload
+            or name in environment_renderer
+            or name in screen_quality
+        )
 
-    assert "D2S_OPENXR_ASYNC_PRESENT" in implementation
+    assert "wall_mask=" in breakdown
+    assert "loaded:{rate('openxr_wall_light_mask_loaded')" in breakdown
+    assert "fx_promote_reuse={rate('openxr_effect_source_promote_reuse')" in breakdown
+    assert "screen_quality_failed={rate('openxr_screen_quality_failed')" in breakdown
+    assert "fx_ds_failed={rate('openxr_glow_downsample_failed')" in breakdown
+    assert "bg_path=panorama:{rate('openxr_background_panorama')" in breakdown
+    assert "env_failed:{rate('openxr_background_env_model_failed')" in breakdown
+    assert "overlay_failed={rate('openxr_overlay_render_failed')" in breakdown
+    assert "controller_failed={rate('openxr_controller_render_failed')" in breakdown
+    assert "laser_failed={rate('openxr_laser_render_failed')" in breakdown
+
     assert "D2S_OPENXR_SCREEN_QUAD" in implementation
     assert "D2S_OPENXR_ASYNC_EFFECTS" in implementation
     assert "D2S_OPENXR_PANORAMA_BACKGROUND" in implementation
     assert "D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS" in implementation
-    assert "'D2S_OPENXR_ASYNC_PRESENT', '1'" in implementation
+    assert "D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS" in implementation
     assert "'D2S_OPENXR_SCREEN_QUAD', '1'" in implementation
     assert "'D2S_OPENXR_ASYNC_EFFECTS', '1'" in implementation
     assert "'D2S_OPENXR_PANORAMA_BACKGROUND', '1'" in implementation
     assert "'D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS',\n            4.0" in implementation
+    assert "'D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS',\n            4.0" in implementation
     assert "self._xr_quad_layer_enabled = bool(self._openxr_screen_quad_enabled)" in implementation
     assert "kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)" not in implementation
+    assert "viewer._fps_breakdown_add_value = callbacks.breakdown_add_value" in (
+        SRC / "xr_viewer" / "openxr_runtime.py"
+    ).read_text(encoding="utf-8")
+    assert "def _wait_swapchain_image" in implementation
+    assert implementation.count("xr.wait_swapchain_image") == 1
+    assert "xr.wait_swapchain_image" not in (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
+    quad_build_block = implementation.split("updated_quad_eyes = self._update_quad_layer_swapchains()", 1)[1].split(
+        "if loop_trace_enabled:", 1
+    )[0]
+    assert "try:" in quad_build_block
+    assert "quad_layer = self._make_quad_layer(quad_eye_index)" in quad_build_block
+    assert "openxr_quad_layer_failed" in quad_build_block
+    assert "self._xr_quad_layer_active = False" in quad_build_block
+    assert "break" in quad_build_block
+    trigger_block = implementation.split("# Trigger input -fires mouse clicks", 1)[1].split(
+        "def _ensure_env_model_initialized", 1
+    )[0]
+    assert "try:" in trigger_block
+    assert "self._handle_triggers()" in trigger_block
+    assert "openxr_input_trigger_failed" in trigger_block
+    pbo_projection_block = implementation.split("# PBO fallback: two-phase loop", 1)[1].split(
+        "# Phase 2: map PBOs", 1
+    )[0]
+    assert "try:" in pbo_projection_block
+    assert "self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)" in pbo_projection_block
+    assert "openxr_projection_render_failed" in pbo_projection_block
+    assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in pbo_projection_block
+    assert "for _pending in d3d11_pending:" in pbo_projection_block
+    pbo_upload_block = implementation.split("# Phase 2: map PBOs", 1)[1].split(
+        "else:\n                    for eye_index in range(2):", 1
+    )[0]
+    assert "try:" in pbo_upload_block
+    assert "self._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)" in pbo_upload_block
+    assert "openxr_projection_render_failed" in pbo_upload_block
+    assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in pbo_upload_block
+    assert "eye_layer_views = []" in pbo_upload_block
+    opengl_projection_block = implementation.split("raw_fbo, mgl_fbo = self._get_or_create_fbo", 1)[1].split(
+        "eye_layer_views.append(xr.CompositionLayerProjectionView", 1
+    )[0]
+    assert "try:" in opengl_projection_block
+    assert "self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)" in opengl_projection_block
+    assert "openxr_projection_render_failed" in opengl_projection_block
+    assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in opengl_projection_block
+    render_eye_aux_block = implementation.split("def _try_aux_render", 1)[1].split(
+        "self.ctx.screen.use()", 1
+    )[0]
+    assert "try:" in render_eye_aux_block
+    assert "callback()" in render_eye_aux_block
+    assert "self._breakdown_inc(metric)" in render_eye_aux_block
+    assert "openxr_overlay_render_failed" in implementation
+    assert "openxr_controller_render_failed" in implementation
+    assert "openxr_laser_render_failed" in implementation
+
+
+def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    interop = (SRC / "xr_viewer" / "core_d3d_interop.py").read_text(encoding="utf-8")
+    d3d_interop = (SRC / "xr_viewer" / "d3d_interop.py").read_text(encoding="utf-8")
+
+    assert not (SRC / "xr_viewer" / "d3d11_backend.py").exists()
+    assert "glFinish" not in implementation
+    assert "glFinish" not in interop
+    assert "elif self._interop_mode == 'ext_mem'" not in implementation
+    assert "_ext_shared_tex" not in implementation
+    assert "_ext_shared_tex" not in interop
+    assert "_load_ext_memory_object" not in interop
+    assert "_load_ext_memory_object" not in d3d_interop
+    assert "_create_d3d11_shared_texture" not in d3d_interop
+    assert "_blit_ext_to_swapchain" not in interop
     assert "def _submit_openxr_frame(layers):" in implementation
 
 
@@ -488,18 +931,58 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._runtime_eye_texture_size = (1920, 1080)
 
     assert viewer._quad_layer_can_replace_projection_screen() is True
+    assert viewer._quad_layer_unavailable_reason() is None
 
     viewer._runtime_eye_textures[1] = None
+    assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
     viewer._runtime_eye_textures[1] = object()
     viewer._screen_curved = True
+    assert viewer._quad_layer_unavailable_reason() == "curved_screen"
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
     viewer._screen_curved = False
     viewer._runtime_direct_source = False
+    assert viewer._quad_layer_unavailable_reason() == "not_runtime_direct"
     assert viewer._quad_layer_can_replace_projection_screen() is False
 
     viewer._runtime_direct_source = True
     viewer._xr_quad_layer_active = False
+    assert viewer._quad_layer_unavailable_reason() == "inactive"
     assert viewer._quad_layer_can_replace_projection_screen() is False
+
+
+def test_quad_layer_pose_state_is_cached_per_frame():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    class Viewer(CoreQuadLayerMixin):
+        def _ensure_screen_dimensions(self):
+            self.screen_height = 1.35
+
+        def _screen_pose_quat_xyzw(self):
+            self.quat_calls += 1
+            return 0.0, 0.0, 0.0, 1.0
+
+    viewer = Viewer()
+    viewer.quat_calls = 0
+    viewer._frame_count = 7
+    viewer.screen_yaw = 0.1
+    viewer.screen_pitch = 0.2
+    viewer.screen_roll = 0.3
+    viewer.screen_pan_x = 0.4
+    viewer.screen_pan_y = 0.5
+    viewer.screen_distance = 2.0
+    viewer.screen_width = 2.4
+    viewer.screen_height = 1.35
+    viewer._xr_quad_layer_debug_offset = 0.0
+    viewer._xr_quad_layer_debug_logged = False
+
+    first = viewer._quad_layer_pose_state()
+    second = viewer._quad_layer_pose_state()
+    viewer._frame_count = 8
+    third = viewer._quad_layer_pose_state()
+
+    assert first is second
+    assert third is not first
+    assert viewer.quat_calls == 2

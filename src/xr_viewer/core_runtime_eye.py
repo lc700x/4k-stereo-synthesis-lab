@@ -36,6 +36,89 @@ except ImportError:
 LOGGER = logging.getLogger(__name__)
 
 
+class AsyncEffectResultPool:
+    def __init__(self):
+        self.staging_tex = None
+        self.staging_size = None
+        self.ready_tex = None
+        self.ready_size = None
+        self.ready_frame_id = 0
+        self.safe_tex = None
+        self.safe_size = None
+        self.spare_tex = None
+        self.spare_size = None
+        self.safe_frame_id = 0
+        self.state = 'idle'
+
+    def release(self):
+        released = set()
+        for tex in (self.staging_tex, self.ready_tex, self.safe_tex, self.spare_tex):
+            if tex is not None and id(tex) not in released:
+                released.add(id(tex))
+                try:
+                    tex.release()
+                except Exception:
+                    pass
+        self.staging_tex = None
+        self.staging_size = None
+        self.ready_tex = None
+        self.ready_size = None
+        self.ready_frame_id = 0
+        self.safe_tex = None
+        self.safe_size = None
+        self.spare_tex = None
+        self.spare_size = None
+        self.safe_frame_id = 0
+        self.state = 'idle'
+
+    def ensure_staging(self, ctx, w, h):
+        if self.staging_size == (w, h) and self.staging_tex is not None:
+            self.state = 'writing'
+            return self.staging_tex
+        if self.staging_tex is not None:
+            try:
+                self.staging_tex.release()
+            except Exception:
+                pass
+        tex = ctx.texture((w, h), 4, dtype='f1')
+        tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
+        self.staging_tex = tex
+        self.staging_size = (w, h)
+        self.state = 'writing'
+        return tex
+
+    def mark_ready(self, w, h, frame_id):
+        self.ready_tex = self.staging_tex
+        self.ready_size = (w, h)
+        self.ready_frame_id = int(frame_id or 0)
+        self.staging_tex = None
+        self.staging_size = None
+        self.state = 'ready'
+
+    def promote_ready(self):
+        if self.ready_tex is None:
+            self.state = 'safe' if self.safe_tex is not None else 'idle'
+            return False
+        old_safe_tex = self.safe_tex
+        old_safe_size = self.safe_size
+        self.safe_tex = self.ready_tex
+        self.safe_size = self.ready_size
+        self.safe_frame_id = self.ready_frame_id
+        self.ready_tex = None
+        self.ready_size = None
+        self.ready_frame_id = 0
+        self.staging_tex = self.spare_tex
+        self.staging_size = self.spare_size
+        self.spare_tex = old_safe_tex
+        self.spare_size = old_safe_size
+        self.state = 'safe'
+        return True
+
+    def publish(self, w, h, frame_id):
+        self.mark_ready(w, h, frame_id)
+        return True
+
+
 def _runtime_shader_render_width(value) -> int:
     if isinstance(value, (tuple, list)) and len(value) >= 1:
         try:
@@ -100,62 +183,6 @@ class CoreRuntimeEyeMixin:
             f" left=({_stats('left', runtime_result.left_eye)})"
             f" right=({_stats('right', runtime_result.right_eye)})"
         )
-
-    def _verify_runtime_eye_gpu_upload_once(self, eyes, w, h):
-        if getattr(self, '_runtime_eye_gpu_verify_done', False):
-            return True
-        self._runtime_eye_gpu_verify_done = True
-        try:
-            source_mean = self._runtime_eye_source_mean(eyes[0])
-            tex = self._runtime_eye_textures[0]
-            if tex is None:
-                return True
-            warn_cpu_transfer(
-                "OpenXR runtime eye GPU verify",
-                "GL texture readback tex.read()",
-                detail=f"size={w}x{h}",
-                key="openxr_runtime_eye_verify_tex_read",
-            )
-            data = tex.read()
-            if not data:
-                return True
-            arr = np.frombuffer(data, dtype=np.uint8)
-            if arr.size <= 0:
-                return True
-            texture_mean = float(arr.mean()) / 255.0
-            texture_max = int(arr.max())
-            print(
-                "[OpenXRViewer] runtime eye GPU upload verify:"
-                f" source_mean={source_mean if source_mean is not None else 'unknown'}"
-                f" texture_mean={texture_mean:.6f}"
-                f" texture_max={texture_max}"
-                f" size={w}x{h}",
-                flush=True,
-            )
-            if source_mean is not None and source_mean > 0.02 and texture_mean < 0.002 and texture_max <= 2:
-                self._runtime_eye_gpu_enabled = False
-                self._runtime_eye_gpu_disabled_reason = (
-                    f"runtime eye GPU upload produced black GL texture "
-                    f"(source_mean={source_mean:.6f}, texture_mean={texture_mean:.6f}, texture_max={texture_max})"
-                )
-                try:
-                    self._release_runtime_eye_texture_resources()
-                    self._release_runtime_eye_pbos()
-                except Exception:
-                    pass
-                warn_cpu_fallback(
-                    "OpenXR runtime eye GPU verify",
-                    "black_gl_texture",
-                    detail=self._runtime_eye_gpu_disabled_reason,
-                    key="openxr_runtime_eye_verify_black",
-                )
-                return False
-        except Exception as exc:
-            print(
-                f"[OpenXRViewer] runtime eye GPU upload verify skipped: {type(exc).__name__}: {exc}",
-                flush=True,
-            )
-        return True
 
     def _log_runtime_eye_difference_once(self, left_eye, right_eye):
         if getattr(self, '_runtime_eye_diff_logged', False):
@@ -258,18 +285,38 @@ class CoreRuntimeEyeMixin:
             except Exception:
                 pass
         self._runtime_effect_source_texture_uploader = None
-        for attr in ('_runtime_effect_source_staging_tex', '_runtime_effect_safe_source_tex'):
-            tex = getattr(self, attr, None)
-            if tex is not None:
-                try:
-                    tex.release()
-                except Exception:
-                    pass
-            setattr(self, attr, None)
-        self._runtime_effect_source_staging_size = None
-        self._runtime_effect_safe_source_size = None
+        self._runtime_effect_pool().release()
+        self._sync_runtime_effect_pool_attrs()
+
+    def _runtime_effect_pool(self):
+        pool = getattr(self, '_runtime_effect_result_pool', None)
+        if pool is None:
+            pool = AsyncEffectResultPool()
+            self._runtime_effect_result_pool = pool
+        return pool
+
+    def _sync_runtime_effect_pool_attrs(self):
+        pool = self._runtime_effect_pool()
+        self._runtime_effect_source_staging_tex = pool.staging_tex
+        self._runtime_effect_source_staging_size = pool.staging_size
+        self._runtime_effect_ready_source_tex = pool.ready_tex
+        self._runtime_effect_ready_source_size = pool.ready_size
+        self._runtime_effect_ready_source_frame_id = pool.ready_frame_id
+        self._runtime_effect_safe_source_tex = pool.safe_tex
+        self._runtime_effect_safe_source_size = pool.safe_size
+        self._runtime_effect_spare_source_tex = pool.spare_tex
+        self._runtime_effect_spare_source_size = pool.spare_size
+        self._runtime_effect_safe_source_frame_id = pool.safe_frame_id
+        self._runtime_effect_result_state = pool.state
 
     def _runtime_effects_need_source_texture(self):
+        if not getattr(self, '_openxr_async_effects_enabled', True):
+            return False
+        if float(getattr(self, '_screen_light_intensity', 0.0) or 0.0) > 0.0 and (
+            getattr(self, '_panorama_background_path', None)
+            or bool(getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', []))
+        ):
+            return True
         mode = str(getattr(self, '_glow_mode', '') or '').strip().lower()
         if mode not in ('screen', 'surround', 'veil', 'frosted'):
             return False
@@ -277,6 +324,29 @@ class CoreRuntimeEyeMixin:
             float(getattr(self, '_glow_intensity_multiplier', 0.0)) > 0.0
             or float(getattr(self, '_glow_shell_intensity_multiplier', 0.0)) > 0.0
         )
+
+    def _ensure_runtime_effect_staging_texture(self, w, h):
+        tex = self._runtime_effect_pool().ensure_staging(self.ctx, w, h)
+        self._sync_runtime_effect_pool_attrs()
+        return tex
+
+    def _publish_runtime_effect_staging_texture(self, w, h):
+        pool = self._runtime_effect_pool()
+        pool.publish(w, h, getattr(self, '_frame_count', 0))
+        self._sync_runtime_effect_pool_attrs()
+        self._breakdown_inc("openxr_effect_source_ready_publish")
+
+    def _promote_runtime_effect_ready_texture(self):
+        frame_id = int(getattr(self, '_frame_count', 0) or 0)
+        pool = self._runtime_effect_pool()
+        if getattr(self, '_runtime_effect_promote_frame', -1) == frame_id:
+            self._breakdown_inc("openxr_effect_source_promote_reuse")
+            return pool.safe_tex
+        self._runtime_effect_promote_frame = frame_id
+        if pool.promote_ready():
+            self._sync_runtime_effect_pool_attrs()
+            self._breakdown_inc("openxr_effect_source_safe_publish")
+        return pool.safe_tex
 
     def _try_update_runtime_effect_source_texture_gpu(self, frame, w, h):
         if not self._runtime_eye_gpu_enabled or CUDART_GL is None or BACKEND not in ("CUDA", "HIP"):
@@ -317,13 +387,7 @@ class CoreRuntimeEyeMixin:
                 prefer_image=self._runtime_eye_texture_gpu_enabled,
             )
             self._breakdown_add_time("runtime_effect_source_upload", time.perf_counter() - upload_start)
-            old_safe_tex = getattr(self, '_runtime_effect_safe_source_tex', None)
-            old_safe_size = getattr(self, '_runtime_effect_safe_source_size', None)
-            self._runtime_effect_safe_source_tex = self._runtime_effect_source_staging_tex
-            self._runtime_effect_safe_source_size = (w, h)
-            self._runtime_effect_source_staging_tex = old_safe_tex
-            self._runtime_effect_source_staging_size = old_safe_size
-            self._runtime_effect_safe_source_frame_id = int(getattr(self, '_runtime_effect_safe_source_frame_id', 0) or 0) + 1
+            self._publish_runtime_effect_staging_texture(w, h)
             self._breakdown_add_time("runtime_effect_source_total", time.perf_counter() - total_start)
             if not getattr(self, '_runtime_effect_source_gpu_logged', False):
                 print(f"[OpenXRViewer] runtime effect source GPU upload active ({upload_path}) {w}x{h}", flush=True)
@@ -363,27 +427,37 @@ class CoreRuntimeEyeMixin:
         return (frame_id % interval) == 0
 
     def _update_runtime_effect_source_texture(self, frame):
-        if frame is None or not self._runtime_effects_need_source_texture():
+        if not self._runtime_effects_need_source_texture():
             self._release_runtime_effect_source_texture()
+            return
+        if frame is None:
+            self._breakdown_inc("openxr_effect_source_reused_safe")
             return
         if not self._should_submit_runtime_effect_source():
             self._breakdown_inc("openxr_effect_source_interval_skip")
             return
         h, w = self._runtime_eye_shape_hw(frame)
-        if getattr(self, '_runtime_effect_source_staging_size', None) != (w, h):
-            tex = getattr(self, '_runtime_effect_source_staging_tex', None)
-            if tex is not None:
-                try:
-                    tex.release()
-                except Exception:
-                    pass
-            tex = self.ctx.texture((w, h), 4, dtype='f1')
-            tex.filter = (moderngl.LINEAR_MIPMAP_LINEAR, moderngl.LINEAR)
-            self._runtime_effect_source_staging_tex = tex
-            self._runtime_effect_source_staging_size = (w, h)
+        self._ensure_runtime_effect_staging_texture(w, h)
         if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):
             return
+        pool = self._runtime_effect_pool()
+        pool.state = 'safe' if pool.safe_tex is not None else 'idle'
+        self._sync_runtime_effect_pool_attrs()
         self._breakdown_inc("openxr_effect_source_reused_safe")
+
+    def _submit_runtime_effect_source_texture(self, frame):
+        if bool(getattr(self, '_openxr_effect_submit_budget_skip_armed', False)):
+            self._openxr_effect_submit_budget_skip_armed = False
+            self._breakdown_inc("openxr_effect_submit_budget_skip")
+            self._breakdown_inc("openxr_effect_source_reused_safe")
+            return
+        submit_start = time.perf_counter()
+        self._update_runtime_effect_source_texture(frame)
+        elapsed = time.perf_counter() - submit_start
+        self._breakdown_add_time("openxr_effect_submit", elapsed)
+        budget_ms = float(getattr(self, "_openxr_effect_submit_budget_ms", 0.0) or 0.0)
+        if budget_ms > 0.0:
+            self._openxr_effect_submit_budget_skip_armed = (elapsed * 1000.0) > budget_ms
 
     def _release_runtime_eye_texture_resources(self):
         uploader = getattr(self, "_runtime_eye_texture_uploader", None)
@@ -602,11 +676,8 @@ class CoreRuntimeEyeMixin:
                     key="openxr_runtime_eye_pbo_unavailable",
                 )
                 return False
-            verify_start = time.perf_counter()
-            verified = self._verify_runtime_eye_gpu_upload_once((left_rgba, right_rgba), w, h)
-            self._breakdown_add_time("runtime_eye_verify", time.perf_counter() - verify_start)
             self._breakdown_add_time("runtime_eye_total", time.perf_counter() - total_start)
-            return verified
+            return True
         except Exception as e:
             self._runtime_eye_gpu_enabled = False
             self._runtime_eye_gpu_disabled_reason = str(e)
@@ -696,12 +767,12 @@ class CoreRuntimeEyeMixin:
             source_rgb, source_depth = self._normalize_rgb_depth_runtime_source(source_rgb, runtime_result.depth)
             self._runtime_direct_source = False
             self._update_frame(source_rgb, source_depth)
-            return
+            return None
         effect_source_rgb = getattr(runtime_result, 'source_rgb', None)
         if not self._runtime_direct_enabled:
             self._runtime_direct_source = False
             self._release_runtime_effect_source_texture()
-            return
+            return None
         left_hw = self._runtime_eye_shape_hw(runtime_result.left_eye)
         right_hw = self._runtime_eye_shape_hw(runtime_result.right_eye)
         if left_hw != right_hw:
@@ -710,18 +781,18 @@ class CoreRuntimeEyeMixin:
         h, w = left_hw
         if self._use_d3d11 and self._d3d11_native_renderer is not None:
             try:
+                d3d11_start = time.perf_counter()
                 result = self._d3d11_native_renderer.update_runtime_eyes(
                     runtime_result.left_eye,
                     runtime_result.right_eye,
                 )
+                self._breakdown_add_time("runtime_eye_d3d11", time.perf_counter() - d3d11_start)
                 if result:
                     self._runtime_direct_source = True
                     self._texture_size = (w, h)
                     self.frame_size = (w, h)
                     self.screen_height = None
-                    self._update_runtime_effect_source_texture(effect_source_rgb)
-                    self._maybe_sample_glow_target_color(runtime_result.left_eye, hasattr(runtime_result.left_eye, 'detach'))
-                    return
+                    return effect_source_rgb
             except Exception as e:
                 print(f"[OpenXRViewer] D3D11 runtime eye upload failed: {e}")
             try:
@@ -765,10 +836,9 @@ class CoreRuntimeEyeMixin:
         self._texture_size = (w, h)
         self.frame_size = (w, h)
         self.screen_height = None
-        self._update_runtime_effect_source_texture(effect_source_rgb)
-        self._maybe_sample_glow_target_color(runtime_result.left_eye, hasattr(runtime_result.left_eye, 'detach'))
         if self._d3d11_native_renderer is not None:
             self._d3d11_native_renderer.has_frame = False
+        return effect_source_rgb
 
     def _apply_runtime_rgb_depth_config(self, debug_info, *, shader_uniforms=None, output_eye_size=None):
         uniforms = shader_uniforms

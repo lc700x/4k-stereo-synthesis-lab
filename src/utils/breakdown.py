@@ -60,6 +60,13 @@ class FPSBreakdown:
             self.stats[f"{name}_ms"] = self.stats.get(f"{name}_ms", 0.0) + seconds * 1000.0
             self.stats[f"{name}_count"] = self.stats.get(f"{name}_count", 0) + 1
 
+    def add_value(self, name: str, value: float) -> None:
+        if not self.enabled:
+            return
+        with self.lock:
+            self.stats[f"{name}_total"] = self.stats.get(f"{name}_total", 0.0) + float(value)
+            self.stats[f"{name}_count"] = self.stats.get(f"{name}_count", 0) + 1
+
     def set_latest(self, name: str, value) -> None:
         if not self.enabled:
             return
@@ -122,6 +129,16 @@ class FPSBreakdown:
             count = stats.get(f"{name}_count", 0)
             return stats.get(f"{name}_ms", 0.0) / count if count else 0.0
 
+        def avg_value(name: str) -> float:
+            count = stats.get(f"{name}_count", 0)
+            return stats.get(f"{name}_total", 0.0) / count if count else 0.0
+
+        quad_unavailable = ",".join(
+            f"{key[len('openxr_quad_unavailable_'):]}:{value / elapsed:.1f}"
+            for key, value in sorted(stats.items())
+            if key.startswith("openxr_quad_unavailable_") and value
+        ) or "none"
+
         print(
             "[FPSBreakdown] "
             f"target={self.target_fps}Hz "
@@ -135,6 +152,11 @@ class FPSBreakdown:
             f"rt_pending_age={avg_ms('rt_pending_age'):.2f}ms "
             f"viewer_get={rate('viewer_get'):.1f} "
             f"viewer_drop={rate('viewer_drop'):.1f} "
+            f"screen_new={rate('openxr_new_screen_frame'):.1f} "
+            f"screen_reuse={rate('openxr_reused_screen_frame'):.1f} "
+            f"screen_age={avg_value('openxr_screen_frame_age_frames'):.2f}f "
+            f"screen_quality_failed={rate('openxr_screen_quality_failed'):.1f} "
+            f"source_lat={avg_ms('openxr_source_latency'):.2f}ms "
             f"loop={rate('loops'):.1f} "
             f"xr_loop={rate('openxr_loop'):.1f} "
             f"xr_should={rate('openxr_should_render'):.1f} "
@@ -150,27 +172,62 @@ class FPSBreakdown:
             f"openxr_upload={avg_ms('openxr_upload'):.2f}ms "
             f"eye_total={avg_ms('runtime_eye_total'):.2f}ms "
             f"eye_tensor={avg_ms('runtime_eye_tensor'):.2f}ms "
-            f"eye_sync={avg_ms('runtime_eye_sync'):.2f}ms "
             f"eye_image={avg_ms('runtime_eye_image'):.2f}ms "
+            f"eye_d3d11={avg_ms('runtime_eye_d3d11'):.2f}ms "
             f"eye_mipmap={avg_ms('runtime_eye_mipmap'):.2f}ms "
-            f"eye_verify={avg_ms('runtime_eye_verify'):.2f}ms "
             f"fx_total={avg_ms('runtime_effect_source_total'):.2f}ms "
             f"fx_tensor={avg_ms('runtime_effect_source_tensor'):.2f}ms "
             f"fx_upload={avg_ms('runtime_effect_source_upload'):.2f}ms "
-            f"fx_age={avg_ms('openxr_effect_ready_age_frames'):.2f}f "
+            f"fx_submit={avg_ms('openxr_effect_submit'):.2f}ms "
+            f"fx_age={avg_value('openxr_effect_ready_age_frames'):.2f}f "
+            f"fx_ready={rate('openxr_effect_source_ready_publish'):.1f} "
+            f"fx_safe={rate('openxr_effect_source_safe_publish'):.1f} "
+            f"fx_promote_reuse={rate('openxr_effect_source_promote_reuse'):.1f} "
+            f"fx_source_reuse={rate('openxr_screen_effect_source_reuse'):.1f} "
+            f"fx_safe_reuse={rate('openxr_effect_source_reused_safe'):.1f} "
             f"fx_skip={rate('openxr_effect_source_interval_skip'):.1f} "
+            f"fx_overwrite={rate('openxr_effect_submit_overwrite'):.1f} "
+            f"fx_budget_skip={rate('openxr_effect_submit_budget_skip'):.1f} "
+            f"fx_submit_failed={rate('openxr_effect_submit_failed'):.1f} "
+            f"fx_ds_render={rate('openxr_glow_downsample_render'):.1f} "
+            f"fx_ds_reuse={rate('openxr_glow_downsample_reuse'):.1f} "
+            f"fx_ds_failed={rate('openxr_glow_downsample_failed'):.1f} "
+            f"light_ds={rate('openxr_screen_light_downsample_source'):.1f} "
+            f"light_reuse={rate('openxr_screen_light_source_reuse'):.1f} "
+            f"wall_mask="
+            f"loaded:{rate('openxr_wall_light_mask_loaded'):.1f},"
+            f"missing:{rate('openxr_wall_light_mask_missing'):.1f},"
+            f"disabled:{rate('openxr_wall_light_mask_disabled'):.1f},"
+            f"failed:{rate('openxr_wall_light_mask_failed'):.1f} "
             f"xr_poll0={avg_ms('openxr_poll_no_upload'):.2f}ms "
             f"xr_wait={avg_ms('openxr_wait_frame'):.2f}ms "
+            f"swapchain_wait={avg_ms('openxr_swapchain_wait'):.2f}ms "
             f"xr_pred={avg_ms('openxr_predicted_period'):.2f}ms "
             f"xr_submit={avg_ms('openxr_submit_frame'):.2f}ms "
             f"xr_begin={avg_ms('openxr_begin_frame'):.2f}ms "
             f"xr_sync={avg_ms('openxr_sync_actions'):.2f}ms "
             f"xr_pose={avg_ms('openxr_controller_pose'):.2f}ms "
             f"xr_input={avg_ms('openxr_controller_input'):.2f}ms "
+            f"input_trigger_failed={rate('openxr_input_trigger_failed'):.1f} "
             f"xr_poll1={avg_ms('openxr_poll_upload'):.2f}ms "
+            f"d3d11_upload={avg_ms('openxr_d3d11_upload'):.2f}ms "
+            f"d3d11_pbo={rate('openxr_d3d11_pbo_readback'):.1f} "
             f"xr_locate={avg_ms('openxr_locate_views'):.2f}ms "
             f"xr_render={avg_ms('openxr_render_eyes'):.2f}ms "
+            f"projection_failed={rate('openxr_projection_render_failed'):.1f} "
+            f"overlay_failed={rate('openxr_overlay_render_failed'):.1f} "
+            f"controller_failed={rate('openxr_controller_render_failed'):.1f} "
+            f"laser_failed={rate('openxr_laser_render_failed'):.1f} "
+            f"quad_update={avg_ms('openxr_quad_update'):.2f}ms "
+            f"quad_failed={rate('openxr_quad_layer_failed'):.1f} "
+            f"quad_unavail={quad_unavailable} "
+            f"background={avg_ms('openxr_background'):.2f}ms "
+            f"bg_path=panorama:{rate('openxr_background_panorama'):.1f},"
+            f"env:{rate('openxr_background_env_model'):.1f},"
+            f"env_failed:{rate('openxr_background_env_model_failed'):.1f},"
+            f"idle:{rate('openxr_background_idle'):.1f} "
             f"xr_layers={avg_ms('openxr_layers'):.2f}ms "
+            f"layer_count={rate('openxr_layer_count'):.1f} "
             f"xr_no_layers={avg_ms('openxr_render_no_layers'):.2f}ms "
             f"xr_end={avg_ms('openxr_end_frame'):.2f}ms "
             f"rt_loop={avg_ms('rt_loop'):.2f}ms "

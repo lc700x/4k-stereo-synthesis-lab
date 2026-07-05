@@ -1298,7 +1298,7 @@ def test_cpu_warning_helpers_cover_runtime_cpu_operations():
     assert "tensor mean .item() sync" not in core_eye_text
     assert "tensor min/max/mean .item() sync" not in core_eye_text
     assert "tensor diff mean/max .item() sync" not in core_eye_text
-    assert "GL texture readback tex.read()" in core_eye_text
+    assert "GL texture readback tex.read()" not in core_eye_text
     assert "OverlayTextureRenderer" in viewer_text
     assert "CPU RGBA texture.write" in viewer_text
     assert "CPU RGB texture.write" in viewer_text

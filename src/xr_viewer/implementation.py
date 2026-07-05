@@ -24,6 +24,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 Image.MAX_IMAGE_PIXELS = None  # Allow loading large 16K atlas images.
 from utils import ROWS, ENV_ROWS
+from utils.cpu_warnings import warn_cpu_fallback
 from viewer.assets import get_font_type
 from OpenGL.GL import (
     glGenFramebuffers, glBindFramebuffer, glFramebufferTexture2D,
@@ -45,7 +46,7 @@ from OpenGL.GL import (
     glTexParameterf, GL_TEXTURE_LOD_BIAS,
     glMapBuffer, glUnmapBuffer, GL_READ_ONLY, GL_MAP_UNSYNCHRONIZED_BIT,
     glClear, glReadPixels, glFlush, glGenTextures, glDeleteTextures,
-    glFinish, glGetError, GL_NO_ERROR
+    glGetError, GL_NO_ERROR
 )
 
 try:
@@ -131,7 +132,6 @@ from .core_controller_actions import CoreControllerActionsMixin
 from .core_controller_pose import CoreControllerPoseMixin
 from .core_d3d_interop import CoreD3DInteropMixin
 from .core_frame_upload import CoreFrameUploadMixin
-from .core_glow import CoreGlowMixin
 from .core_keyboard import CoreKeyboardMixin
 from .core_input_helpers import CoreInputHelpersMixin
 from .core_laser_render import CoreLaserRenderMixin
@@ -150,7 +150,7 @@ from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .filters import *
 
-class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, CoreGlowMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
+class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
     """
     Renders the depth-parallax stereo views into a VR headset using OpenXR.
 
@@ -216,16 +216,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._runtime_eye_textures = [None, None]
         self._runtime_depth_texture = None
         self._runtime_eye_texture_size = None
-        self._runtime_effect_source_tex = None
-        self._runtime_effect_source_size = None
 
         def _bool_env_option(key, env_name, default):
             value = kwargs.get(key, os.environ.get(env_name, default))
             return str(value or default).strip().lower() in ('1', 'true', 'yes', 'on')
 
-        self._openxr_async_present_enabled = _bool_env_option(
-            'openxr_async_present', 'D2S_OPENXR_ASYNC_PRESENT', '1'
-        )
         self._openxr_screen_quad_enabled = _bool_env_option(
             'openxr_screen_quad', 'D2S_OPENXR_SCREEN_QUAD', '1'
         )
@@ -243,8 +238,16 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             0.0,
             1000.0,
         )
+        self._openxr_effect_submit_budget_ms = _float_option(
+            kwargs,
+            'openxr_effect_submit_budget_ms',
+            'D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS',
+            4.0,
+            0.0,
+            1000.0,
+        )
         self._openxr_screen_upload_budget_skip_armed = False
-        self._last_openxr_screen_upload_ms = 0.0
+        self._openxr_effect_submit_budget_skip_armed = False
         self._runtime_direct_enabled = str(
             kwargs.get('openxr_runtime_direct', os.environ.get('D2S_OPENXR_RUNTIME_DIRECT', '1')) or '1'
         ).strip().lower() not in ('0', 'false', 'no', 'off')
@@ -390,14 +393,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._glow_mode = str(kwargs.get('glow_mode', 'screen')).strip().lower() or 'screen'
         self._glow_ref_screen = float(kwargs.get('glow_ref_screen', 2.4))
         self._glow_color = tuple(kwargs.get('glow_color', (0.30, 0.55, 1.0)))
-        self._glow_target_color = self._glow_color
-        self._glow_color_counter = 0
-        self._screen_light_colors = tuple([self._glow_color] * _GLOW_GRID_COUNT)
-        self._screen_light_target_colors = self._screen_light_colors
         self._screen_light_intensity = float(kwargs.get('screen_light_intensity', 3.5))
-        self._screen_light_dynamic = bool(kwargs.get('screen_light_dynamic', False))
-        self._screen_light_sample_interval = max(1, int(kwargs.get('screen_light_sample_interval', 15)))
-        self._screen_light_lerp = max(0.0, min(1.0, float(kwargs.get('screen_light_lerp', 0.14))))
         self._controller_hdr_lighting = bool(kwargs.get('controller_hdr_lighting', False))
         self._env_model_path = None
         self._env_model_prims = []        # list of {'vao', 'vbo', 'ibo', 'tex_key', 'tri_count'}
@@ -466,9 +462,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             'xr_quad_layer_debug_offset': self._xr_quad_layer_debug_offset,
             'xr_quad_layer_stereo_boost': self._xr_quad_layer_stereo_boost,
             'screen_light_intensity': self._screen_light_intensity,
-            'screen_light_dynamic': self._screen_light_dynamic,
-            'screen_light_sample_interval': self._screen_light_sample_interval,
-            'screen_light_lerp': self._screen_light_lerp,
             'controller_hdr_lighting': self._controller_hdr_lighting,
         }
         self._configure_environment_profile()
@@ -1040,11 +1033,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._cpu_pbo_depth         = None
         self._cpu_pbo_size          = (0, 0)
 
-        # GPU interop state (NV_DX_interop2 or EXT_memory_object) for zero-copy
-        self._interop_mode      = None   # 'nv_dx' | 'ext_mem' | None (PBO fallback)
+        # GPU interop state. NV_DX_interop2 is the only no-wait GL/D3D path;
+        # D3D11 native rendering and PBO fallback cover the other runtimes.
+        self._interop_mode      = None   # 'nv_dx' | None (PBO fallback)
         self._nv_dx_device      = None   # HANDLE from wglDXOpenDeviceNV
         self._nv_dx_objects     = {}     # {img_index: GL_tex_id} for registered swapchain textures
-        self._ext_shared_tex    = {}     # {(eye): (d3d11_tex, gl_mem_obj, gl_tex, mgl_fbo)}
 
         # ModernGL / GL handles
         self.window = None
@@ -1077,6 +1070,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._panorama_vbo = None
         self._panorama_tex = None
         self._panorama_tex_path = None
+        self._panorama_light_mask_tex = None
+        self._panorama_light_mask_path = None
+        self._panorama_light_mask_missing_path = None
 
     # Initialisation helpers
     def _init_moderngl(self):
@@ -1141,9 +1137,16 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             fragment_shader=_PANORAMA_FRAG,
         )
         self._panorama_prog['u_tex'].value = 8
+        self._panorama_prog['u_screen_light_tex'].value = 10
+        self._panorama_prog['u_wall_light_mask_tex'].value = 11
         self._panorama_prog['u_yaw_offset'].value = 0.0
         self._panorama_prog['u_exposure'].value = 1.0
         self._panorama_prog['u_flip_y'].value = 0
+        self._panorama_prog['u_screen_light_enabled'].value = 0
+        self._panorama_prog['u_wall_light_mask_enabled'].value = 0
+        self._panorama_prog['u_screen_light_intensity'].value = 0.0
+        self._panorama_prog['u_screen_light_uv'].value = (0.5, 0.5)
+        self._panorama_prog['u_screen_light_radius'].value = (0.16, 0.10)
         panorama_vertices = np.array([
             -1.0, -1.0,
              1.0, -1.0,
@@ -1487,26 +1490,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
     # Screen transform helpers
 
-    def _quad_layer_can_replace_projection_screen(self):
-        if not getattr(self, '_xr_quad_layer_enabled', False):
-            return False
-        if not getattr(self, '_xr_quad_layer_active', False):
-            return False
-        if getattr(self, '_xr_quad_layer_failed', False):
-            return False
-        if getattr(self, '_screen_curved', False):
-            return False
-        if not getattr(self, '_runtime_direct_source', False):
-            return False
-        if 0 not in self._quad_swapchains or 1 not in self._quad_swapchains:
-            return False
-        source0, size0, _flip0 = self._quad_layer_source_texture(0)
-        source1, size1, _flip1 = self._quad_layer_source_texture(1)
-        return source0 is not None and source1 is not None and size0 is not None and size1 is not None
-
-    def _update_quad_layer_swapchain(self, eye_index):
-        return super()._update_quad_layer_swapchain(eye_index)
-
     # Compatibility note for text-based tests:
     # display_height_m = float(width_m) * 9.0 / 16.0
 
@@ -1720,6 +1703,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         Uses GL_BGRA for BGRA swapchains (WMR) so the byte order matches D3D11 directly.
         """
+        warn_cpu_fallback(
+            "OpenXR D3D11 projection submit",
+            "pbo_glreadpixels",
+            detail=f"size={w}x{h}",
+            key="openxr_d3d11_projection_pbo_readback",
+        )
+        self._breakdown_inc("openxr_d3d11_pbo_readback")
         pixel_fmt = GL_BGRA if self._swapchain_is_bgra else GL_RGBA
         glBindFramebuffer(GL_FRAMEBUFFER, raw_fbo_id)
         glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_id)
@@ -1771,8 +1761,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 glReadBuffer(GL_COLOR_ATTACHMENT0)
                 glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
                 glBlitFramebuffer(0, 0, sc_w, sc_h, 0, 0, pw, ph,
-                                  GL_COLOR_BUFFER_BIT, GL_LINEAR)
+                                                  GL_COLOR_BUFFER_BIT, GL_LINEAR)
             glfw.swap_buffers(self.window)
+        self._flush_runtime_effect_submit()
         return True
 
     def _screen_uv_to_world(self, u, v):
@@ -2147,6 +2138,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             perf_marks.append((label, (now - perf_last) * 1000.0))
             perf_last = now
 
+        def _try_aux_render(metric, label, callback):
+            try:
+                callback()
+                return True
+            except Exception as exc:
+                self._breakdown_inc(metric)
+                print(f"[OpenXRViewer] {label} render failed: {type(exc).__name__}: {exc}")
+                mgl_fbo.use()
+                self.ctx.viewport = (0, 0, sc_w, sc_h)
+                self.ctx.disable(moderngl.BLEND)
+                self.ctx.depth_mask = True
+                self.ctx.enable(moderngl.DEPTH_TEST)
+                return False
+
         # The swapchain is GL_SRGB8_ALPHA8, but the desktop capture texture is already
         # gamma-encoded.  Disabling GL_FRAMEBUFFER_SRGB prevents AMD (and compliant
         # drivers) from applying a second sRGB encoding pass on write, which would
@@ -2195,20 +2200,34 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # reflection light disabled while the second eye rendered it enabled
         # (left-eye flicker).
         self._ensure_screen_dimensions()
+        background_start = time.perf_counter()
+        background_rendered = False
         if getattr(self, '_panorama_background_path', None):
-            self._render_panorama_background(mgl_fbo, view_mat, proj_mat)
-            mgl_fbo.use()
-            glClear(GL_DEPTH_BUFFER_BIT)
+            if self._render_panorama_background(mgl_fbo, view_mat, proj_mat):
+                if eye_index == 0:
+                    self._breakdown_inc('openxr_background_panorama')
+                background_rendered = True
+                mgl_fbo.use()
+                glClear(GL_DEPTH_BUFFER_BIT)
         # -3. Environment model (glTF 3D scene, very back) -background layer only
         if self._env_model_visible and self._env_model_prims:
+            if eye_index == 0:
+                self._breakdown_inc('openxr_background_env_model')
+            background_rendered = True
             self._render_env_model(mgl_fbo, vp_mat, view_mat)
             mgl_fbo.use()
             glClear(GL_DEPTH_BUFFER_BIT)
+        if not background_rendered:
+            if eye_index == 0:
+                self._breakdown_inc('openxr_background_idle')
+        self._breakdown_add_time('openxr_background', time.perf_counter() - background_start)
         if perf_enabled:
             _mark_perf('env')
 
-        draw_projection_screen = not self._quad_layer_can_replace_projection_screen()
+        quad_unavailable_reason = self._quad_layer_unavailable_reason()
+        draw_projection_screen = quad_unavailable_reason is not None
         if draw_projection_screen:
+            self._breakdown_inc(f"openxr_quad_unavailable_{quad_unavailable_reason}")
             # Optional screen effects behind the desktop quad (normal viewer only).
             self._render_screen_background_effects(mgl_fbo, vp_mat)
             if perf_enabled:
@@ -2386,79 +2405,107 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _mark_perf('border')
         # 3. Keyboard
         if self._keyboard_visible and self._keyboard_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_keyboard(mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'keyboard', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_keyboard(mgl_fbo, vp_mat),
+            ))
         if perf_enabled:
             _mark_perf('keyboard')
 
         # 5. Depth OSD (floating panel, always checked; method handles its own alpha)
         if self._depth_osd_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_depth_osd(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'depth OSD', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_depth_osd(eye_index, mgl_fbo, vp_mat),
+            ))
 
         # 5b. Screen-info OSD (size + distance, shown while right grip + stick adjusts)
         if self._screen_osd_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_screen_osd(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'screen OSD', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_screen_osd(eye_index, mgl_fbo, vp_mat),
+            ))
 
         # 5c. Preset OSD (name, shown briefly after cycling presets with Y button)
         if self._preset_osd_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_preset_osd(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'preset OSD', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_preset_osd(eye_index, mgl_fbo, vp_mat),
+            ))
         # 6b. Brand OSD (controller model indicator, attached to right controller)
         if self._brand_osd_tex is not None and self._grip_mat_r is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_brand_osd(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'brand OSD', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_brand_osd(eye_index, mgl_fbo, vp_mat),
+            ))
 
         # 6c. Seat adjustment OSD
         if self._seat_adjust_osd_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_seat_adjust_osd(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'seat OSD', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_seat_adjust_osd(eye_index, mgl_fbo, vp_mat),
+            ))
 
         # 7. Laser beam (opaque rainbow) -rendered behind controllers so the
         # controller ring and body correctly occlude the beam near its origin.
-        self.ctx.viewport = (0, 0, sc_w, sc_h)
-        self._render_lasers(mgl_fbo, vp_mat, blend=False)
+        _try_aux_render('openxr_laser_render_failed', 'laser beam', lambda: (
+            setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+            self._render_lasers(mgl_fbo, vp_mat, blend=False),
+        ))
 
         # 8. VR Controller models -rendered on top of the opaque laser beam.
         if self._ctrl_prims_l or self._ctrl_prims_r:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = True
-            glFrontFace(GL_CCW)
-            self._render_controllers(mgl_fbo, vp_mat, view_mat)
+            _try_aux_render('openxr_controller_render_failed', 'controller', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self.ctx.disable(moderngl.BLEND),
+                setattr(self.ctx, 'depth_mask', True),
+                glFrontFace(GL_CCW),
+                self._render_controllers(mgl_fbo, vp_mat, view_mat),
+            ))
 
         # 9. Laser hit circles (semi-transparent) -rendered on top of controllers.
-        self.ctx.viewport = (0, 0, sc_w, sc_h)
-        self.ctx.disable(moderngl.DEPTH_TEST)
-        self.ctx.depth_mask = False
-        self.ctx.enable(moderngl.BLEND)
-        self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-        self._render_lasers(mgl_fbo, vp_mat, blend=True)
+        _try_aux_render('openxr_laser_render_failed', 'laser hit circle', lambda: (
+            setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+            self.ctx.disable(moderngl.DEPTH_TEST),
+            setattr(self.ctx, 'depth_mask', False),
+            self.ctx.enable(moderngl.BLEND),
+            setattr(self.ctx, 'blend_func', (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)),
+            self._render_lasers(mgl_fbo, vp_mat, blend=True),
+        ))
         self.ctx.disable(moderngl.BLEND)
         self.ctx.depth_mask = True
         self.ctx.enable(moderngl.DEPTH_TEST)
 
         # 10. FPS/status overlays -topmost UI, occlude laser beams
         if self._hand_fps_visible and self._overlay_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_fps_overlay(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'FPS overlay', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_fps_overlay(eye_index, mgl_fbo, vp_mat),
+            ))
         if self._team_fps_visible and self._team_status_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_team_status_overlay(eye_index, mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'team status overlay', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_team_status_overlay(eye_index, mgl_fbo, vp_mat),
+            ))
 
         # 11. Calibration panel (also topmost, shown when in calibration mode -occludes everything else)
         if self._calibration_mode:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_calibration_panel(mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'calibration panel', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_calibration_panel(mgl_fbo, vp_mat),
+            ))
 
         # 12. Help panels
         if self._fps_overlay_visible and self._help_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_help_panel(mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'help panel', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_help_panel(mgl_fbo, vp_mat),
+            ))
         if self._team_status_visible and self._team_help_visible and self._team_help_tex is not None:
-            self.ctx.viewport = (0, 0, sc_w, sc_h)
-            self._render_team_help_panel(mgl_fbo, vp_mat)
+            _try_aux_render('openxr_overlay_render_failed', 'team help panel', lambda: (
+                setattr(self.ctx, 'viewport', (0, 0, sc_w, sc_h)),
+                self._render_team_help_panel(mgl_fbo, vp_mat),
+            ))
         if perf_enabled:
             _mark_perf('osd')
 
@@ -4150,7 +4197,38 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._kb_border_alpha = max(0.0, 1.0 - (idle - FADE_DELAY) / FADE_DUR)
 
         # Trigger input -fires mouse clicks (skips keys claimed by keyboard)
-        self._handle_triggers()
+        try:
+            self._handle_triggers()
+        except Exception as exc:
+            self._breakdown_inc('openxr_input_trigger_failed')
+            print(f"[OpenXRViewer] Trigger input failed: {type(exc).__name__}: {exc}")
+
+    def _ensure_env_model_initialized(self, label):
+        if self._env_model_init_done:
+            return
+        self._env_model_init_done = True
+        if getattr(self, '_panorama_background_path', None):
+            get_panorama_texture = getattr(self, '_get_panorama_texture', None)
+            if callable(get_panorama_texture):
+                get_panorama_texture()
+            get_panorama_light_mask_texture = getattr(self, '_get_panorama_light_mask_texture', None)
+            if callable(get_panorama_light_mask_texture):
+                get_panorama_light_mask_texture()
+        if (
+            not getattr(self, '_environment_enabled', True)
+            or getattr(self, '_panorama_background_path', None)
+            or getattr(self, '_env_model_path', None) is None
+        ):
+            self._env_model_visible = False
+            self._env_model_prims = []
+            return
+        self._init_env_model()
+        print(f"[OpenXRViewer] {label} env model: {len(self._env_model_prims)} prims")
+
+    def _wait_swapchain_image(self, swapchain):
+        wait_start = time.perf_counter()
+        xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
+        self._breakdown_add_time('openxr_swapchain_wait', time.perf_counter() - wait_start)
 
     # Main blocking loop
     def run(self, first_rgb=None, first_depth=None, first_runtime_result=None, first_frame_ts=None):
@@ -4205,7 +4283,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         # Upload the first frame supplied by main.py
         if first_runtime_result is not None:
-            self._update_runtime_frame(first_runtime_result)
+            effect_source_rgb = self._update_runtime_frame(first_runtime_result)
+            self._queue_runtime_effect_submit(effect_source_rgb)
             if first_frame_ts is not None:
                 self.total_latency = (time.perf_counter() - first_frame_ts) * 1000.0
         elif first_rgb is not None and first_depth is not None:
@@ -4237,10 +4316,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._poll_frosted_glow_hotkeys()
             if self._preview_only_mode:
                 self._refresh_headset_wait_inference_timeout(now)
-                if not self._env_model_init_done:
-                    self._env_model_init_done = True
-                    self._init_env_model()
-                    print(f"[OpenXRViewer] Preview-only env model: {len(self._env_model_prims)} prims")
+                self._ensure_env_model_initialized("Preview-only")
                 if self._waiting_retry_notice_pending:
                     print(
                         f"[OpenXRViewer] Waiting for VR headset connect... "
@@ -4287,7 +4363,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             xr_wait_start = time.perf_counter() if loop_breakdown_enabled else 0.0
             frame_state = xr.wait_frame(self._xr_session, self._xr_frame_wait_info)
             if loop_breakdown_enabled:
-                self._breakdown_add_time('openxr_xr_wait_ms', time.perf_counter() - xr_wait_start)
+                self._breakdown_add_time('openxr_wait_frame', time.perf_counter() - xr_wait_start)
                 predicted_time = getattr(frame_state, 'predicted_display_time', None)
                 previous_time = getattr(self, '_last_xr_predicted_display_time', None)
                 self._last_xr_predicted_display_time = predicted_time
@@ -4362,7 +4438,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     ),
                 )
                 if loop_breakdown_enabled:
-                    self._breakdown_add_time('openxr_xr_submit_ms', time.perf_counter() - xr_submit_start)
+                    self._breakdown_add_time('openxr_end_frame', time.perf_counter() - xr_submit_start)
 
             session_idle_timeout = self._track_session_idle_render(frame_state.should_render, now)
             if frame_state.should_render:
@@ -4387,6 +4463,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         _loop_mark('end_frame')
                     if loop_breakdown_enabled:
                         self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
+                    self._flush_runtime_effect_submit()
                     if session_idle_timeout:
                         if not self._hard_idle_active:
                             print(
@@ -4409,14 +4486,12 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         _loop_mark('end_frame')
                     if loop_breakdown_enabled:
                         self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
+                    self._flush_runtime_effect_submit()
                     time.sleep(0.01)
                     continue
 
-            # Lazy init: load environment model after OpenXR session is running
-            if not self._env_model_init_done:
-                self._env_model_init_done = True
-                self._init_env_model()
-                print(f"[OpenXRViewer] Lazy env model: {len(self._env_model_prims)} prims")
+            # Lazy init: load environment model after OpenXR session is running.
+            self._ensure_env_model_initialized("Lazy")
 
             if frame_state.should_render:
                 # Drain depth_q non-blocking -keep only the newest frame
@@ -4505,7 +4580,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         for eye_index in range(2):
                             swapchain = self._xr_swapchains[eye_index]
                             img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-                            xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
+                            self._wait_swapchain_image(swapchain)
                             released = False
                             try:
                                 sc_image = self._swapchain_images[eye_index][img_index]
@@ -4585,7 +4660,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         for eye_index in range(2):
                             swapchain = self._xr_swapchains[eye_index]
                             img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-                            xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
+                            self._wait_swapchain_image(swapchain)
                             released = False
                             try:
                                 sc_image = self._swapchain_images[eye_index][img_index]
@@ -4631,35 +4706,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         if nv_interop_failed:
                             pass
 
-                    elif self._interop_mode == 'ext_mem':
-                        # EXT_memory_object: render to shared GL FBO, GPU-side blit to swapchain
-                        for eye_index in range(2):
-                            swapchain = self._xr_swapchains[eye_index]
-                            img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-                            xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
-                            sc_image = self._swapchain_images[eye_index][img_index]
-                            sc_w, sc_h = self._swapchain_sizes[eye_index]
-                            view = views[eye_index] if views and views[eye_index] else None
-                            view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                            proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
-
-                            mgl_fbo = self._ext_shared_tex[eye_index][3]
-                            self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)
-                            self._blit_ext_to_swapchain(eye_index, sc_image.texture)
-
-                            xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                            eye_layer_views.append(xr.CompositionLayerProjectionView(
-                                pose=view.pose if view else xr.Posef(),
-                                fov=view.fov   if view else _default_fov,
-                                sub_image=xr.SwapchainSubImage(
-                                    swapchain=swapchain,
-                                    image_rect=xr.Rect2Di(
-                                        offset=xr.Offset2Di(x=0, y=0),
-                                        extent=xr.Extent2Di(width=sc_w, height=sc_h),
-                                    ),
-                                ),
-                            ))
-
                     else:
                         # PBO fallback: two-phase loop to overlap GPU DMA with rendering.
                         d3d11_pending = []   # (eye_index, pbo_id, d3d11_tex, sc_w, sc_h, swapchain, view)
@@ -4667,24 +4713,55 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         for eye_index in range(2):
                             swapchain = self._xr_swapchains[eye_index]
                             img_index = xr.acquire_swapchain_image(swapchain, self._xr_sc_acquire_info)
-                            xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
-                            sc_image = self._swapchain_images[eye_index][img_index]
-                            sc_w, sc_h = self._swapchain_sizes[eye_index]
-                            view = views[eye_index] if views and views[eye_index] else None
-                            view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                            proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
+                            self._wait_swapchain_image(swapchain)
+                            released = False
+                            try:
+                                sc_image = self._swapchain_images[eye_index][img_index]
+                                sc_w, sc_h = self._swapchain_sizes[eye_index]
+                                view = views[eye_index] if views and views[eye_index] else None
+                                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
+                                proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
 
-                            mgl_fbo, raw_fbo_id = self._get_or_create_offscreen_fbo(eye_index, img_index, sc_w, sc_h)
-                            self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)
+                                mgl_fbo, raw_fbo_id = self._get_or_create_offscreen_fbo(eye_index, img_index, sc_w, sc_h)
+                                self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)
 
-                            pbo_id = self._get_or_create_d3d11_pbo(eye_index, img_index, sc_w, sc_h)
-                            self._submit_pbo_readback(raw_fbo_id, pbo_id, sc_w, sc_h)
-                            d3d11_pending.append((eye_index, pbo_id, sc_image.texture, sc_w, sc_h, swapchain, view))
+                                pbo_id = self._get_or_create_d3d11_pbo(eye_index, img_index, sc_w, sc_h)
+                                self._submit_pbo_readback(raw_fbo_id, pbo_id, sc_w, sc_h)
+                                d3d11_pending.append((eye_index, pbo_id, sc_image.texture, sc_w, sc_h, swapchain, view))
+                                released = True
+                            except Exception as exc:
+                                if not released:
+                                    try:
+                                        xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                                    except Exception:
+                                        pass
+                                self._breakdown_inc('openxr_projection_render_failed')
+                                print(f"[OpenXRViewer] D3D11 PBO projection render failed: {type(exc).__name__}: {exc}")
+                                for _pending in d3d11_pending:
+                                    try:
+                                        xr.release_swapchain_image(_pending[5], self._xr_sc_release_info)
+                                    except Exception:
+                                        pass
+                                d3d11_pending = []
+                                break
 
                         # Phase 2: map PBOs (DMA should be done), upload, release.
                         for eye_index, pbo_id, d3d11_tex, sc_w, sc_h, swapchain, view in d3d11_pending:
-                            self._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)
-                            xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                            released = False
+                            try:
+                                self._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)
+                                xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                                released = True
+                            except Exception as exc:
+                                self._breakdown_inc('openxr_projection_render_failed')
+                                print(f"[OpenXRViewer] D3D11 PBO projection upload failed: {type(exc).__name__}: {exc}")
+                                if not released:
+                                    try:
+                                        xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                                    except Exception:
+                                        pass
+                                eye_layer_views = []
+                                break
                             eye_layer_views.append(xr.CompositionLayerProjectionView(
                                 pose=view.pose if view else xr.Posef(),
                                 fov=view.fov   if view else _default_fov,
@@ -4704,30 +4781,42 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         img_index = xr.acquire_swapchain_image(
                             swapchain, self._xr_sc_acquire_info
                         )
-                        xr.wait_swapchain_image(swapchain, self._xr_sc_wait_info)
+                        self._wait_swapchain_image(swapchain)
+                        released = False
+                        try:
+                            sc_image = self._swapchain_images[eye_index][img_index]
+                            sc_w, sc_h = self._swapchain_sizes[eye_index]
 
-                        sc_image = self._swapchain_images[eye_index][img_index]
-                        sc_w, sc_h = self._swapchain_sizes[eye_index]
+                            view = views[eye_index] if views and views[eye_index] else None
+                            view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
+                            proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
 
-                        view = views[eye_index] if views and views[eye_index] else None
-                        view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                        proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
+                            raw_fbo, mgl_fbo = self._get_or_create_fbo(eye_index, img_index, sc_image.image, sc_w, sc_h)
+                            self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)
 
-                        raw_fbo, mgl_fbo = self._get_or_create_fbo(eye_index, img_index, sc_image.image, sc_w, sc_h)
-                        self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)
+                            # Desktop preview: blit left eye to GLFW window
+                            if self._preview_active and eye_index == 0:
+                                pw, ph = glfw.get_window_size(self.window)
+                                if pw > 0 and ph > 0:
+                                    glBindFramebuffer(GL_READ_FRAMEBUFFER, raw_fbo)
+                                    glReadBuffer(GL_COLOR_ATTACHMENT0)
+                                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
+                                    glBlitFramebuffer(0, 0, sc_w, sc_h, 0, 0, pw, ph,
+                                                      GL_COLOR_BUFFER_BIT, GL_LINEAR)
+                                    glfw.swap_buffers(self.window)
 
-                        # Desktop preview: blit left eye to GLFW window
-                        if self._preview_active and eye_index == 0:
-                            pw, ph = glfw.get_window_size(self.window)
-                            if pw > 0 and ph > 0:
-                                glBindFramebuffer(GL_READ_FRAMEBUFFER, raw_fbo)
-                                glReadBuffer(GL_COLOR_ATTACHMENT0)
-                                glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
-                                glBlitFramebuffer(0, 0, sc_w, sc_h, 0, 0, pw, ph,
-                                                  GL_COLOR_BUFFER_BIT, GL_LINEAR)
-                                glfw.swap_buffers(self.window)
-
-                        xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                            xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                            released = True
+                        except Exception as exc:
+                            if not released:
+                                try:
+                                    xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
+                                except Exception:
+                                    pass
+                            self._breakdown_inc('openxr_projection_render_failed')
+                            print(f"[OpenXRViewer] OpenGL projection render failed: {type(exc).__name__}: {exc}")
+                            eye_layer_views = []
+                            break
 
                         eye_layer_views.append(xr.CompositionLayerProjectionView(
                             pose=view.pose if view else xr.Posef(),
@@ -4754,15 +4843,25 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                     )
                     quad_layers = []
                     if self._quad_layer_can_replace_projection_screen():
-                        for quad_eye_index in self._update_quad_layer_swapchains():
-                            quad_layer = self._make_quad_layer(quad_eye_index)
-                            if quad_layer is None:
-                                continue
-                            quad_layers.append(quad_layer)
-                            composition_layers.append(
-                                ctypes.cast(ctypes.pointer(quad_layer),
-                                            ctypes.POINTER(xr.CompositionLayerBaseHeader))
-                            )
+                        quad_update_start = time.perf_counter()
+                        updated_quad_eyes = self._update_quad_layer_swapchains()
+                        self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
+                        for quad_eye_index in updated_quad_eyes:
+                            try:
+                                quad_layer = self._make_quad_layer(quad_eye_index)
+                                if quad_layer is None:
+                                    continue
+                                quad_layers.append(quad_layer)
+                                composition_layers.append(
+                                    ctypes.cast(ctypes.pointer(quad_layer),
+                                                ctypes.POINTER(xr.CompositionLayerBaseHeader))
+                                )
+                            except Exception as exc:
+                                self._xr_quad_layer_active = False
+                                self._xr_quad_layer_failed = True
+                                self._breakdown_inc('openxr_quad_layer_failed')
+                                print(f"[OpenXRViewer] Quad layer build failed: {type(exc).__name__}: {exc}")
+                                break
                     if loop_trace_enabled:
                         _loop_mark('layers')
                 else:
@@ -4774,6 +4873,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _loop_mark('end_frame')
             if loop_breakdown_enabled:
                 self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
+            self._flush_runtime_effect_submit()
             if loop_perf_log_enabled:
                 loop_total_ms = (time.perf_counter() - loop_t0) * 1000.0
                 loop_log_now = time.perf_counter()
@@ -4920,6 +5020,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         for tex in (
             self._overlay_tex,
             self._panorama_tex,
+            self._panorama_light_mask_tex,
             self._team_status_tex,
             self._team_help_tex,
             self._depth_osd_tex,
@@ -4938,6 +5039,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._overlay_tex = None
         self._panorama_tex = None
         self._panorama_tex_path = None
+        self._panorama_light_mask_tex = None
+        self._panorama_light_mask_path = None
+        self._panorama_light_mask_missing_path = None
         self._team_status_tex = None
         self._team_help_tex = None
         self._depth_osd_tex = None

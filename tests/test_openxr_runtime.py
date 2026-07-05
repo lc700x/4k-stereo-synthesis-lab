@@ -741,7 +741,7 @@ def _publish_effect_safe(scheduler, tex, size=(640, 360), frame_id=3):
     scheduler.poll_completed()
 
 
-def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
+def test_runtime_effect_submit_flush_prewarms_downsample_after_submit():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter
 
@@ -749,13 +749,15 @@ def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
         pass
 
     viewer = Viewer()
+    prewarm_calls = []
     viewer._runtime_effect_submit_scheduler().queue_source(object())
     viewer._submit_runtime_effect_source_texture = lambda _value: None
-    viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("flush should not prewarm")
+    viewer._prewarm_runtime_effect_downsample = lambda: prewarm_calls.append(True)
 
     assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
+    assert prewarm_calls == [True]
 
 
 def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
@@ -820,6 +822,7 @@ def test_runtime_effect_submit_budget_skip_does_not_call_submit():
     viewer._openxr_effect_submit_budget_skip_armed = True
     viewer._runtime_effect_submit_scheduler().queue_source(pending)
     viewer._submit_runtime_effect_source_texture = lambda _value: pytest.fail("budget skip should not submit")
+    viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)

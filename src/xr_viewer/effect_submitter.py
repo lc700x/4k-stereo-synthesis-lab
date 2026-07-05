@@ -55,4 +55,8 @@ class EffectSubmitter:
             return True
         if status == "skipped":
             self._breakdown_inc("openxr_effect_downsample_prewarm_skip")
+        elif status == "submitted":
+            prewarm = getattr(viewer, "_prewarm_runtime_effect_downsample", None)
+            if callable(prewarm):
+                prewarm()
         return True

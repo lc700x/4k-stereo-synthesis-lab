@@ -674,6 +674,42 @@ def test_async_effect_result_pool_promotes_ready_without_touching_writing_slot(m
     assert pool.safe_frame_id == 8
 
 
+def test_async_effect_result_pool_reuses_overwritten_ready_as_spare(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.core_runtime_eye import AsyncEffectResultPool
+
+    class Tex:
+        def __init__(self):
+            self.release_calls = 0
+
+        def release(self):
+            self.release_calls += 1
+
+    class Ctx:
+        def texture(self, size, components, dtype):
+            tex = Tex()
+            tex.size = size
+            tex.components = components
+            tex.dtype = dtype
+            tex.filter = None
+            return tex
+
+    pool = AsyncEffectResultPool()
+    ctx = Ctx()
+
+    first_ready = pool.ensure_staging(ctx, 4, 2)
+    pool.publish(4, 2, 7)
+    second_ready = pool.ensure_staging(ctx, 4, 2)
+    pool.publish(4, 2, 8)
+
+    assert pool.ready_tex is second_ready
+    assert pool.spare_tex is first_ready
+    assert first_ready.release_calls == 0
+
+    assert pool.promote_ready()
+    assert pool.safe_tex is second_ready
+    assert pool.staging_tex is first_ready
+
 def test_runtime_effect_ready_promotes_once_per_frame(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.core_runtime_eye import CoreRuntimeEyeMixin

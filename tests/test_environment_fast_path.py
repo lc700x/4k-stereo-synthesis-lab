@@ -1203,6 +1203,18 @@ def test_screen_glow_shader_uses_region_color_grid():
     assert "_runtime_effect_safe_source_tex" in effects_text
 
 
+def test_no_room_glow_pass_restores_gl_state_on_failure():
+    base_text = (SRC / "xr_viewer" / "base.py").read_text(encoding="utf-8")
+    func = base_text.split("def _render_glow", 1)[1].split("def _render_shadow", 1)[0]
+
+    assert "previous_depth_mask = self.ctx.depth_mask" in func
+    assert "try:" in func
+    assert "except Exception as exc:" in func
+    assert "openxr_screen_glow_failed" in func
+    assert "finally:" in func
+    render_finally = func.split("finally:", 1)[1]
+    assert "self.ctx.disable(moderngl.BLEND)" in render_finally
+    assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
 def test_screen_effect_passes_restore_gl_state_on_failure():
     effects_text = (SRC / "xr_viewer" / "environment_effects.py").read_text(encoding="utf-8")
     checks = [

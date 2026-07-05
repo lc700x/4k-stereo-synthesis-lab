@@ -88,6 +88,17 @@ class AsyncEffectResultPool:
         return tex
 
     def mark_ready(self, w, h, frame_id):
+        old_ready_tex = self.ready_tex
+        old_ready_size = self.ready_size
+        if old_ready_tex is not None and old_ready_tex is not self.staging_tex:
+            if self.spare_tex is None:
+                self.spare_tex = old_ready_tex
+                self.spare_size = old_ready_size
+            else:
+                try:
+                    old_ready_tex.release()
+                except Exception:
+                    pass
         self.ready_tex = self.staging_tex
         self.ready_size = (w, h)
         self.ready_frame_id = int(frame_id or 0)

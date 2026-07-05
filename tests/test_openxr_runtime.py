@@ -731,6 +731,16 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
     assert ("openxr_effect_submit_failed", 1) in inc_calls
 
 
+def _publish_effect_safe(scheduler, tex, size=(640, 360), frame_id=3):
+    pool = scheduler.pool
+    slot = pool._idle_slot()
+    slot.tex = tex
+    slot.size = size
+    pool.writing_slot = slot
+    scheduler.publish_completed(size[0], size[1], frame_id)
+    scheduler.poll_completed()
+
+
 def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter
@@ -757,9 +767,7 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     viewer = Viewer()
     safe_tex = object()
     scheduler = viewer._runtime_effect_submit_scheduler()
-    scheduler.pool.safe_tex = safe_tex
-    scheduler.pool.safe_size = (640, 360)
-    scheduler.pool.safe_frame_id = 3
+    _publish_effect_safe(scheduler, safe_tex)
     viewer._glow_mode = "veil"
     viewer._glow_intensity_multiplier = 1.0
     viewer._glow_shell_intensity_multiplier = 0.0
@@ -777,9 +785,7 @@ def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
 
     viewer = Viewer()
     scheduler = viewer._runtime_effect_submit_scheduler()
-    scheduler.pool.safe_tex = object()
-    scheduler.pool.safe_size = (640, 360)
-    scheduler.pool.safe_frame_id = 3
+    _publish_effect_safe(scheduler, object())
     viewer._glow_mode = "screen"
     viewer._glow_intensity_multiplier = 1.0
     viewer._glow_shell_intensity_multiplier = 0.0
@@ -985,21 +991,21 @@ def test_async_effect_result_pool_promotes_ready_without_touching_writing_slot(m
     pool.mark_ready(4, 2, 7)
     assert pool.state == "ready"
     assert pool.safe_tex is None
-    assert pool.ready_tex is staging
-    assert pool.staging_tex is None
+    assert pool.ready_slot.tex is staging
+    assert pool.writing_slot is None
 
     assert pool.promote_ready()
     assert pool.state == "safe"
     assert pool.safe_tex is staging
     assert pool.safe_size == (4, 2)
     assert pool.safe_frame_id == 7
-    assert pool.ready_tex is None
+    assert pool.ready_slot is None
 
     next_staging = pool.ensure_staging(ctx, 4, 2)
     assert next_staging is not staging
     assert pool.publish(4, 2, 8)
     assert pool.state == "ready"
-    assert pool.ready_tex is next_staging
+    assert pool.ready_slot.tex is next_staging
     assert pool.safe_tex is staging
     assert pool.safe_frame_id == 7
 
@@ -1037,13 +1043,13 @@ def test_async_effect_result_pool_reuses_overwritten_ready_as_spare(monkeypatch)
     second_ready = pool.ensure_staging(ctx, 4, 2)
     pool.publish(4, 2, 8)
 
-    assert pool.ready_tex is second_ready
+    assert pool.ready_slot.tex is second_ready
     assert any(slot.tex is first_ready and slot.state == "idle" for slot in pool.slots)
     assert first_ready.release_calls == 0
 
     assert pool.promote_ready()
     assert pool.safe_tex is second_ready
-    assert pool.staging_tex is None
+    assert pool.writing_slot is None
     assert any(slot.tex is first_ready and slot.state == "idle" for slot in pool.slots)
 
 
@@ -1115,9 +1121,7 @@ def test_effect_scheduler_downsample_does_not_fallback_to_full_safe_texture(monk
     from xr_viewer.effect_scheduler import EffectScheduler
 
     scheduler = EffectScheduler()
-    scheduler.pool.safe_tex = object()
-    scheduler.pool.safe_size = (1920, 1080)
-    scheduler.pool.safe_frame_id = 9
+    _publish_effect_safe(scheduler, object(), (1920, 1080), 9)
 
     assert scheduler.latest_safe_downsample() == (None, None, 9)
 
@@ -1158,9 +1162,7 @@ def test_effect_scheduler_downsample_lookup_rejects_prepare_callback(monkeypatch
     from xr_viewer.effect_scheduler import EffectScheduler
 
     scheduler = EffectScheduler()
-    scheduler.pool.safe_tex = object()
-    scheduler.pool.safe_size = (1920, 1080)
-    scheduler.pool.safe_frame_id = 9
+    _publish_effect_safe(scheduler, object(), (1920, 1080), 9)
 
     with pytest.raises(TypeError):
         scheduler.latest_safe_downsample(prepare_downsample=lambda *_args: object())

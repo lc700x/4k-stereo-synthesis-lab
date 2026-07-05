@@ -329,8 +329,6 @@ class CoreRuntimeEyeMixin:
         h, w = self._runtime_eye_shape_hw(frame)
         if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):
             return
-        pool = self._runtime_effect_pool()
-        pool.state = 'safe' if pool.safe_tex is not None else 'idle'
         self._breakdown_inc("openxr_effect_source_reused_safe")
 
     def _submit_runtime_effect_source_texture(self, frame):

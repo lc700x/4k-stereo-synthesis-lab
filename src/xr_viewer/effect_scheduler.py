@@ -107,65 +107,16 @@ class AsyncEffectResultPool:
         raise RuntimeError("no writable effect result slot")
 
     @property
-    def staging_tex(self):
-        return self.writing_slot.tex if self.writing_slot is not None else None
-
-    @property
-    def staging_size(self):
-        return self.writing_slot.size if self.writing_slot is not None else None
-
-    @property
-    def ready_tex(self):
-        return self.ready_slot.tex if self.ready_slot is not None else None
-
-    @ready_tex.setter
-    def ready_tex(self, tex):
-        slot = self.ready_slot or self._idle_slot()
-        slot.tex = tex
-        slot.state = 'ready' if tex is not None else 'idle'
-        self.ready_slot = slot if tex is not None else None
-
-    @property
-    def ready_size(self):
-        return self.ready_slot.size if self.ready_slot is not None else None
-
-    @property
-    def ready_frame_id(self):
-        return self.ready_slot.frame_id if self.ready_slot is not None else 0
-
-    @property
     def safe_tex(self):
         return self.safe_slot.tex if self.safe_slot is not None else None
-
-    @safe_tex.setter
-    def safe_tex(self, tex):
-        slot = self.safe_slot or self._idle_slot()
-        slot.tex = tex
-        slot.state = 'safe' if tex is not None else 'idle'
-        self.safe_slot = slot if tex is not None else None
 
     @property
     def safe_size(self):
         return self.safe_slot.size if self.safe_slot is not None else None
 
-    @safe_size.setter
-    def safe_size(self, size):
-        if self.safe_slot is None:
-            self.safe_slot = self._idle_slot()
-            self.safe_slot.state = 'safe'
-        self.safe_slot.size = size
-
     @property
     def safe_frame_id(self):
         return self.safe_slot.frame_id if self.safe_slot is not None else self._safe_frame_id
-
-    @safe_frame_id.setter
-    def safe_frame_id(self, frame_id):
-        self._safe_frame_id = int(frame_id or 0)
-        if self.safe_slot is None:
-            self.safe_slot = self._idle_slot()
-            self.safe_slot.state = 'safe'
-        self.safe_slot.frame_id = self._safe_frame_id
 
 
 class EffectScheduler:

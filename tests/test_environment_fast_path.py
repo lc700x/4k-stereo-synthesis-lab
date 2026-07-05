@@ -34,10 +34,19 @@ def _set_runtime_effect_safe(viewer, tex, size, frame_id):
         scheduler = EffectScheduler()
         viewer._runtime_effect_scheduler = lambda: scheduler
         viewer._runtime_effect_submit_scheduler = lambda: scheduler
-    pool = viewer._runtime_effect_scheduler().pool
-    pool.safe_tex = tex
-    pool.safe_size = size
-    pool.safe_frame_id = frame_id
+    scheduler = viewer._runtime_effect_scheduler()
+    pool = scheduler.pool
+    slot = pool._idle_slot()
+    slot.tex = tex
+    slot.size = size
+    if size is None:
+        slot.frame_id = int(frame_id or 0)
+        slot.state = "safe"
+        pool.safe_slot = slot
+        return
+    pool.writing_slot = slot
+    scheduler.publish_completed(size[0], size[1], frame_id)
+    scheduler.poll_completed()
 
 
 def test_no_room_background_effects_skip_shadow_and_ground(monkeypatch):

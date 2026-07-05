@@ -187,8 +187,13 @@ class OpenXRFramePipeline:
 
     def flush_background_after_submit(self):
         background_renderer = getattr(self.viewer, '_background_layer_renderer', None)
-        if background_renderer is not None:
+        if background_renderer is None:
+            return
+        try:
             background_renderer.flush_pending_upload_after_submit()
+        except Exception as exc:
+            print(f"[OpenXRViewer] Background upload flush failed: {type(exc).__name__}: {exc}")
+            self.viewer._breakdown_inc('openxr_background_layer_upload_failed')
 
     def record_presented_frame(self):
         viewer = self.viewer

@@ -1556,6 +1556,9 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
         _frame_count=7,
         _frame_ts_ring=FrameTsRing(),
         actual_fps=0.0,
+        _background_layer_renderer=SimpleNamespace(
+            flush_pending_upload_after_submit=lambda: (_ for _ in ()).throw(RuntimeError("background failed"))
+        ),
     )
     viewer._breakdown_inc = lambda name, amount=1: calls.append(("inc", name, amount))
     viewer._has_fresh_source_frame = lambda now: calls.append(("fresh", now)) or False
@@ -1594,6 +1597,7 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
 
     assert calls[0] == ("inc", "openxr_loop", 1)
     assert ("poll", False) in calls
+    assert ("inc", "openxr_background_layer_upload_failed", 1) in calls
     names = [call[0] for call in calls]
     assert names.index("timing") < names.index("sync") < names.index("input")
     assert names.index("gate") < names.index("render") < names.index("submit") < names.index("effect") < names.index("record")

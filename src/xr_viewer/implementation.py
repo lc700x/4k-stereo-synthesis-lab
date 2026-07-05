@@ -2210,6 +2210,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             return
 
         quad_unavailable_reason = self._quad_layer_unavailable_reason()
+        if quad_unavailable_reason == 'missing_source_texture' and self._quad_layer_has_presented_frame():
+            quad_unavailable_reason = None
         draw_projection_screen = quad_unavailable_reason is not None
         if draw_projection_screen:
             if self._runtime_direct_source:

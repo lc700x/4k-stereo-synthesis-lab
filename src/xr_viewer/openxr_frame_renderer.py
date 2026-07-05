@@ -14,7 +14,7 @@ class OpenXRFrameRenderer:
 
     def render_frame(self, *, composition_layers, display_time, default_fov, default_proj, default_proj_d3d):
         viewer = self.viewer
-        screen_frame_uploaded = viewer._poll_source_frame(upload=True)
+        screen_frame_uploaded = self.screen_presenter.poll_screen_frame()
         views, view_pose_adjusted = self.view_tracker.locate_views(display_time=display_time)
 
         quad_update_start = time.perf_counter()

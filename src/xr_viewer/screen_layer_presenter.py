@@ -14,6 +14,9 @@ class ScreenLayerPresenter:
         self._frame_projection_layer = None
         self._frame_quad_layers = []
 
+    def poll_screen_frame(self):
+        return self.viewer._poll_source_frame(upload=True)
+
     def update_or_reuse(self, *, screen_frame_uploaded=False):
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 

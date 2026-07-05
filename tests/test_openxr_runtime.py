@@ -1229,11 +1229,14 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "from .openxr_frame_renderer import OpenXRFrameRenderer" in frame_pipeline
     assert "from .screen_layer_presenter import ScreenLayerPresenter" in frame_renderer
     assert "ScreenLayerPresenter(viewer)" in frame_renderer
+    assert "self.screen_presenter.poll_screen_frame()" in frame_renderer
     assert "self.screen_presenter.prepare_frame_layers(" in frame_renderer
     assert "screen_frame_uploaded=screen_frame_uploaded" in frame_renderer
     assert "class ScreenLayerPresenter" in screen_presenter
+    assert "def poll_screen_frame" in screen_presenter
     assert "def update_or_reuse" in screen_presenter
     assert "def make_quad_layers" in screen_presenter
+    assert "self.viewer._poll_source_frame(upload=True)" in screen_presenter
     assert "self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)" in screen_presenter
     assert "quad_layer = viewer._make_quad_layer(quad_eye_index)" in screen_presenter
     assert "raise RuntimeError(f\"missing quad layer for eye {quad_eye_index}\")" in screen_presenter
@@ -1595,6 +1598,7 @@ def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():
         locate_views=lambda *, display_time: viewer.calls.append(("locate", display_time)) or (["view"], True)
     )
     renderer.screen_presenter = SimpleNamespace(
+        poll_screen_frame=lambda: viewer.calls.append(("poll", True)) or True,
         prepare_frame_layers=lambda *, screen_frame_uploaded: viewer.calls.append(
             ("prepare", screen_frame_uploaded)
         ) or (["quad"], ["quad_header"], [0, 1], True),
@@ -1975,7 +1979,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
     render_frame = frame_renderer.split("def render_frame", 1)[1]
-    poll_idx = render_frame.index("viewer._poll_source_frame(upload=True)")
+    poll_idx = render_frame.index("self.screen_presenter.poll_screen_frame()")
     locate_idx = render_frame.index("self.view_tracker.locate_views(")
     prepare_idx = render_frame.index("self.screen_presenter.prepare_frame_layers(")
     render_idx = render_frame.index("self.projection_presenter.render_projection(")

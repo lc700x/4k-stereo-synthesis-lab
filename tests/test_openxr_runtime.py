@@ -1333,12 +1333,39 @@ def test_active_openxr_presenter_gates_effect_flush_on_non_upload_frames():
         "if loop_perf_log_enabled:", 1
     )[0]
 
-    assert "should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)" in submit_tail
-    assert "if frame_state.should_render and not screen_frame_uploaded and (" in submit_tail
-    assert "not callable(should_submit_effect_source) or should_submit_effect_source()" in submit_tail
+    assert "EffectSubmitter" in implementation
+    assert "effect_submitter.flush_after_submit(" in submit_tail
+    assert "should_render=frame_state.should_render" in submit_tail
+    assert "screen_frame_uploaded=screen_frame_uploaded" in submit_tail
     assert "if not screen_frame_uploaded or" not in submit_tail
-    assert submit_tail.index("openxr_submit_frame") < submit_tail.index("should_submit_effect_source =")
-    assert submit_tail.index("should_submit_effect_source =") < submit_tail.index("self._flush_runtime_effect_submit()")
+    assert submit_tail.index("openxr_submit_frame") < submit_tail.index("effect_submitter.flush_after_submit(")
+
+
+def test_effect_submitter_flushes_only_after_rendered_reused_screen_frames(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.effect_submitter import EffectSubmitter
+
+    class Viewer:
+        def __init__(self):
+            self.flushes = 0
+            self.allowed = True
+
+        def _should_submit_runtime_effect_source(self):
+            return self.allowed
+
+        def _flush_runtime_effect_submit(self):
+            self.flushes += 1
+
+    viewer = Viewer()
+    submitter = EffectSubmitter(viewer)
+
+    assert not submitter.flush_after_submit(should_render=False, screen_frame_uploaded=False)
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    viewer.allowed = False
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    viewer.allowed = True
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert viewer.flushes == 1
 
 
 def test_active_openxr_presenter_does_not_lazy_load_environment_assets():

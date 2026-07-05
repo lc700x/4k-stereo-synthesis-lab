@@ -149,6 +149,7 @@ from .core_source_state import CoreSourceStateMixin
 from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
+from .effect_submitter import EffectSubmitter
 from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
 
@@ -4916,11 +4917,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _loop_mark('end_frame')
             if loop_breakdown_enabled:
                 self._breakdown_add_time('openxr_submit_frame', time.perf_counter() - submit_start)
-            should_submit_effect_source = getattr(self, '_should_submit_runtime_effect_source', None)
-            if frame_state.should_render and not screen_frame_uploaded and (
-                not callable(should_submit_effect_source) or should_submit_effect_source()
-            ):
-                self._flush_runtime_effect_submit()
+            effect_submitter = getattr(self, '_effect_submitter', None)
+            if effect_submitter is None:
+                effect_submitter = self._effect_submitter = EffectSubmitter(self)
+            effect_submitter.flush_after_submit(
+                should_render=frame_state.should_render,
+                screen_frame_uploaded=screen_frame_uploaded,
+            )
             if loop_perf_log_enabled:
                 loop_total_ms = (time.perf_counter() - loop_t0) * 1000.0
                 loop_log_now = time.perf_counter()

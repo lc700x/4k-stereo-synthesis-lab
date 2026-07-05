@@ -271,6 +271,7 @@ class CoreRuntimeEyeMixin:
         return arr.astype(np.uint8, copy=False)
 
     def _release_runtime_eye_textures(self):
+        self._runtime_eye_has_frame = False
         self._release_runtime_eye_texture_resources()
         for idx, tex in enumerate(self._runtime_eye_textures):
             if tex is not None:
@@ -778,11 +779,13 @@ class CoreRuntimeEyeMixin:
                 source_rgb = runtime_result.left_eye
             source_rgb, source_depth = self._normalize_rgb_depth_runtime_source(source_rgb, runtime_result.depth)
             self._runtime_direct_source = False
+            self._runtime_eye_has_frame = False
             self._update_frame(source_rgb, source_depth)
             return None
         effect_source_rgb = getattr(runtime_result, 'source_rgb', None)
         if not self._runtime_direct_enabled:
             self._runtime_direct_source = False
+            self._runtime_eye_has_frame = False
             self._release_runtime_effect_source_texture()
             return None
         left_hw = self._runtime_eye_shape_hw(runtime_result.left_eye)
@@ -801,6 +804,7 @@ class CoreRuntimeEyeMixin:
                 self._breakdown_add_time("runtime_eye_d3d11", time.perf_counter() - d3d11_start)
                 if result:
                     self._runtime_direct_source = True
+                    self._runtime_eye_has_frame = True
                     self._texture_size = (w, h)
                     self.frame_size = (w, h)
                     self.screen_height = None
@@ -820,10 +824,11 @@ class CoreRuntimeEyeMixin:
             if not self._runtime_eye_cpu_logged:
                 print(f"[OpenXRViewer] runtime eye GPU upload unavailable; reusing previous frame {w}x{h}")
                 self._runtime_eye_cpu_logged = True
-            if not all(self._runtime_eye_textures):
+            if not getattr(self, '_runtime_eye_has_frame', False):
                 self._runtime_direct_source = False
                 return None
         else:
+            self._runtime_eye_has_frame = True
             self._log_runtime_eye_stats_once(runtime_result, upload_path='gpu_gl')
         self._runtime_direct_source = True
         self._texture_size = (w, h)

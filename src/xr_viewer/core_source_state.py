@@ -525,7 +525,7 @@ class CoreSourceStateMixin:
                 renderer = getattr(self, '_d3d11_native_renderer', None)
                 if renderer is not None and renderer.has_frame:
                     return True
-            return all(self._runtime_eye_textures)
+            return bool(getattr(self, '_runtime_eye_has_frame', False)) and all(self._runtime_eye_textures)
         return self.color_tex is not None and self.depth_tex is not None
 
     def _should_show_source_border(self, now=None):

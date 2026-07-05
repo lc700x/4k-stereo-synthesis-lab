@@ -1189,14 +1189,20 @@ def test_active_openxr_presenter_does_not_lazy_load_environment_assets():
 
 def test_runtime_direct_upload_failure_reuses_previous_frame_without_cpu_readback():
     runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    source_state = (SRC / "xr_viewer" / "core_source_state.py").read_text(encoding="utf-8")
     update_body = runtime_eye.split("def _update_runtime_frame(self, runtime_result):", 1)[1].split(
         "def _apply_runtime_rgb_depth_config", 1
     )[0]
     fallback_block = update_body.split("if not gpu_uploaded:", 1)[1].split("else:", 1)[0]
+    renderable_block = source_state.split("def _has_renderable_source_frame(self):", 1)[1].split(
+        "def _should_show_source_border", 1
+    )[0]
 
     assert "openxr_runtime_eye_upload_reused_previous" in fallback_block
+    assert "if not getattr(self, '_runtime_eye_has_frame', False):" in fallback_block
     assert "_runtime_eye_to_numpy" not in fallback_block
     assert "cpu_gl" not in fallback_block
+    assert "_runtime_eye_has_frame" in renderable_block
 
 
 def test_no_renderable_openxr_frame_does_not_sleep_after_submit():
@@ -1261,6 +1267,7 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._xr_quad_layer_failed = False
     viewer._screen_curved = False
     viewer._runtime_direct_source = True
+    viewer._runtime_eye_has_frame = True
     viewer._quad_swapchains = {0: object(), 1: object()}
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)
@@ -1275,6 +1282,11 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     assert viewer._quad_layer_can_replace_projection_screen() is True
 
     viewer._runtime_eye_textures[0] = None
+    assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
+    assert viewer._quad_layer_can_replace_projection_screen() is False
+
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_eye_has_frame = False
     assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
     assert viewer._quad_layer_can_replace_projection_screen() is False
 

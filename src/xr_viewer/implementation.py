@@ -213,6 +213,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self.show_fps = show_fps
         self._runtime_config_callback = kwargs.get('runtime_config_callback')
         self._runtime_direct_source = False
+        self._runtime_eye_has_frame = False
         self._runtime_eye_textures = [None, None]
         self._runtime_depth_texture = None
         self._runtime_eye_texture_size = None

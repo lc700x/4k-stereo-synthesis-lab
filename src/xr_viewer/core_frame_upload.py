@@ -137,6 +137,7 @@ class CoreFrameUploadMixin:
             perf_last = now
 
         self._runtime_direct_source = False
+        self._runtime_eye_has_frame = False
         is_tensor = hasattr(rgb, 'data_ptr')
 
         # Resolve depth shape and GPU tensor

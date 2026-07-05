@@ -72,6 +72,8 @@ class CoreQuadLayerMixin:
     def _quad_layer_source_texture(self, eye_index=0):
         if not self._runtime_direct_source:
             return None, None, True
+        if not getattr(self, '_runtime_eye_has_frame', False) and not getattr(self, '_use_d3d11', False):
+            return None, None, True
         if getattr(self, '_use_d3d11', False):
             renderer = getattr(self, '_d3d11_native_renderer', None)
             if renderer is not None and renderer.has_frame and renderer.runtime_eye_size is not None:

@@ -4782,6 +4782,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         if nv_interop_failed:
                             pass
 
+                    elif updated_quad_eyes:
+                        self._breakdown_inc('openxr_projection_pbo_skipped_for_quad')
+
                     else:
                         # PBO fallback: two-phase loop to overlap GPU DMA with rendering.
                         d3d11_pending = []   # (eye_index, pbo_id, d3d11_tex, sc_w, sc_h, swapchain, view)

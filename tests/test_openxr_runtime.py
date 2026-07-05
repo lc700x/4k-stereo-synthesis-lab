@@ -1035,6 +1035,11 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "try:" in trigger_block
     assert "self._handle_triggers()" in trigger_block
     assert "openxr_input_trigger_failed" in trigger_block
+    pbo_guard_block = implementation.split("if nv_interop_failed:", 1)[1].split(
+        "# PBO fallback: two-phase loop", 1
+    )[0]
+    assert "elif updated_quad_eyes:" in pbo_guard_block
+    assert "openxr_projection_pbo_skipped_for_quad" in pbo_guard_block
     pbo_projection_block = implementation.split("# PBO fallback: two-phase loop", 1)[1].split(
         "# Phase 2: map PBOs", 1
     )[0]

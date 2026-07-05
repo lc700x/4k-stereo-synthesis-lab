@@ -17,6 +17,7 @@
 - 不在第一阶段重写 depth/stereo synthesis 算法。
 - 不把本地窗口、RTMP、OpenXR 三种输出合并为一个 frame loop。
 - 不把 OpenXR Quad Layer 作为可选装饰功能，而是作为虚拟显示器分层的主路径目标。
+- 不把目标架构限定为 3DoF / rotation-only；OpenXR view pose 必须按 runtime 提供的真实位置与朝向参与背景、交互和层合成。
 
 ## 2. 当前工程锚点
 
@@ -251,7 +252,7 @@ External Unity/Blender bake or packaged panorama asset
   - `final = panorama + mask * delayed_screen_light_color * intensity`
   - 所有输入都来自 safe result。
 - 对简单房间提供数学 mask fallback；对复杂房间使用外部工具或 profile 提供的 `wall_light_mask`，项目内只提供 `wall_light_mask: "auto"` 的基础 UV mask 生成。
-- 当前落地：panorama shader 已可用数学 mask fallback 或 profile `wall_light_mask` 图片消费 latest safe screen texture，并使用 3x3 GPU light probe 采样低频屏幕光；复杂房间 mask bake 仍待接入。
+- 当前落地：panorama shader 已可用数学 mask fallback 或 profile `wall_light_mask` 图片消费 latest safe screen texture，并使用 3x3 GPU light probe 采样低频屏幕光；复杂房间 mask 由外部工具或 profile 资产提供，项目内不实现复杂房间 bake。
 - 当前落地：`BackgroundBakeService` 已支持 profile `wall_light_mask: "auto"`，在配置期生成并缓存与 panorama UV 对齐的灰度 mask PNG；实时渲染路径只加载缓存纹理，不做 CPU 屏幕采样。它不是 GLB panorama/cubemap bake 服务。
 
 验收：

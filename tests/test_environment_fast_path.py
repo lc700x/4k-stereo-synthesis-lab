@@ -573,6 +573,17 @@ def test_env_model_initializer_skips_panorama_background(monkeypatch):
     assert viewer._env_model_prims == []
 
 
+def test_openxr_async_plan_rejects_3dof_and_project_side_complex_bake():
+    plan = (ROOT / "docs" / "36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md").read_text(encoding="utf-8")
+    report = (ROOT / "docs" / "35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md").read_text(encoding="utf-8")
+
+    assert "真实位置与朝向" in plan
+    assert "不把目标架构限定为 3DoF / rotation-only" in plan
+    assert "按真实 view pose（位置与朝向）" in report
+    assert "复杂房间 mask bake 仍待接入" not in plan
+    assert "项目内不实现复杂房间 bake" in plan
+
+
 def test_panorama_background_is_preloaded_outside_render_path():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_text = (SRC / "xr_viewer" / "environment_renderer.py").read_text(encoding="utf-8")

@@ -26,6 +26,42 @@ class ProjectionLayerPresenter:
     def __init__(self, viewer):
         self.viewer = viewer
 
+    def render_projection(self, *, enabled, views, default_fov, default_proj, default_proj_d3d, updated_quad_eyes=()):
+        viewer = self.viewer
+        if not enabled:
+            return []
+        if not viewer._use_d3d11:
+            return self.render_opengl(
+                views,
+                default_fov,
+                default_proj,
+                updated_quad_eyes=updated_quad_eyes,
+            )
+        if (
+            not updated_quad_eyes
+            and viewer._d3d11_native_renderer is not None
+            and viewer._d3d11_native_renderer.has_frame
+        ):
+            return self.render_d3d11_native(
+                views,
+                default_fov,
+                default_proj_d3d,
+            )
+        if viewer._interop_mode == 'nv_dx':
+            return self.render_nv_dx_interop(
+                views,
+                default_fov,
+                default_proj,
+            )
+        if updated_quad_eyes:
+            viewer._breakdown_inc('openxr_projection_pbo_skipped_for_quad')
+            return []
+        return self.render_d3d11_pbo(
+            views,
+            default_fov,
+            default_proj,
+        )
+
     def render_d3d11_native(self, views, default_fov, default_proj_d3d):
         viewer = self.viewer
         eye_layer_views = []

@@ -1513,7 +1513,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "if self._quad_layer_can_replace_projection_screen():" not in frame_block[:prepare_idx]
     assert "screen_presenter.make_quad_layers(" not in frame_block
     assert "self._projection_layer_needed()" not in frame_block
-    render_idx = frame_block.index("eye_layer_views = []")
+    render_idx = frame_block.index("projection_presenter.render_projection(")
     append_idx = frame_block.index("screen_presenter.append_frame_layers(")
     assert poll_idx < presenter_idx < prepare_idx < render_idx < append_idx
     assert "composition_layers.append(" not in frame_block
@@ -1541,47 +1541,88 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "projection_views=eye_layer_views" in layer_append_block
     assert "projection_space=self._xr_space" in layer_append_block
     assert "quad_layer_headers=quad_layer_headers" in layer_append_block
-    opengl_fallback = render_tail.split("projection_presenter.render_opengl(", 1)[1].split(
+    projection_call = render_tail.split("projection_presenter.render_projection(", 1)[1].split(
         "screen_presenter.append_frame_layers(", 1
     )[0]
-    assert "_get_or_create_fbo" not in opengl_fallback
-    assert "glBlitFramebuffer" not in opengl_fallback
+    assert "enabled=render_projection_layer" in projection_call
+    assert "default_proj_d3d=_default_proj_d3d" in projection_call
+    assert "updated_quad_eyes=updated_quad_eyes" in projection_call
+    assert "render_d3d11_native(" not in render_tail
+    assert "render_nv_dx_interop(" not in render_tail
+    assert "render_d3d11_pbo(" not in render_tail
+    assert "render_opengl(" not in render_tail
+    assert "_get_or_create_fbo" not in render_tail
+    assert "glBlitFramebuffer" not in render_tail
     projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
+    render_projection = projection_presenter.split("def render_projection", 1)[1].split(
+        "def render_d3d11_native", 1
+    )[0]
+    assert "def render_projection(" in projection_presenter
+    assert "if not enabled:" in render_projection
+    assert "not viewer._use_d3d11" in render_projection
+    assert "return self.render_opengl(" in render_projection
+    assert "return self.render_d3d11_native(" in render_projection
+    assert "return self.render_nv_dx_interop(" in render_projection
+    assert "openxr_projection_pbo_skipped_for_quad" in render_projection
+    assert "return self.render_d3d11_pbo(" in render_projection
     assert "def render_opengl(" in projection_presenter
     assert "viewer._get_or_create_fbo(" in projection_presenter
     assert "glBlitFramebuffer" in projection_presenter
-
-    d3d11_native_block = implementation.rsplit("if self._use_d3d11:", 1)[1].split(
-        "elif self._interop_mode == 'nv_dx':", 1
-    )[0]
-    assert "not updated_quad_eyes" in d3d11_native_block
-    assert "projection_presenter.render_d3d11_native(" in d3d11_native_block
-    assert "eye_sign * screen_disparity_uv" not in d3d11_native_block
-    assert "openxr_projection_screen_skipped" not in d3d11_native_block
-    assert d3d11_native_block.index("not updated_quad_eyes") < d3d11_native_block.index(
-        "self._d3d11_native_renderer is not None"
-    )
     assert "def render_d3d11_native(" in projection_presenter
     assert "eye_sign * screen_disparity_uv" in projection_presenter
-
-    nv_dx_block = implementation.rsplit("elif self._interop_mode == 'nv_dx':", 1)[1].split(
-        "elif updated_quad_eyes:", 1
-    )[0]
-    assert "projection_presenter.render_nv_dx_interop(" in nv_dx_block
-    assert "_wglDXLockObjectsNV" not in nv_dx_block
-    assert "CompositionLayerProjectionView" not in nv_dx_block
     assert "def render_nv_dx_interop(" in projection_presenter
     assert "_wglDXLockObjectsNV" in projection_presenter
-
-    pbo_block = implementation.rsplit("elif updated_quad_eyes:", 1)[1].split(
-        "else:\n                    projection_presenter = getattr(self, '_projection_layer_presenter', None)", 1
-    )[0]
-    assert "openxr_projection_pbo_skipped_for_quad" in pbo_block
-    assert "_submit_pbo_readback" not in pbo_block
-    assert "_upload_pbo_to_d3d11" not in pbo_block
     assert "def render_d3d11_pbo(" in projection_presenter
     assert "_submit_pbo_readback" in projection_presenter
     assert "_upload_pbo_to_d3d11" in projection_presenter
+
+
+def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.projection_layer_presenter import ProjectionLayerPresenter
+
+    class Renderer:
+        has_frame = True
+
+    class Viewer:
+        def __init__(self):
+            self._use_d3d11 = False
+            self._d3d11_native_renderer = None
+            self._interop_mode = "none"
+            self.inc_calls = []
+
+        def _breakdown_inc(self, name, amount=1):
+            self.inc_calls.append((name, amount))
+
+    viewer = Viewer()
+    presenter = ProjectionLayerPresenter(viewer)
+    calls = []
+    presenter.render_opengl = lambda *args, **kwargs: calls.append("opengl") or ["opengl"]
+    presenter.render_d3d11_native = lambda *args, **kwargs: calls.append("native") or ["native"]
+    presenter.render_nv_dx_interop = lambda *args, **kwargs: calls.append("nv_dx") or ["nv_dx"]
+    presenter.render_d3d11_pbo = lambda *args, **kwargs: calls.append("pbo") or ["pbo"]
+    kwargs = dict(
+        views=[],
+        default_fov=object(),
+        default_proj=object(),
+        default_proj_d3d=object(),
+    )
+
+    assert presenter.render_projection(enabled=False, updated_quad_eyes=(), **kwargs) == []
+    assert calls == []
+
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["opengl"]
+    viewer._use_d3d11 = True
+    viewer._d3d11_native_renderer = Renderer()
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["native"]
+    viewer._d3d11_native_renderer = None
+    viewer._interop_mode = "nv_dx"
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["nv_dx"]
+    viewer._interop_mode = "none"
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == []
+    assert ("openxr_projection_pbo_skipped_for_quad", 1) in viewer.inc_calls
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["pbo"]
+    assert calls == ["opengl", "native", "nv_dx", "pbo"]
 
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():

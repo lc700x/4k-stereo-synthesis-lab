@@ -4606,68 +4606,18 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 if loop_trace_enabled:
                     _loop_mark('quad_update')
 
-                eye_layer_views = []
-
-                if not render_projection_layer:
-                    pass
-                elif self._use_d3d11:
-                    # D3D11 rendering-----
-                    #
-                    # Prefer native D3D11 rendering directly into OpenXR
-                    # swapchain images. Legacy interop/PBO paths remain
-                    # fallback-only.
-
-                    if (
-                        not updated_quad_eyes
-                        and self._d3d11_native_renderer is not None
-                        and self._d3d11_native_renderer.has_frame
-                    ):
-                        projection_presenter = getattr(self, '_projection_layer_presenter', None)
-                        if projection_presenter is None:
-                            projection_presenter = ProjectionLayerPresenter(self)
-                            self._projection_layer_presenter = projection_presenter
-                        eye_layer_views = projection_presenter.render_d3d11_native(
-                            views,
-                            _default_fov,
-                            _default_proj_d3d,
-                        )
-
-                    elif self._interop_mode == 'nv_dx':
-                        projection_presenter = getattr(self, '_projection_layer_presenter', None)
-                        if projection_presenter is None:
-                            projection_presenter = ProjectionLayerPresenter(self)
-                            self._projection_layer_presenter = projection_presenter
-                        eye_layer_views = projection_presenter.render_nv_dx_interop(
-                            views,
-                            _default_fov,
-                            _default_proj,
-                        )
-
-                    elif updated_quad_eyes:
-                        self._breakdown_inc('openxr_projection_pbo_skipped_for_quad')
-
-                    else:
-                        projection_presenter = getattr(self, '_projection_layer_presenter', None)
-                        if projection_presenter is None:
-                            projection_presenter = ProjectionLayerPresenter(self)
-                            self._projection_layer_presenter = projection_presenter
-                        eye_layer_views = projection_presenter.render_d3d11_pbo(
-                            views,
-                            _default_fov,
-                            _default_proj,
-                        )
-
-                else:
-                    projection_presenter = getattr(self, '_projection_layer_presenter', None)
-                    if projection_presenter is None:
-                        projection_presenter = ProjectionLayerPresenter(self)
-                        self._projection_layer_presenter = projection_presenter
-                    eye_layer_views = projection_presenter.render_opengl(
-                        views,
-                        _default_fov,
-                        _default_proj,
-                        updated_quad_eyes=updated_quad_eyes,
-                    )
+                projection_presenter = getattr(self, '_projection_layer_presenter', None)
+                if projection_presenter is None:
+                    projection_presenter = ProjectionLayerPresenter(self)
+                    self._projection_layer_presenter = projection_presenter
+                eye_layer_views = projection_presenter.render_projection(
+                    enabled=render_projection_layer,
+                    views=views,
+                    default_fov=_default_fov,
+                    default_proj=_default_proj,
+                    default_proj_d3d=_default_proj_d3d,
+                    updated_quad_eyes=updated_quad_eyes,
+                )
 
                 if eye_layer_views:
                     if loop_trace_enabled:

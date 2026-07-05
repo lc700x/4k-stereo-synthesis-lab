@@ -17,7 +17,7 @@
 - 不在第一阶段重写 depth/stereo synthesis 算法。
 - 不把本地窗口、RTMP、OpenXR 三种输出合并为一个 frame loop。
 - 不把 OpenXR Quad Layer 作为可选装饰功能，而是作为虚拟显示器分层的主路径目标。
-- 不把目标架构限定为 3DoF / rotation-only；OpenXR view pose 必须按 runtime 提供的真实位置与朝向参与背景、交互和层合成。
+- OpenXR view pose 必须按 runtime 提供的真实位置与朝向参与背景、交互和层合成。
 
 ## 2. 当前工程锚点
 

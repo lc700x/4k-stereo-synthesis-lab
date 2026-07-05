@@ -398,6 +398,10 @@ class CoreSourceStateMixin:
         )
         if not (glow_needs_downsample or light_needs_downsample):
             return
+        source_key = (id(source_tex), tuple(source_size))
+        if getattr(self, "_runtime_effect_downsample_failed_key", None) == source_key:
+            self._breakdown_inc("openxr_effect_downsample_prewarm_suppressed")
+            return
         prepare = getattr(self, "_prepare_glow_downsample_texture", None)
         if not callable(prepare):
             return
@@ -405,8 +409,10 @@ class CoreSourceStateMixin:
             tex = prepare(source_tex, source_size)
         except Exception as exc:
             print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
+            self._runtime_effect_downsample_failed_key = source_key
             self._breakdown_inc("openxr_effect_downsample_prewarm_failed")
             return
+        self._runtime_effect_downsample_failed_key = None
         if tex is not None:
             self._breakdown_inc("openxr_effect_downsample_prewarm")
 

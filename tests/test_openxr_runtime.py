@@ -926,6 +926,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def latest_safe_glow" in scheduler_text
     assert "def latest_safe_light_probe" in scheduler_text
     assert "def latest_safe_downsample" in scheduler_text
+    assert "def publish_downsample" in scheduler_text
     assert "prepare_downsample" not in scheduler_text
     assert "prepare(source_tex, source_size)" not in source_state
     assert "prepare(source_tex, source_size)" in worker_text
@@ -1186,42 +1187,23 @@ def test_effect_scheduler_owns_safe_downsample_lookup(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.effect_scheduler import EffectScheduler
 
-    class Tex:
-        pass
-
-    class Ctx:
-        def texture(self, size, components, dtype):
-            tex = Tex()
-            tex.size = size
-            tex.components = components
-            tex.dtype = dtype
-            tex.filter = None
-            return tex
-
     scheduler = EffectScheduler()
-    staging = scheduler.submit_screen_frame(Ctx(), 8, 4)
     downsampled = SimpleNamespace(size=(2, 1))
-    calls = []
-    scheduler.publish_completed(8, 4, 21)
-    scheduler.poll_completed()
+    _publish_effect_safe(scheduler, object(), (8, 4), 21)
+    scheduler.publish_downsample(downsampled, (2, 1), 21)
 
-    result = scheduler.latest_safe_downsample(
-        cached_downsample=lambda tex, size: calls.append((tex, size)) or downsampled
-    )
-
-    assert calls == [(staging, (8, 4))]
-    assert result == (downsampled, (2, 1), 21)
+    assert scheduler.latest_safe_downsample() == (downsampled, (2, 1), 21)
 
 
-def test_effect_scheduler_downsample_lookup_rejects_prepare_callback(monkeypatch):
+def test_effect_scheduler_downsample_rejects_stale_publish(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.effect_scheduler import EffectScheduler
 
     scheduler = EffectScheduler()
     _publish_effect_safe(scheduler, object(), (1920, 1080), 9)
+    scheduler.publish_downsample(object(), (96, 54), 8)
 
-    with pytest.raises(TypeError):
-        scheduler.latest_safe_downsample(prepare_downsample=lambda *_args: object())
+    assert scheduler.latest_safe_downsample() == (None, None, 9)
 
 
 def test_effect_scheduler_promotes_ready_once_per_frame():

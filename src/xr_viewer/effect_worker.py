@@ -8,7 +8,7 @@ class EffectWorker:
     def prewarm_after_submit(self):
         viewer = self.viewer
         scheduler = viewer._runtime_effect_submit_scheduler()
-        source_tex, source_size, _source_frame_id = scheduler.latest_safe()
+        source_tex, source_size, source_frame_id = scheduler.latest_safe()
         if source_tex is None or source_size is None:
             return
         mode = str(getattr(viewer, "_glow_mode", "") or "").strip().lower()
@@ -44,4 +44,5 @@ class EffectWorker:
         viewer._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
         viewer._runtime_effect_downsample_failed_key = None
         if tex is not None:
+            scheduler.publish_downsample(tex, getattr(tex, 'size', None), source_frame_id)
             viewer._breakdown_inc("openxr_effect_downsample_prewarm")

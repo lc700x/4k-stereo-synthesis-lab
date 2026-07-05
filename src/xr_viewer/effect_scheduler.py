@@ -124,6 +124,9 @@ class EffectScheduler:
         self.pool = pool or AsyncEffectResultPool()
         self.pending_source = None
         self.promote_frame_id = -1
+        self.safe_downsample_tex = None
+        self.safe_downsample_size = None
+        self.safe_downsample_frame_id = 0
 
     def queue_source(self, source):
         overwritten = self.pending_source is not None
@@ -168,14 +171,16 @@ class EffectScheduler:
     def latest_safe(self):
         return self.pool.safe_tex, self.pool.safe_size, self.pool.safe_frame_id
 
-    def latest_safe_downsample(self, cached_downsample=None):
-        source_tex, source_size, source_frame_id = self.latest_safe()
-        if source_tex is None or source_size is None or not callable(cached_downsample):
+    def publish_downsample(self, tex, size, frame_id):
+        self.safe_downsample_tex = tex
+        self.safe_downsample_size = tuple(size) if size is not None else getattr(tex, 'size', None)
+        self.safe_downsample_frame_id = int(frame_id or 0)
+
+    def latest_safe_downsample(self):
+        _source_tex, _source_size, source_frame_id = self.latest_safe()
+        if self.safe_downsample_frame_id != int(source_frame_id or 0):
             return None, None, source_frame_id
-        tex = cached_downsample(source_tex, source_size)
-        if tex is not None:
-            return tex, getattr(tex, 'size', None), source_frame_id
-        return None, None, source_frame_id
+        return self.safe_downsample_tex, self.safe_downsample_size, source_frame_id
 
     def latest_safe_glow(self):
         return self.latest_safe()

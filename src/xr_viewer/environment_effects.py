@@ -377,9 +377,7 @@ class EnvironmentEffectsMixin:
 
         source_tex, source_size = self._screen_effect_source_texture()
         if getattr(self, '_runtime_direct_source', False):
-            glow_tex, _glow_size, _glow_frame_id = self._runtime_effect_submit_scheduler().latest_safe_downsample(
-                cached_downsample=getattr(self, '_cached_glow_downsample_texture', None)
-            )
+            glow_tex, _glow_size, _glow_frame_id = self._runtime_effect_submit_scheduler().latest_safe_downsample()
         else:
             glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
         if mgl_fbo is not None:

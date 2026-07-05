@@ -1571,7 +1571,10 @@ def test_glow_downsample_cache_is_shared_across_eyes():
     assert "_cached_glow_downsample_texture(source_tex, source_size)" in prepare_func
     assert "if getattr(self, '_runtime_direct_source', False):" in shell_func
     assert "latest_safe_downsample(" in shell_func
-    assert "_cached_glow_downsample_texture" in shell_func
+    runtime_direct_shell = shell_func.split("if getattr(self, '_runtime_direct_source', False):", 1)[1].split(
+        "else:", 1
+    )[0]
+    assert "_cached_glow_downsample_texture" not in runtime_direct_shell
     assert "glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)" in shell_func
     assert "_prepare_glow_downsample_texture" not in shell_func
     assert "except Exception as exc:" in prepare_func
@@ -1614,7 +1617,7 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
     assert "_record_screen_effect_safe_age" in source_func
     assert "latest_safe_downsample(" in source_func
     assert "_prepare_glow_downsample_texture" not in source_func
-    assert "_cached_glow_downsample_texture" in source_func
+    assert "_cached_glow_downsample_texture" not in runtime_direct_block
     assert "_glow_ds_size" in source_func
     assert "value = (None, None)" in source_func
     assert "_runtime_eye_textures" not in source_func
@@ -1628,9 +1631,7 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     viewer._frame_count = 12
     viewer._runtime_direct_source = True
     _set_runtime_effect_safe(viewer, source_tex, (1920, 1080), 3)
-    viewer._glow_ds_tex = light_tex
-    viewer._glow_ds_size = (96, 54)
-    viewer._glow_ds_cache_key = (3, 7, 1920, 1080, 96, 54)
+    viewer._runtime_effect_submit_scheduler().publish_downsample(light_tex, (96, 54), 3)
     viewer._age_count = 0
     viewer._prepare_count = 0
     inc_calls = []

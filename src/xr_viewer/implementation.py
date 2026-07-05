@@ -152,6 +152,7 @@ from .background_presenter import BackgroundPresenter
 from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
 from .openxr_frame_gate import OpenXRFrameGate
+from .openxr_frame_input import OpenXRFrameInput
 from .openxr_frame_renderer import OpenXRFrameRenderer
 from .openxr_frame_timing import OpenXRFrameTiming
 from .filters import *
@@ -4414,50 +4415,19 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 _loop_mark('wait_frame')
                 _loop_mark('begin_frame')
 
-            # sync_actions must happen before xr.locate_space for action spaces.
-            # Do it here so _update_aim_poses gets fresh locations this frame.
-            if self._xr_actions_sync_info is not None:
-                try:
-                    xr.sync_actions(self._xr_session, self._xr_actions_sync_info)
-                except Exception:
-                    pass
+            frame_input = getattr(self, '_openxr_frame_input', None)
+            if frame_input is None:
+                frame_input = self._openxr_frame_input = OpenXRFrameInput(self)
+            frame_input.sync_actions()
             if loop_trace_enabled:
                 _loop_mark('sync_actions')
-
-            # Locate controller spaces (now valid after sync_actions)
-            self._update_aim_poses(frame_state.predicted_display_time)
-            self._update_grip_poses(frame_state.predicted_display_time)
+            controller_mark = frame_input.update_controller_frame(
+                display_time=frame_state.predicted_display_time,
+                dt=dt,
+            )
             if loop_trace_enabled:
                 _loop_mark('controller_pose')
-
-            # Skip smoothing + input polling when no controllers are tracked,
-            # but keep locating poses so we detect reconnection immediately.
-            # Wait 30 frames (~0.4s at 72Hz) before throttling -avoids
-            # toggling on transient tracking loss.
-            both_missing = (self._aim_mat_l is None and self._aim_mat_r is None)
-            if both_missing:
-                self._controller_miss_frames += 1
-            else:
-                self._controller_miss_frames = 0
-
-            if self._controller_miss_frames < 30:
-                self._smooth_controller_poses()
-                self._update_trackpad_button_emu()
-                self._poll_controller_input(dt)
-                if loop_trace_enabled:
-                    _loop_mark('controller_input')
-            else:
-                # No controllers -clear cursor/grab state so downstream code
-                # (grip-to-move, trigger handling) sees no laser on screen.
-                self._emu_y = self._emu_x = self._emu_b = False
-                self._emu_a = self._emu_lsc = self._emu_rsc = False
-                self._cursor_uv_l = None
-                self._cursor_uv_r = None
-                self._cursor_ctrl = None
-                self._cursor_smooth_uv = None
-                self._grabbed = False
-                if loop_trace_enabled:
-                    _loop_mark('controller_missing')
+                _loop_mark(controller_mark)
 
             composition_layers = []
             frame_submitter = getattr(self, '_frame_submitter', None)

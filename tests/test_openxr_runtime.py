@@ -1330,7 +1330,10 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_timing
     assert "self._poll_source_frame(upload=False)" in pre_timing
     assert "OpenXRFrameTiming(self)" in pre_timing
+    assert "OpenXRFrameInput(self)" in timing_to_upload
     assert "xr.begin_frame" not in run_body
+    assert "_update_aim_poses" not in run_body
+    assert "_poll_controller_input" not in run_body
     assert "screen_frame_uploaded = False" in timing_to_upload
     assert "frame_renderer.render_frame(" not in timing_to_upload
 
@@ -1372,6 +1375,82 @@ def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch):
         name == "openxr_predicted_period" and seconds == pytest.approx(1 / 72, rel=0.01)
         for name, seconds in metrics
     )
+
+
+def test_openxr_frame_input_syncs_actions_and_updates_controllers(monkeypatch):
+    import xr_viewer.openxr_frame_input as frame_input_module
+    from xr_viewer.openxr_frame_input import OpenXRFrameInput
+
+    sync_calls = []
+
+    class FakeXR:
+        @staticmethod
+        def sync_actions(session, sync_info):
+            sync_calls.append((session, sync_info))
+
+    calls = []
+    viewer = SimpleNamespace(
+        _xr_actions_sync_info="sync_info",
+        _xr_session="session",
+        _aim_mat_l=object(),
+        _aim_mat_r=None,
+        _controller_miss_frames=12,
+    )
+    viewer._update_aim_poses = lambda display_time: calls.append(("aim", display_time))
+    viewer._update_grip_poses = lambda display_time: calls.append(("grip", display_time))
+    viewer._smooth_controller_poses = lambda: calls.append(("smooth",))
+    viewer._update_trackpad_button_emu = lambda: calls.append(("trackpad",))
+    viewer._poll_controller_input = lambda dt: calls.append(("input", dt))
+    monkeypatch.setattr(frame_input_module, "xr", FakeXR)
+
+    frame_input = OpenXRFrameInput(viewer)
+    frame_input.sync_actions()
+    mark = frame_input.update_controller_frame(display_time=123, dt=0.5)
+
+    assert sync_calls == [("session", "sync_info")]
+    assert mark == "controller_input"
+    assert viewer._controller_miss_frames == 0
+    assert calls == [("aim", 123), ("grip", 123), ("smooth",), ("trackpad",), ("input", 0.5)]
+
+
+def test_openxr_frame_input_clears_missing_controller_state():
+    from xr_viewer.openxr_frame_input import OpenXRFrameInput
+
+    calls = []
+    viewer = SimpleNamespace(
+        _xr_actions_sync_info=None,
+        _aim_mat_l=None,
+        _aim_mat_r=None,
+        _controller_miss_frames=29,
+        _emu_y=True,
+        _emu_x=True,
+        _emu_b=True,
+        _emu_a=True,
+        _emu_lsc=True,
+        _emu_rsc=True,
+        _cursor_uv_l=object(),
+        _cursor_uv_r=object(),
+        _cursor_ctrl=object(),
+        _cursor_smooth_uv=object(),
+        _grabbed=True,
+    )
+    viewer._update_aim_poses = lambda display_time: calls.append(("aim", display_time))
+    viewer._update_grip_poses = lambda display_time: calls.append(("grip", display_time))
+    viewer._smooth_controller_poses = lambda: pytest.fail("missing controllers should not smooth")
+    viewer._update_trackpad_button_emu = lambda: pytest.fail("missing controllers should not update trackpad")
+    viewer._poll_controller_input = lambda dt: pytest.fail("missing controllers should not poll input")
+
+    mark = OpenXRFrameInput(viewer).update_controller_frame(display_time=456, dt=0.25)
+
+    assert mark == "controller_missing"
+    assert calls == [("aim", 456), ("grip", 456)]
+    assert viewer._controller_miss_frames == 30
+    assert not any([viewer._emu_y, viewer._emu_x, viewer._emu_b, viewer._emu_a, viewer._emu_lsc, viewer._emu_rsc])
+    assert viewer._cursor_uv_l is None
+    assert viewer._cursor_uv_r is None
+    assert viewer._cursor_ctrl is None
+    assert viewer._cursor_smooth_uv is None
+    assert viewer._grabbed is False
 
 
 def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():

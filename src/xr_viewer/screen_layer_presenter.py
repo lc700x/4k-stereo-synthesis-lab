@@ -103,20 +103,14 @@ class ScreenLayerPresenter:
         return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
 
     def projection_screen_needed(self):
-        return not self.viewer._quad_layer_screen_presentable()
+        return False
 
     def projection_screen_unavailable_reason(self):
-        if not self.projection_screen_needed():
-            return None
-        return self.viewer._quad_layer_unavailable_reason()
+        reason = getattr(self.viewer, '_quad_layer_unavailable_reason', None)
+        return reason() if callable(reason) else None
 
     def projection_screen_source_ready(self, eye_index):
-        viewer = self.viewer
-        if not self.projection_screen_needed():
-            return True
-        if viewer._runtime_direct_source:
-            return viewer._runtime_eye_textures[eye_index] is not None
-        return getattr(viewer, 'color_tex', None) is not None and getattr(viewer, 'depth_tex', None) is not None
+        return True
 
     def projection_screen_effects_enabled(self):
         return False

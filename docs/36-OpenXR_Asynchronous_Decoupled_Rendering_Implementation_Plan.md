@@ -88,19 +88,16 @@ External Unity/Blender bake or packaged panorama asset
 
 ## 4. 分阶段实施路线
 
-### 阶段 0：基线和开关
+### 阶段 0：基线和诊断
 
-目标：先建立可回滚、可对比的实验框架。
+目标：先建立可对比、可归因的诊断框架，不再以旧 projection screen 路径作为普通运行目标。
 
 任务：
 
-- 新增运行开关；异步 present 是固定主路径，不再提供关闭旧路径：
-  - `D2S_OPENXR_SCREEN_QUAD=0/1`
-  - `D2S_OPENXR_ASYNC_EFFECTS=0/1`
-  - `D2S_OPENXR_PANORAMA_BACKGROUND=0/1`
+- 异步 present 是固定主路径；运行参数只允许限制预算或关闭软效果，不允许把旧同步显示器路径作为常规回退目标：
   - `D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS`：screen texture 上传预算，超预算下一帧复用上一张 screen texture。
   - `D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS`：effect source submit 预算，超预算下一帧复用 latest safe effect texture。
-- 在 GUI/OpenXR config 中保留隐藏或高级开关，不影响普通用户默认路径。
+- GUI/OpenXR config 不再暴露“回到旧显示器路径”的普通开关。
 - 在 `FPSBreakdown` 中新增指标：
   - `openxr_upload`
   - `openxr_quad_update_ms`
@@ -115,7 +112,7 @@ External Unity/Blender bake or packaged panorama asset
 
 验收：
 
-- 关闭全部新开关时行为与当前主线一致。
+- 默认启动即进入异步 screen/Quad 主路径；预算参数只影响复用策略，不改变架构路径。
 - 打开诊断后能分清 runtime FPS、viewer FPS、screen present FPS、submit/present 节奏。
 
 ### 阶段 1：ScreenFrameBridge 与 Quad Layer 主路径
@@ -129,21 +126,21 @@ External Unity/Blender bake or packaged panorama asset
   - 维护 `latest_frame`, `last_presented_frame`, `frame_id`, `source_timestamp`。
   - 未收到新 runtime result 时复用上一帧，不阻塞 `xrEndFrame`。
 - 重构 `core_quad_layer.py`：
-  - `_quad_layer_can_replace_projection_screen()` 不再硬编码禁用。
+  - Quad 层作为显示器唯一主路径；projection 不再绘制显示器主体。
   - Quad 层支持 stereo eye source、mono fallback 和 full synthesis eye source。
   - Quad layer pose/size 由现有 screen placement 配置驱动。
 - 解耦 controller hit/UI：
   - controller raycast 仍使用同一个 screen plane 几何模型。
   - 交互命中不依赖 projection path 是否绘制屏幕。
   - 屏幕边框/焦点/laser hit 可保留在 projection layer 或独立 overlay layer。
-- projection path 保留为兼容 fallback。
+- projection layer 只承载背景 fallback、controller、laser、OSD、边框等辅助内容，不承载显示器主体。
 
 验收：
 
-- Quad layer 打开时，房间 mesh depth 不遮挡显示器。
+- 房间 mesh depth 不遮挡显示器。
 - 同一 screen pose 下，鼠标/laser 命中区域与视觉 Quad 一致。
 - 环境模型复杂度提高时，显示器 present FPS 不下降到环境 FPS。
-- 不支持 Quad layer 或创建失败时自动回退 projection screen，并记录明确原因。
+- Quad layer 不可用时进入明确失败/空屏状态并记录原因，不静默回到旧 projection screen 主体。
 
 ### 阶段 2：OpenXR frame loop 硬实时化
 
@@ -335,11 +332,11 @@ BackgroundPresenter
 - projection layer 可绘制边框、hover highlight、controller laser。
 - 不允许因为 Quad layer 不参与 depth test 而丢失输入命中。
 
-### 5.4 渐进兼容
+### 5.4 主路径与降级边界
 
-| 功能 | 主路径 | fallback |
+| 功能 | 主路径 | 降级边界 |
 |---|---|---|
-| 显示器 | OpenXR Quad layer | projection layer 内 screen quad |
+| 显示器 | OpenXR Quad layer | 明确失败/空屏并记录原因，不回到 projection screen 主体 |
 | 背景 | equirect/cubemap layer | projection sky sphere |
 | Glow | async safe texture | transparent/no glow |
 | 墙面反射 | mask + delayed light texture | disabled |
@@ -352,13 +349,13 @@ BackgroundPresenter
 - `ScreenFrameBridge`：latest drain、reuse、frame id、timestamp、drop 统计。
 - `AsyncEffectResultPool`：slot 状态转换、safe index 不读 writing slot。
 - GPU Glow 采样约束：测试文档/代码不得出现实时 `.cpu()`、`.numpy()`、`glReadPixels()`、`tex.read()` 作为屏幕光颜色来源。
-- `QuadLayerPresenter`：layer 构造、pose/size、fallback 条件。
+- `QuadLayerPresenter`：layer 构造、pose/size、失败原因。
 - `BackgroundBakeService`：wall light mask cache key、profile invalidation、missing asset fallback；不测试 GLB panorama/cubemap bake。
 
 ### 6.2 集成测试
 
 - OpenXR 无 headset preview 模式不崩溃。
-- Quad layer 创建失败自动 fallback projection。
+- Quad layer 创建失败时不绘制 projection screen 主体，并记录明确失败原因。
 - runtime producer 低 FPS 时 viewer submit 不阻塞。
 - effect worker 人为 sleep 时 screen FPS 不下降。
 - GPU Glow Off fast path 不触发 downsample，不触发 CPU 采样。
@@ -387,16 +384,16 @@ BackgroundPresenter
 6. `feat(openxr): add async glow result pool`
 7. `feat(openxr): add wall reflection light probe path`
 8. `refactor(openxr): split backend effect scheduler interfaces`
-9. `docs(openxr): update runtime architecture and fallback matrix`
+9. `docs(openxr): update runtime architecture and degradation matrix`
 
-每个提交都必须保持旧路径可回退，避免一次性大重构导致 OpenXR 无法启动。
+每个提交都必须保持 OpenXR 可诊断、可启动；显示器主路径不再以旧 projection screen 作为兼容目标。
 
 ## 8. 风险与处理
 
 | 风险 | 影响 | 处理 |
 |---|---|---|
 | Quad layer 与 projection screen 视觉/交互不一致 | 点击位置偏移 | screen pose/size 单一来源，raycast 与 layer 共用参数 |
-| OpenXR runtime 对 Quad/equirect 支持差异 | 某些设备黑屏或层失败 | 能力探测 + projection fallback |
+| OpenXR runtime 对 Quad/equirect 支持差异 | 某些设备黑屏或层失败 | 能力探测 + 明确失败原因；背景可 projection fallback，显示器不回退到 projection screen 主体 |
 | Python/OpenGL 难以实现真正 GPU 多队列 | 无法达到最终并行度 | 先实现 no-wait 语义，再引入 D3D11/D3D12/Vulkan 后端 |
 | effect 结果读写冲突 | 闪烁或 GPU hazard | triple buffer + safe index，不读 writing slot |
 | 诊断口径混乱 | 性能问题误判 | 强制分开 capture/runtime/viewer/screen/effect/submit/present |

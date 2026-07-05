@@ -1327,18 +1327,18 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "controller_failed={rate('openxr_controller_render_failed')" in breakdown
     assert "laser_failed={rate('openxr_laser_render_failed')" in breakdown
 
-    assert "D2S_OPENXR_SCREEN_QUAD" in implementation
+    assert "D2S_OPENXR_SCREEN_QUAD" not in implementation
     assert "D2S_OPENXR_ASYNC_EFFECTS" in implementation
     assert "D2S_OPENXR_PANORAMA_BACKGROUND" in implementation
     assert "D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS" in implementation
     assert "D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS" in implementation
-    assert "'D2S_OPENXR_SCREEN_QUAD', '1'" in implementation
     assert "'D2S_OPENXR_ASYNC_EFFECTS', '1'" in implementation
     assert "'D2S_OPENXR_PANORAMA_BACKGROUND', '1'" in implementation
     assert "'D2S_OPENXR_SCREEN_UPLOAD_BUDGET_MS',\n            4.0" in implementation
     assert "'D2S_OPENXR_EFFECT_SUBMIT_BUDGET_MS',\n            4.0" in implementation
-    assert "self._xr_quad_layer_enabled = bool(self._openxr_screen_quad_enabled)" in implementation
-    assert "kwargs.get('xr_quad_layer_enabled', self._openxr_screen_quad_enabled)" not in implementation
+    assert "self._xr_quad_layer_enabled = True" in implementation
+    assert "_openxr_screen_quad_enabled" not in implementation
+    assert "kwargs.get('xr_quad_layer_enabled'" not in implementation
     assert "viewer._fps_breakdown_add_value = callbacks.breakdown_add_value" in (
         SRC / "xr_viewer" / "openxr_runtime.py"
     ).read_text(encoding="utf-8")
@@ -1490,10 +1490,10 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     assert presenter.projection_layer_needed() is False
 
     viewer._quad_layer_screen_presentable = lambda: False
-    assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_needed() is False
 
     viewer._quad_layer_screen_presentable = lambda: False
-    assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_needed() is False
 
 
 def test_active_openxr_presenter_drains_source_after_begin_frame():
@@ -2605,13 +2605,13 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     viewer.screen_height = 1.0
     viewer._screen_effects_enabled = True
     viewer._should_render_source_screen_effects = lambda: True
+    assert presenter.projection_screen_needed() is False
     assert presenter.projection_screen_source_ready(0) is True
-    assert presenter.projection_screen_source_ready(1) is False
+    assert presenter.projection_screen_source_ready(1) is True
     assert presenter.projection_screen_effects_enabled() is False
     viewer._runtime_direct_source = False
-    assert presenter.projection_screen_source_ready(0) is True
     viewer.depth_tex = None
-    assert presenter.projection_screen_source_ready(0) is False
+    assert presenter.projection_screen_source_ready(0) is True
     viewer.render_projection_layer = False
 
     viewer._make_quad_layer = lambda _eye_index: None
@@ -2626,7 +2626,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert ("openxr_quad_layer_failed", 1) in inc_calls
 
 
-def test_quad_layer_failure_reason_flows_to_projection_fallback():
+def test_quad_layer_failure_reason_does_not_enable_projection_screen():
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
     from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
@@ -2650,7 +2650,7 @@ def test_quad_layer_failure_reason_flows_to_projection_fallback():
     assert viewer._update_quad_layer_swapchains() == []
     presenter = ScreenLayerPresenter(viewer)
 
-    assert presenter.projection_screen_needed() is True
+    assert presenter.projection_screen_needed() is False
     assert presenter.projection_screen_unavailable_reason() == "update_failed_RuntimeError"
 
 

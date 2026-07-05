@@ -226,9 +226,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             value = kwargs.get(key, os.environ.get(env_name, default))
             return str(value or default).strip().lower() in ('1', 'true', 'yes', 'on')
 
-        self._openxr_screen_quad_enabled = _bool_env_option(
-            'openxr_screen_quad', 'D2S_OPENXR_SCREEN_QUAD', '1'
-        )
         self._openxr_async_effects_enabled = _bool_env_option(
             'openxr_async_effects', 'D2S_OPENXR_ASYNC_EFFECTS', '1'
         )
@@ -436,7 +433,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._screen_quality_filter = bool(kwargs.get('screen_quality_filter', False))
         self._screen_quality_sharpness = max(0.0, min(1.0, float(kwargs.get('screen_quality_sharpness', 0.35))))
         self._screen_quality_oversample = max(0.75, min(1.5, float(kwargs.get('screen_quality_oversample', 1.0))))
-        self._xr_quad_layer_enabled = bool(self._openxr_screen_quad_enabled)
+        self._xr_quad_layer_enabled = True
         self._xr_quad_layer_active = False
         self._xr_quad_layer_failed = False
         self._xr_quad_layer_failure_reason = None

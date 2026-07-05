@@ -815,7 +815,7 @@ Environment profile/assets -> BackgroundBakeService -> panorama/cubemap backgrou
 1. 虚拟显示器是硬实时路径：OpenXR frame loop 不等待 runtime、背景、Glow 或墙面反射。
 2. 背景、Glow、墙面反射是软实时路径：只消费已经完成的旧 GPU result。
 3. Runtime producer 和 OpenXR presenter 之间只通过 latest result / reuse last frame 语义连接，不引入阻塞 backpressure。
-4. Quad layer 是目标显示器主路径；projection 内 screen quad 只作为兼容 fallback。
+4. Quad layer 是显示器唯一主路径；projection layer 只承载背景 fallback、controller、laser、OSD、边框等辅助内容，不承载显示器主体。
 5. 背景目标是 panorama/cubemap 或 OpenXR background layer；复杂 GLB 房间不应成为每帧显示器刷新瓶颈。
 6. Glow / 屏幕光必须复用 `docs/20-openxr-gpu-glow-guide.md` 的 GPU downsample/shader 采样技术，禁止实时 CPU 采样。
 ```
@@ -823,7 +823,7 @@ Environment profile/assets -> BackgroundBakeService -> panorama/cubemap backgrou
 首轮实施顺序：
 
 ```text
-1. 固定启用 OpenXR async present 主路径，保留 D2S_OPENXR_SCREEN_QUAD / D2S_OPENXR_ASYNC_EFFECTS / D2S_OPENXR_PANORAMA_BACKGROUND 开关和分段诊断。
+1. 固定启用 OpenXR async present / Quad screen 主路径；仅保留 D2S_OPENXR_ASYNC_EFFECTS / D2S_OPENXR_PANORAMA_BACKGROUND 软路径开关和分段诊断。
 2. 增加 ScreenFrameBridge，非阻塞 drain latest runtime result，缺帧时复用 last good screen texture。
 3. 推进 Quad-layer screen presenter，保持 controller raycast 使用同一个 logical screen plane。
 4. 验证复杂环境下 screen present FPS 与环境渲染成本解耦。

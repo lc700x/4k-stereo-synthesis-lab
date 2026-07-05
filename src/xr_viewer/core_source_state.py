@@ -402,7 +402,7 @@ class CoreSourceStateMixin:
         if not callable(prepare):
             return
         try:
-            tex, _size, _frame_id = scheduler.latest_safe_downsample(prepare_downsample=prepare)
+            tex = prepare(source_tex, source_size)
         except Exception as exc:
             print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
             self._breakdown_inc("openxr_effect_downsample_prewarm_failed")

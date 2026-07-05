@@ -863,6 +863,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def latest_safe_glow" in scheduler_text
     assert "def latest_safe_light_probe" in scheduler_text
     assert "def latest_safe_downsample" in scheduler_text
+    assert "prepare_downsample" not in scheduler_text
+    assert "prepare(source_tex, source_size)" in source_state
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" not in runtime_eye
@@ -1138,6 +1140,19 @@ def test_effect_scheduler_owns_safe_downsample_lookup(monkeypatch):
 
     assert calls == [(staging, (8, 4))]
     assert result == (downsampled, None, 21)
+
+
+def test_effect_scheduler_downsample_lookup_rejects_prepare_callback(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.effect_scheduler import EffectScheduler
+
+    scheduler = EffectScheduler()
+    scheduler.pool.safe_tex = object()
+    scheduler.pool.safe_size = (1920, 1080)
+    scheduler.pool.safe_frame_id = 9
+
+    with pytest.raises(TypeError):
+        scheduler.latest_safe_downsample(prepare_downsample=lambda *_args: object())
 
 
 def test_effect_scheduler_promotes_ready_once_per_frame():

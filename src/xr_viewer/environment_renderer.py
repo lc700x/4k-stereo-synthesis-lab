@@ -97,7 +97,8 @@ class EnvironmentRendererMixin:
     def _screen_light_source_texture(self):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)
         if getattr(self, '_runtime_direct_source', False):
-            source_tex, source_size, source_frame_id = self._runtime_effect_latest_safe()
+            scheduler = self._runtime_effect_submit_scheduler()
+            source_tex, source_size, source_frame_id = scheduler.latest_safe_light_probe()
             cache_key = (
                 frame_id,
                 int(source_frame_id or 0),
@@ -111,7 +112,9 @@ class EnvironmentRendererMixin:
             if callable(record_age):
                 record_age(source_tex, source_frame_id)
             try:
-                cached_light_tex = self._cached_glow_downsample_texture(source_tex, source_size)
+                cached_light_tex, _cached_size, _cached_frame_id = scheduler.latest_safe_downsample(
+                    cached_downsample=getattr(self, '_cached_glow_downsample_texture', None)
+                )
             except Exception as exc:
                 print(f"[OpenXRViewer] Screen light source lookup failed: {type(exc).__name__}: {exc}")
                 self._breakdown_inc("openxr_screen_light_source_failed")

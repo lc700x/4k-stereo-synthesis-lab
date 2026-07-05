@@ -154,7 +154,7 @@ class EnvironmentEffectsMixin:
     def _screen_effect_source_texture(self, *, allow_runtime_eye=True):
         frame_id = int(getattr(self, '_frame_count', 0) or 0)
         if getattr(self, '_runtime_direct_source', False):
-            source_tex, source_size, source_frame_id = self._runtime_effect_latest_safe()
+            source_tex, source_size, source_frame_id = self._runtime_effect_submit_scheduler().latest_safe_glow()
             value = (source_tex, source_size)
             cache_key = (
                 frame_id,
@@ -377,7 +377,9 @@ class EnvironmentEffectsMixin:
 
         source_tex, source_size = self._screen_effect_source_texture(allow_runtime_eye=False)
         if getattr(self, '_runtime_direct_source', False):
-            glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
+            glow_tex, _glow_size, _glow_frame_id = self._runtime_effect_submit_scheduler().latest_safe_downsample(
+                cached_downsample=getattr(self, '_cached_glow_downsample_texture', None)
+            )
         else:
             glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
         if mgl_fbo is not None:

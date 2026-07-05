@@ -377,10 +377,8 @@ class CoreSourceStateMixin:
             self._breakdown_inc("openxr_effect_submit_overwrite")
 
     def _prewarm_runtime_effect_downsample(self):
-        latest_safe = getattr(self, "_runtime_effect_latest_safe", None)
-        if not callable(latest_safe):
-            return
-        source_tex, source_size, _source_frame_id = latest_safe()
+        scheduler = self._runtime_effect_submit_scheduler()
+        source_tex, source_size, _source_frame_id = scheduler.latest_safe()
         if source_tex is None or source_size is None:
             return
         mode = str(getattr(self, "_glow_mode", "") or "").strip().lower()
@@ -400,7 +398,8 @@ class CoreSourceStateMixin:
         prepare = getattr(self, "_prepare_glow_downsample_texture", None)
         if not callable(prepare):
             return
-        if prepare(source_tex, source_size) is not None:
+        tex, _size, _frame_id = scheduler.latest_safe_downsample(prepare_downsample=prepare)
+        if tex is not None:
             self._breakdown_inc("openxr_effect_downsample_prewarm")
 
     def _poll_source_frame(self, upload=False):

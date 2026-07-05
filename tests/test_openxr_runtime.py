@@ -728,7 +728,10 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
 
     viewer = Viewer()
     safe_tex = object()
-    viewer._runtime_effect_latest_safe = lambda: (safe_tex, (640, 360), 3)
+    scheduler = viewer._runtime_effect_submit_scheduler()
+    scheduler.pool.safe_tex = safe_tex
+    scheduler.pool.safe_size = (640, 360)
+    scheduler.pool.safe_frame_id = 3
     viewer._glow_mode = "veil"
     viewer._glow_intensity_multiplier = 1.0
     viewer._glow_shell_intensity_multiplier = 0.0
@@ -809,6 +812,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def latest_safe" in scheduler_text
     assert "def latest_safe_glow" in scheduler_text
     assert "def latest_safe_light_probe" in scheduler_text
+    assert "def latest_safe_downsample" in scheduler_text
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" not in runtime_eye
@@ -835,6 +839,10 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "openxr_screen_light_source_reuse" in environment_renderer
     assert "openxr_effect_source_safe_publish" in submitter_text
     assert "openxr_screen_effect_source_reuse" in effects
+    assert "scheduler.latest_safe_downsample(" in environment_renderer
+    assert "scheduler.latest_safe_light_probe()" in environment_renderer
+    assert "self._runtime_effect_submit_scheduler().latest_safe_glow()" in effects
+    assert "self._runtime_effect_submit_scheduler().latest_safe_downsample(" in effects
     assert "_openxr_effect_submit_budget_skip_armed" in runtime_eye
     assert "self._runtime_effect_result_state = pool.state" not in runtime_eye
     assert "self.state = 'idle'" in scheduler_text
@@ -1008,6 +1016,37 @@ def test_effect_scheduler_publishes_completed_result_before_consumers_read_safe(
     assert scheduler.latest_safe_light_probe() == (staging, (8, 4), 21)
     assert not scheduler.poll_completed()
     assert scheduler.latest_safe() == (staging, (8, 4), 21)
+
+
+def test_effect_scheduler_owns_safe_downsample_lookup(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.effect_scheduler import EffectScheduler
+
+    class Tex:
+        pass
+
+    class Ctx:
+        def texture(self, size, components, dtype):
+            tex = Tex()
+            tex.size = size
+            tex.components = components
+            tex.dtype = dtype
+            tex.filter = None
+            return tex
+
+    scheduler = EffectScheduler()
+    staging = scheduler.submit_screen_frame(Ctx(), 8, 4)
+    downsampled = object()
+    calls = []
+    scheduler.publish_completed(8, 4, 21)
+    scheduler.poll_completed()
+
+    result = scheduler.latest_safe_downsample(
+        cached_downsample=lambda tex, size: calls.append((tex, size)) or downsampled
+    )
+
+    assert calls == [(staging, (8, 4))]
+    assert result == (downsampled, None, 21)
 
 
 def test_effect_scheduler_promotes_ready_once_per_frame():

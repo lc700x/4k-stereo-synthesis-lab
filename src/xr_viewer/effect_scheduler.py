@@ -143,6 +143,18 @@ class EffectScheduler:
     def latest_safe(self):
         return self.pool.safe_tex, self.pool.safe_size, self.pool.safe_frame_id
 
+    def latest_safe_downsample(self, cached_downsample=None, prepare_downsample=None):
+        source_tex, source_size, source_frame_id = self.latest_safe()
+        if source_tex is None or source_size is None:
+            return source_tex, source_size, source_frame_id
+        for downsample in (cached_downsample, prepare_downsample):
+            if not callable(downsample):
+                continue
+            tex = downsample(source_tex, source_size)
+            if tex is not None:
+                return tex, None, source_frame_id
+        return source_tex, source_size, source_frame_id
+
     def latest_safe_glow(self):
         return self.latest_safe()
 

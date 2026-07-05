@@ -176,7 +176,7 @@ External Unity/Blender bake or packaged panorama asset
 
 ### 阶段 3：静态房间背景 panorama/cubemap
 
-目标：把复杂房间背景从每帧 mesh 渲染迁移为外部工具预生成的固定视点全景背景。项目不再实现从 GLB 房间自动 bake 出 panorama/cubemap；GLB 仍可作为预览/兼容输入，但目标背景资产由 Unity、Blender 或其它离线工具导出。
+目标：把复杂房间背景从每帧 mesh 渲染迁移为外部工具预生成的 panorama/cubemap 背景资产。项目不再实现从 GLB 房间自动 bake 出 panorama/cubemap；GLB 仍可作为预览/兼容输入，但目标背景资产由 Unity、Blender 或其它离线工具导出。
 
 任务：
 

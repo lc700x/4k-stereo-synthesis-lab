@@ -14,6 +14,10 @@ class EffectSubmitter:
         scheduler = viewer._runtime_effect_submit_scheduler()
         if scheduler.pending_source is None:
             return False
+        if not screen_frame_uploaded:
+            scheduler.clear_pending_source()
+            self._breakdown_inc("openxr_effect_source_reused_safe")
+            return False
         should_submit = getattr(viewer, "_should_submit_runtime_effect_source", None)
         if callable(should_submit) and not should_submit():
             scheduler.clear_pending_source()

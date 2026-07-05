@@ -360,7 +360,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     source = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     screen_presenter = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
+    quad_layer = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
     viewer_source = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
 
     assert "#define roll params.w" in source
@@ -374,7 +374,8 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     assert "eye_sign * ipd * 0.5" not in source
     assert "self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0" in source
     assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" not in screen_presenter
-    assert "roll=viewer.screen_roll" in projection_presenter
+    assert "cr = math.cos(self.screen_roll * 0.5)" in quad_layer
+    assert "sr = math.sin(self.screen_roll * 0.5)" in quad_layer
     assert "float depth_response = depth - u_convergence;" in viewer_source
     assert "float shift = depth_response;" in viewer_source
     assert "float px = u_eye_offset * shift * u_depth_strength * edge_falloff;" in viewer_source
@@ -706,19 +707,25 @@ def test_runtime_effect_submit_flushes_after_frame_submit():
     assert submitted == []
     assert ("openxr_effect_submit_overwrite", 1) in inc_calls
 
-    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
     assert submitted == [newer_source]
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
     assert submitted == [newer_source]
 
+    viewer._queue_runtime_effect_submit(source)
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert submitted == [newer_source]
+    assert viewer._runtime_effect_submit_scheduler().pending_source is None
+    assert ("openxr_effect_source_reused_safe", 1) in inc_calls
+
     def _fail_submit(_value):
         raise RuntimeError("effect failed")
 
     viewer._submit_runtime_effect_source_texture = _fail_submit
     viewer._queue_runtime_effect_submit(source)
-    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert ("openxr_effect_submit_failed", 1) in inc_calls
@@ -736,7 +743,7 @@ def test_runtime_effect_submit_flush_does_not_prewarm_downsample():
     viewer._submit_runtime_effect_source_texture = lambda _value: None
     viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("flush should not prewarm")
 
-    assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
 
@@ -803,7 +810,7 @@ def test_runtime_effect_submit_budget_skip_does_not_call_submit():
     viewer._submit_runtime_effect_source_texture = lambda _value: pytest.fail("budget skip should not submit")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert viewer._openxr_effect_submit_budget_skip_armed is False
@@ -832,7 +839,7 @@ def test_runtime_effect_submit_not_queued_when_effect_source_is_not_needed():
     viewer._submit_runtime_effect_source_texture = lambda value: submitted.append(value)
 
     viewer._queue_runtime_effect_submit(source)
-    assert not EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert not EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert submitted == []
@@ -1982,7 +1989,7 @@ def test_effect_submitter_flushes_after_rendered_frames(monkeypatch):
     source = object()
     viewer.scheduler.queue_source(source)
     viewer.allowed = False
-    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=False)
+    assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
     assert viewer.scheduler.pending_source is None
     assert viewer.submitted[-1] is not source
     assert ("openxr_effect_source_interval_skip", 1) in viewer.inc_calls

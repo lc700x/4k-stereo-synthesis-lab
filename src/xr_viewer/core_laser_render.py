@@ -411,9 +411,17 @@ class CoreLaserRenderMixin:
             except (TypeError, ValueError):
                 env_intensity = 1.0
             self._controller_prog['u_env_intensity'].value = env_intensity
+            try:
+                _yaw_offset, _exposure, _flip_y, stereo_layout, _light_uv, _light_radius = self._panorama_render_settings()
+            except Exception:
+                stereo_layout = 0
+            self._controller_prog['u_env_stereo_layout'].value = int(stereo_layout)
+            self._controller_prog['u_env_eye_index'].value = 1 if int(getattr(self, '_current_eye_index', 0) or 0) == 1 else 0
         else:
             self._controller_prog['u_use_env_tex'].value = 0
             self._controller_prog['u_env_intensity'].value = 0.0
+            self._controller_prog['u_env_stereo_layout'].value = 0
+            self._controller_prog['u_env_eye_index'].value = 0
         screen_tex = None
         if getattr(self, '_controller_hdr_lighting', True):
             if hasattr(self, '_bind_screen_light_source_texture'):

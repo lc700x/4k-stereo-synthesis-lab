@@ -242,8 +242,12 @@ class EnvironmentRendererMixin:
                 arr, size = _read_radiance_hdr(path)
                 if max(size) > max_tex:
                     raise ValueError(f'HDR texture exceeds GL_MAX_TEXTURE_SIZE: {size[0]}x{size[1]} > {max_tex}')
-                arr = _hdr_to_ldr_u8(arr)
-                tex = self.ctx.texture(size, 3, arr.tobytes())
+                try:
+                    tex = self.ctx.texture(size, 3, np.asarray(arr, dtype=np.float16).tobytes(), dtype='f2')
+                except Exception as exc:
+                    print(f"[OpenXRViewer] HDR panorama float texture unavailable, fallback to LDR: {exc}")
+                    arr = _hdr_to_ldr_u8(arr)
+                    tex = self.ctx.texture(size, 3, arr.tobytes())
             else:
                 img = Image.open(path).convert('RGB')
                 if max(img.size) > max_tex:
@@ -367,6 +371,8 @@ class EnvironmentRendererMixin:
             settings.get('yaw_offset_deg'),
             settings.get('exposure'),
             settings.get('flip_y'),
+            settings.get('stereo_layout'),
+            settings.get('layout'),
             repr(settings.get('screen_light_layout')),
             repr(settings.get('screen_light_uv')),
             repr(settings.get('screen_light_radius')),
@@ -383,6 +389,8 @@ class EnvironmentRendererMixin:
         except (TypeError, ValueError):
             exposure = 1.0
         flip_y = 1 if bool(settings.get('flip_y', False)) else 0
+        stereo_layout_raw = str(settings.get('stereo_layout', settings.get('layout', 'mono')) or 'mono').strip().lower()
+        stereo_layout = 1 if stereo_layout_raw in ('sbs', 'side_by_side', 'side-by-side', 'stereo_sbs') else 0
         light_layout = settings.get('screen_light_layout')
         if not isinstance(light_layout, dict):
             light_layout = {}
@@ -401,7 +409,7 @@ class EnvironmentRendererMixin:
         except (TypeError, ValueError):
             light_radius = (0.18, 0.11)
 
-        value = (yaw_offset, exposure, flip_y, light_uv, light_radius)
+        value = (yaw_offset, exposure, flip_y, stereo_layout, light_uv, light_radius)
         self._panorama_render_settings_key = cache_key
         self._panorama_render_settings_value = value
         return value
@@ -413,7 +421,7 @@ class EnvironmentRendererMixin:
         tex = self._panorama_texture_ready()
         if tex is None:
             return False
-        yaw_offset, exposure, flip_y, light_uv, light_radius = self._panorama_render_settings()
+        yaw_offset, exposure, flip_y, stereo_layout, light_uv, light_radius = self._panorama_render_settings()
 
         view_rot = np.array(view_mat, dtype=np.float32, copy=True)
         view_rot[:3, 3] = 0.0
@@ -441,6 +449,8 @@ class EnvironmentRendererMixin:
             self._panorama_prog['u_yaw_offset'].value = float(yaw_offset)
             self._panorama_prog['u_exposure'].value = max(0.0, float(exposure))
             self._panorama_prog['u_flip_y'].value = flip_y
+            self._panorama_prog['u_stereo_layout'].value = stereo_layout
+            self._panorama_prog['u_eye_index'].value = 1 if int(getattr(self, '_current_eye_index', 0) or 0) == 1 else 0
             self._panorama_prog['u_screen_light_enabled'].value = 1 if screen_tex is not None else 0
             self._panorama_prog['u_wall_light_mask_enabled'].value = 1 if mask_tex is not None else 0
             self._panorama_prog['u_screen_light_intensity'].value = max(

@@ -1142,6 +1142,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._panorama_prog['u_yaw_offset'].value = 0.0
         self._panorama_prog['u_exposure'].value = 1.0
         self._panorama_prog['u_flip_y'].value = 0
+        self._panorama_prog['u_stereo_layout'].value = 0
+        self._panorama_prog['u_eye_index'].value = 0
         self._panorama_prog['u_screen_light_enabled'].value = 0
         self._panorama_prog['u_wall_light_mask_enabled'].value = 0
         self._panorama_prog['u_screen_light_intensity'].value = 0.0
@@ -1415,6 +1417,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._controller_prog['u_use_texture'].value = 1
         self._controller_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)
         self._controller_prog['u_use_env_tex'].value = 0
+        self._controller_prog['u_env_stereo_layout'].value = 0
+        self._controller_prog['u_env_eye_index'].value = 0
         self._controller_prog['u_env_intensity'].value = 0.0
         self._controller_prog['u_screen_light_enabled'].value = 0
         self._controller_prog['u_screen_light_intensity'].value = 0.0

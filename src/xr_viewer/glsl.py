@@ -176,6 +176,8 @@ uniform mat4 u_inv_view_rot;
 uniform float u_yaw_offset;
 uniform float u_exposure;
 uniform int u_flip_y;
+uniform int u_stereo_layout;
+uniform int u_eye_index;
 uniform int u_screen_light_enabled;
 uniform int u_wall_light_mask_enabled;
 uniform float u_screen_light_intensity;
@@ -212,7 +214,11 @@ void main() {
     }
 
     vec2 pano_uv = vec2(fract(u), clamp(v, 0.0, 1.0));
-    vec3 color = texture(u_tex, pano_uv).rgb;
+    vec2 sample_uv = pano_uv;
+    if (u_stereo_layout == 1) {
+        sample_uv.x = pano_uv.x * 0.5 + (u_eye_index == 1 ? 0.5 : 0.0);
+    }
+    vec3 color = texture(u_tex, sample_uv).rgb;
     if (u_screen_light_enabled == 1) {
         vec2 d = (pano_uv - u_screen_light_uv) / max(u_screen_light_radius, vec2(0.001));
         float mask = exp(-dot(d, d));
@@ -418,6 +424,8 @@ uniform sampler2D u_screen_light_tex;
 uniform vec3 u_base_color_factor; // Base color factor
 uniform int u_use_texture;     // 0: use solid color, 1: sample texture
 uniform int u_use_env_tex;
+uniform int u_env_stereo_layout;
+uniform int u_env_eye_index;
 uniform int u_screen_light_enabled;
 uniform float u_env_intensity;
 uniform float u_screen_light_intensity;
@@ -433,6 +441,14 @@ vec2 env_uv(vec3 dir) {
     float u = atan(dir.x, dir.z) / 6.28318530718 + 0.5;
     float v = asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265359 + 0.5;
     return vec2(u, 1.0 - v);
+}
+
+vec2 env_sample_uv(vec3 dir) {
+    vec2 uv = env_uv(dir);
+    if (u_env_stereo_layout == 1) {
+        uv.x = uv.x * 0.5 + (u_env_eye_index == 1 ? 0.5 : 0.0);
+    }
+    return uv;
 }
 
 void main() {
@@ -452,8 +468,8 @@ void main() {
     vec3 color = baseColor * 0.30;
     vec3 R = reflect(-V, N);
     if (u_use_env_tex == 1) {
-        vec3 env_spec = textureLod(u_env_tex, env_uv(R), 3.0).rgb;
-        vec3 env_diff = textureLod(u_env_tex, env_uv(N), 5.0).rgb;
+        vec3 env_spec = textureLod(u_env_tex, env_sample_uv(R), 3.0).rgb;
+        vec3 env_diff = textureLod(u_env_tex, env_sample_uv(N), 5.0).rgb;
         float view_facing = smoothstep(-0.25, 0.65, dot(N, V));
         color = baseColor * mix(vec3(0.32), env_diff, 0.36) * u_env_intensity + env_spec * (0.30 * u_env_intensity * view_facing);
     }

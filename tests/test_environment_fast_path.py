@@ -155,6 +155,7 @@ def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
             "environment_type": "panorama",
             "panorama": {
                 "image": "background.jpg",
+                "stereo_layout": "sbs",
                 "wall_light_mask": "mask.png",
                 "screen_light_layout": {"uv": [0.4, 0.6], "radius": [0.2, 0.1]},
             },
@@ -164,6 +165,7 @@ def test_panorama_profile_config_resolves_image(monkeypatch, tmp_path):
 
     assert is_panorama
     assert path == str(image)
+    assert cfg["stereo_layout"] == "sbs"
     assert cfg["wall_light_mask"] == "mask.png"
     assert cfg["screen_light_layout"]["uv"] == [0.4, 0.6]
 
@@ -240,6 +242,46 @@ def test_radiance_hdr_loader_decodes_flat_rgbe(tmp_path):
     ldr = _hdr_to_ldr_u8(arr)
     assert ldr.dtype.name == "uint8"
     assert ldr.shape == arr.shape
+
+
+def test_panorama_hdr_texture_uses_float_upload(monkeypatch, tmp_path):
+    from xr_viewer import environment_renderer
+
+    viewer = _make_default_viewer(monkeypatch)
+    hdr = tmp_path / "tiny.hdr"
+    hdr.write_bytes(
+        b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n"
+        + bytes([128, 64, 32, 129, 0, 0, 0, 0])
+    )
+
+    class _Texture:
+        filter = None
+        repeat_x = False
+        repeat_y = False
+
+        def build_mipmaps(self):
+            pass
+
+    calls = []
+
+    class _Ctx:
+        info = {"GL_MAX_TEXTURE_SIZE": 8192}
+
+        def texture(self, size, components, data, **kwargs):
+            calls.append((size, components, len(data), kwargs.get("dtype")))
+            return _Texture()
+
+    def _fail_ldr(_arr):
+        raise AssertionError("HDR panorama should not be tone-mapped before float upload")
+
+    viewer.ctx = _Ctx()
+    viewer._panorama_background_path = str(hdr)
+    viewer._panorama_tex = None
+    viewer._panorama_tex_path = None
+    monkeypatch.setattr(environment_renderer, "_hdr_to_ldr_u8", _fail_ldr)
+
+    assert viewer._get_panorama_texture() is not None
+    assert calls == [((2, 1), 3, 2 * 1 * 3 * 2, "f2")]
 
 
 def test_official_webxr_hdr_environments_are_packaged():
@@ -394,7 +436,14 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "return color * (1.0 / 9.0)" in pano_frag
     assert "u_screen_light_uv" in pano_frag
     assert "u_screen_light_radius" in pano_frag
+    assert "uniform int u_stereo_layout" in pano_frag
+    assert "uniform int u_eye_index" in pano_frag
+    assert "sample_uv.x = pano_uv.x * 0.5 + (u_eye_index == 1 ? 0.5 : 0.0)" in pano_frag
     assert "screen_light_layout" in settings_func
+    assert "stereo_layout_raw" in settings_func
+    assert "'sbs'" in settings_func
+    assert "u_stereo_layout" in render_func
+    assert "u_eye_index" in render_func
     assert "light_layout.get('uv'" in settings_func
     assert "light_layout.get('radius'" in settings_func
     assert "return False" in render_func
@@ -1264,12 +1313,18 @@ def test_frosted_glow_virtual_keyboard_adjustment_is_disabled(monkeypatch):
 def test_controller_shader_uses_panorama_ibl_reflection():
     glsl_text = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
     render_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     profile_text = (SRC / "xr_viewer" / "environment_profiles.py").read_text(encoding="utf-8")
     ctrl_frag = glsl_text.split("_CTRL_FRAG", 1)[1].split("_ENV_VERT", 1)[0]
 
     assert "uniform sampler2D u_env_tex" in ctrl_frag
     assert "uniform sampler2D u_screen_light_tex" in ctrl_frag
-    assert "textureLod(u_env_tex, env_uv(R), 3.0)" in ctrl_frag
+    assert "uniform int u_env_stereo_layout" in ctrl_frag
+    assert "uniform int u_env_eye_index" in ctrl_frag
+    assert "vec2 env_sample_uv(vec3 dir)" in ctrl_frag
+    assert "uv.x = uv.x * 0.5 + (u_env_eye_index == 1 ? 0.5 : 0.0)" in ctrl_frag
+    assert "textureLod(u_env_tex, env_sample_uv(R), 3.0)" in ctrl_frag
+    assert "textureLod(u_env_tex, env_sample_uv(N), 5.0)" in ctrl_frag
     assert "textureLod(u_screen_light_tex" in ctrl_frag
     assert "u_light_color" not in ctrl_frag
     assert "u_ambient_color" not in ctrl_frag
@@ -1279,6 +1334,11 @@ def test_controller_shader_uses_panorama_ibl_reflection():
     assert "_runtime_eye_textures" not in render_text
     assert "_controller_hdr_lighting" in render_text
     assert "if getattr(self, '_controller_hdr_lighting', True):" in render_text
+    assert "_panorama_render_settings()" in render_text
+    assert "u_env_stereo_layout" in render_text
+    assert "u_env_eye_index" in render_text
+    assert "u_env_stereo_layout" in impl_text
+    assert "u_env_eye_index" in impl_text
     assert "u_use_env_tex" in render_text
     assert "u_screen_light_enabled" in render_text
     assert "controller_hdr_lighting" in profile_text

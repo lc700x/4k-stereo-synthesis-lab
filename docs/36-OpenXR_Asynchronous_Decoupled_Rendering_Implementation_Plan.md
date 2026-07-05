@@ -44,7 +44,7 @@
 |---|---:|---|---|
 | Capture + StereoRuntime | 生产者 | 捕获、depth、stereo synthesis 或 RGB+D | 只写 latest result，队列满则覆盖旧帧 |
 | OpenXR Screen Presenter | 硬实时 | 更新虚拟显示器 Quad 层并提交 OpenXR frame | 不等待背景和效果；拿不到新帧则复用上一帧 |
-| Background Renderer | 软实时 | 生成或更新房间背景 panorama/cubemap/projection layer | 可低频、可延迟、可暂停 |
+| Background Renderer | 软实时 | 加载或更新外部导出的 panorama/cubemap/projection layer | 可低频、可延迟、可暂停 |
 | Effects Worker | 软实时 | Glow、屏幕平均色、墙面反射纹理 | 只发布 completed result；主线程消费旧 safe result |
 
 ### 3.2 OpenXR 层结构
@@ -73,9 +73,9 @@ ScreenFrameBridge
   -> glow_result_pool / light_probe_pool / wall_reflection_pool
   -> Background/Projection shader consumes latest safe result
 
-Environment asset/profile
-  -> BackgroundBakeService
-  -> panorama/cubemap cache
+External Unity/Blender bake or packaged panorama asset
+  -> environment profile
+  -> mono/SBS HDR panorama or cubemap cache
   -> Background layer or sky sphere
 ```
 
@@ -179,13 +179,17 @@ Environment asset/profile
 
 ### 阶段 3：静态房间背景 panorama/cubemap
 
-目标：把复杂房间背景从每帧 mesh 渲染迁移为固定视点全景背景。
+目标：把复杂房间背景从每帧 mesh 渲染迁移为外部工具预生成的固定视点全景背景。项目不再实现从 GLB 房间自动 bake 出 panorama/cubemap；GLB 仍可作为预览/兼容输入，但目标背景资产由 Unity、Blender 或其它离线工具导出。
 
 任务：
 
-- 新增 `BackgroundBakeService`：
-  - 以当前 environment profile、screen placement、viewer origin 生成 cubemap 或 equirect panorama。
-  - 支持启动期生成、缓存到磁盘、profile 变更时失效。
+- 支持外部导出的背景资产：
+  - mono equirectangular HDR/LDR panorama。
+  - SBS equirectangular HDR panorama，左右眼按 profile 声明的 stereo layout 分区采样。
+  - 后续可选 cubemap/cubemap array 输入，但不要求项目内从 GLB 生成。
+- `BackgroundBakeService` 只保留轻量辅助职责：
+  - 生成/缓存 wall light mask、profile 派生资源等低成本资产。
+  - 不负责 GLB PBR 渲染、不负责 cubemap/equirect panorama bake。
 - 新增 `BackgroundLayerRenderer`：
   - 首选 OpenXR equirect/cubemap layer（若 runtime 支持）。
   - fallback 为 projection layer 内 sky sphere shader。
@@ -193,12 +197,14 @@ Environment asset/profile
   - 只保留头部旋转视差。
   - 位置移动被忽略或限制在 seated origin 附近。
 - 将动态 controller、laser、overlay 与静态背景分离。
+- 当前落地：panorama shader 支持 `stereo_layout: "sbs"`，左右眼分别采样左/右半幅；`.hdr` panorama 优先上传为半浮点纹理，controller panorama IBL 也按同一 eye 分区采样。
 
 验收：
 
-- 复杂 GLB 房间加载后，每帧环境绘制成本降为接近单 draw call 或 layer submit。
-- panorama 背景在转头时无明显方向错误。
-- environment profile 改变后可重新 bake 并热切换。
+- 外部导出的 mono/SBS panorama 背景在转头时无明显方向错误。
+- SBS panorama 在左右眼采样正确，不出现左右眼串图或半幅拉伸。
+- environment profile 改变后可重新加载对应 panorama/cubemap 和 mask，并热切换。
+- GLB 自动 bake 不是验收项；复杂 GLB 房间若未提供 panorama 资产，只走兼容/预览路径，不作为最终异步背景目标。
 
 ### 阶段 4：异步 GPU Glow 结果池
 
@@ -250,9 +256,9 @@ Environment asset/profile
 - background shader 合成：
   - `final = panorama + mask * delayed_screen_light_color * intensity`
   - 所有输入都来自 safe result。
-- 对简单房间提供数学 mask fallback；对复杂房间支持离线 bake。
+- 对简单房间提供数学 mask fallback；对复杂房间使用外部工具或 profile 提供的 `wall_light_mask`，项目内只提供 `wall_light_mask: "auto"` 的基础 UV mask 生成。
 - 当前落地：panorama shader 已可用数学 mask fallback 或 profile `wall_light_mask` 图片消费 latest safe screen texture，并使用 3x3 GPU light probe 采样低频屏幕光；复杂房间 mask bake 仍待接入。
-- 当前落地：`BackgroundBakeService` 已支持 profile `wall_light_mask: "auto"`，在配置期生成并缓存与 panorama UV 对齐的灰度 mask PNG；实时渲染路径只加载缓存纹理，不做 CPU 屏幕采样。
+- 当前落地：`BackgroundBakeService` 已支持 profile `wall_light_mask: "auto"`，在配置期生成并缓存与 panorama UV 对齐的灰度 mask PNG；实时渲染路径只加载缓存纹理，不做 CPU 屏幕采样。它不是 GLB panorama/cubemap bake 服务。
 
 验收：
 
@@ -305,7 +311,7 @@ BackgroundPresenter
 
 - 等待 Glow 完成。
 - 等待墙面反射完成。
-- 等待 panorama bake 完成。
+- 等待外部 panorama/cubemap 资产或派生 mask 准备完成。
 - 等待当前 runtime result 必须可用。
 
 可接受行为：
@@ -350,7 +356,7 @@ BackgroundPresenter
 - `AsyncEffectResultPool`：slot 状态转换、safe index 不读 writing slot。
 - GPU Glow 采样约束：测试文档/代码不得出现实时 `.cpu()`、`.numpy()`、`glReadPixels()`、`tex.read()` 作为屏幕光颜色来源。
 - `QuadLayerPresenter`：layer 构造、pose/size、fallback 条件。
-- `BackgroundBakeService`：cache key、profile invalidation、missing asset fallback。
+- `BackgroundBakeService`：wall light mask cache key、profile invalidation、missing asset fallback；不测试 GLB panorama/cubemap bake。
 
 ### 6.2 集成测试
 
@@ -359,7 +365,7 @@ BackgroundPresenter
 - runtime producer 低 FPS 时 viewer submit 不阻塞。
 - effect worker 人为 sleep 时 screen FPS 不下降。
 - GPU Glow Off fast path 不触发 downsample，不触发 CPU 采样。
-- environment GLB 极复杂时 screen quad 刷新不被拖慢。
+- 外部 panorama 背景或复杂 GLB 兼容预览路径启用时，screen quad 刷新不被背景路径拖慢。
 
 ### 6.3 性能验收
 

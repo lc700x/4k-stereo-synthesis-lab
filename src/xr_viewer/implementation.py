@@ -2117,6 +2117,41 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self.ctx.depth_mask = True
         self.ctx.enable(moderngl.DEPTH_TEST)
 
+    def _projection_layer_needed(self):
+        if self._quad_layer_unavailable_reason() is not None:
+            return True
+        if getattr(self, '_preview_active', False):
+            return True
+        if getattr(self, '_panorama_background_path', None):
+            return True
+        if getattr(self, '_env_model_visible', False) and getattr(self, '_env_model_prims', None):
+            return True
+        if self._keyboard_visible and self._keyboard_tex is not None:
+            return True
+        if self._aim_mat_l is not None or self._aim_mat_r is not None:
+            return True
+        if self._grip_mat_l is not None or self._grip_mat_r is not None:
+            return True
+        if float(getattr(self, '_border_alpha', 0.0) or 0.0) > 0.0:
+            return True
+        if any(getattr(self, name, None) is not None for name in (
+            '_depth_osd_tex', '_screen_osd_tex', '_preset_osd_tex', '_seat_adjust_osd_tex'
+        )):
+            return True
+        if self._brand_osd_tex is not None and self._grip_mat_r is not None:
+            return True
+        if self._hand_fps_visible and self._overlay_tex is not None:
+            return True
+        if self._team_fps_visible and self._team_status_tex is not None:
+            return True
+        if self._calibration_mode:
+            return True
+        if self._fps_overlay_visible and self._help_tex is not None:
+            return True
+        if self._team_status_visible and self._team_help_visible and self._team_help_tex is not None:
+            return True
+        return False
+
     def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):
         """Render one eye's parallax view into the swapchain FBO using world-space MVP.
 
@@ -4607,8 +4642,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                         break
 
                 eye_layer_views = []
+                render_projection_layer = self._projection_layer_needed()
 
-                if self._use_d3d11:
+                if not render_projection_layer:
+                    self._breakdown_inc('openxr_projection_layer_skipped')
+                elif self._use_d3d11:
                     # D3D11 rendering-----
                     #
                     # Prefer native D3D11 rendering directly into OpenXR

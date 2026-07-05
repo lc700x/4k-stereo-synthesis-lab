@@ -1121,6 +1121,53 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
     assert "def _submit_openxr_frame(layers):" in implementation
 
 
+def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.implementation import OpenXRViewerCore
+
+    viewer = object.__new__(OpenXRViewerCore)
+    viewer._quad_layer_unavailable_reason = lambda: None
+    viewer._preview_active = False
+    viewer._panorama_background_path = None
+    viewer._env_model_visible = False
+    viewer._env_model_prims = []
+    viewer._keyboard_visible = False
+    viewer._keyboard_tex = None
+    viewer._aim_mat_l = None
+    viewer._aim_mat_r = None
+    viewer._grip_mat_l = None
+    viewer._grip_mat_r = None
+    viewer._border_alpha = 0.0
+    viewer._depth_osd_tex = None
+    viewer._screen_osd_tex = None
+    viewer._preset_osd_tex = None
+    viewer._seat_adjust_osd_tex = None
+    viewer._brand_osd_tex = None
+    viewer._hand_fps_visible = False
+    viewer._overlay_tex = None
+    viewer._team_fps_visible = False
+    viewer._team_status_tex = None
+    viewer._calibration_mode = False
+    viewer._fps_overlay_visible = False
+    viewer._help_tex = None
+    viewer._team_status_visible = False
+    viewer._team_help_visible = False
+    viewer._team_help_tex = None
+
+    assert viewer._projection_layer_needed() is False
+
+    viewer._aim_mat_l = object()
+    assert viewer._projection_layer_needed() is True
+    viewer._aim_mat_l = None
+
+    viewer._panorama_background_path = "room.hdr"
+    assert viewer._projection_layer_needed() is True
+    viewer._panorama_background_path = None
+
+    viewer._quad_layer_unavailable_reason = lambda: "inactive"
+    assert viewer._projection_layer_needed() is True
+
+
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_tail = implementation.split("# On the first valid frame", 1)[1].split(
@@ -1130,8 +1177,10 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     build_idx = render_tail.index("for quad_eye_index in updated_quad_eyes:")
     failure_idx = render_tail.index("self._xr_quad_layer_failed = True", build_idx)
     render_idx = render_tail.index("eye_layer_views = []")
+    skip_idx = render_tail.index("render_projection_layer = self._projection_layer_needed()")
     append_idx = render_tail.index("for quad_layer_header in quad_layer_headers:")
-    assert update_idx < build_idx < failure_idx < render_idx < append_idx
+    assert update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
+    assert "openxr_projection_layer_skipped" in render_tail
     quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
     assert "composition_layers.append(quad_layer_header)" in quad_layer_block
 

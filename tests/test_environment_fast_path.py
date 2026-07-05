@@ -636,8 +636,8 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     assert "screen_presenter.render_projection_screen(" in render_eye
     assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in screen_presenter
     assert "background_presenter.projection_fallback_needed()" not in render_eye
-    assert "and not panorama_configured" in background_presenter
-    assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" in background_presenter
+    assert "and not panorama_configured" not in background_presenter
+    assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" not in background_presenter
 
 
 def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):

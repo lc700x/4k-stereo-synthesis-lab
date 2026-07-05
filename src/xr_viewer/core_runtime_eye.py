@@ -816,32 +816,13 @@ class CoreRuntimeEyeMixin:
         self._ensure_runtime_eye_textures(w, h)
         gpu_uploaded = self._try_update_runtime_frame_gpu(runtime_result, w, h)
         if not gpu_uploaded:
-            warn_cpu_fallback(
-                "OpenXR runtime eye upload",
-                "gpu_upload_returned_false",
-                detail=f"size={w}x{h}",
-                key="openxr_runtime_eye_cpu_gl",
-            )
-            left = self._runtime_eye_to_numpy(runtime_result.left_eye)
-            right = self._runtime_eye_to_numpy(runtime_result.right_eye)
-            if int(getattr(self, '_runtime_eye_texture_components', 3) or 3) == 4:
-                alpha_l = np.full((h, w, 1), 255, dtype=np.uint8)
-                alpha_r = np.full((h, w, 1), 255, dtype=np.uint8)
-                left_upload = np.concatenate((left[:, :, :3], alpha_l), axis=2)
-                right_upload = np.concatenate((right[:, :, :3], alpha_r), axis=2)
-            else:
-                left_upload = left[:, :, :3]
-                right_upload = right[:, :, :3]
-            self._runtime_eye_textures[0].write(np.ascontiguousarray(left_upload).tobytes())
-            self._runtime_eye_textures[1].write(np.ascontiguousarray(right_upload).tobytes())
-            for tex in self._runtime_eye_textures:
-                glBindTexture(GL_TEXTURE_2D, tex.glo)
-                glGenerateMipmap(GL_TEXTURE_2D)
-            glBindTexture(GL_TEXTURE_2D, 0)
+            self._breakdown_inc("openxr_runtime_eye_upload_reused_previous")
             if not self._runtime_eye_cpu_logged:
-                print(f"[OpenXRViewer] runtime_direct_cpu_gl active {w}x{h}")
+                print(f"[OpenXRViewer] runtime eye GPU upload unavailable; reusing previous frame {w}x{h}")
                 self._runtime_eye_cpu_logged = True
-            self._log_runtime_eye_stats_once(runtime_result, upload_path='cpu_gl')
+            if not all(self._runtime_eye_textures):
+                self._runtime_direct_source = False
+                return None
         else:
             self._log_runtime_eye_stats_once(runtime_result, upload_path='gpu_gl')
         self._runtime_direct_source = True

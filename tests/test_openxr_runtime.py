@@ -1187,6 +1187,18 @@ def test_active_openxr_presenter_does_not_lazy_load_environment_assets():
     assert "self._ensure_env_model_initialized(\"Lazy\")" not in active_tail
 
 
+def test_runtime_direct_upload_failure_reuses_previous_frame_without_cpu_readback():
+    runtime_eye = (SRC / "xr_viewer" / "core_runtime_eye.py").read_text(encoding="utf-8")
+    update_body = runtime_eye.split("def _update_runtime_frame(self, runtime_result):", 1)[1].split(
+        "def _apply_runtime_rgb_depth_config", 1
+    )[0]
+    fallback_block = update_body.split("if not gpu_uploaded:", 1)[1].split("else:", 1)[0]
+
+    assert "openxr_runtime_eye_upload_reused_previous" in fallback_block
+    assert "_runtime_eye_to_numpy" not in fallback_block
+    assert "cpu_gl" not in fallback_block
+
+
 def test_no_renderable_openxr_frame_does_not_sleep_after_submit():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     block = implementation.split("self._breakdown_inc('openxr_no_renderable')", 1)[1].split(

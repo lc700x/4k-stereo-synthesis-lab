@@ -4873,8 +4873,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                             raw_fbo, mgl_fbo = self._get_or_create_fbo(eye_index, img_index, sc_image.image, sc_w, sc_h)
                             self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)
 
-                            # Desktop preview: blit left eye to GLFW window
-                            if self._preview_active and eye_index == 0:
+                            # Desktop preview: keep mirror off the Quad screen presenter path.
+                            if self._preview_active and eye_index == 0 and not updated_quad_eyes:
                                 pw, ph = glfw.get_window_size(self.window)
                                 if pw > 0 and ph > 0:
                                     glBindFramebuffer(GL_READ_FRAMEBUFFER, raw_fbo)

@@ -1061,6 +1061,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     )[0]
     assert "try:" in opengl_projection_block
     assert "self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)" in opengl_projection_block
+    assert "self._preview_active and eye_index == 0 and not updated_quad_eyes" in opengl_projection_block
+    assert "glfw.swap_buffers(self.window)" in opengl_projection_block
     assert "openxr_projection_render_failed" in opengl_projection_block
     assert "xr.release_swapchain_image(swapchain, self._xr_sc_release_info)" in opengl_projection_block
     render_eye_aux_block = implementation.split("def _try_aux_render", 1)[1].split(

@@ -8,12 +8,15 @@ class BackgroundPresenter:
         self.viewer = viewer
 
     def projection_fallback_needed(self):
-        return bool(getattr(self.viewer, '_panorama_background_path', None))
+        viewer = self.viewer
+        ready = getattr(viewer, '_panorama_texture_ready', None)
+        return bool(callable(ready) and ready() is not None)
 
     def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, projection_screen_enabled):
         viewer = self.viewer
         start = time.perf_counter()
         rendered = False
+        panorama_configured = bool(getattr(viewer, '_panorama_background_path', None))
         has_panorama = self.projection_fallback_needed()
         enabled = bool(projection_screen_enabled or has_panorama)
         if enabled and has_panorama:
@@ -25,7 +28,7 @@ class BackgroundPresenter:
                 glClear(GL_DEPTH_BUFFER_BIT)
         if (
             enabled
-            and not has_panorama
+            and not panorama_configured
             and getattr(viewer, '_env_model_visible', False)
             and getattr(viewer, '_env_model_prims', None)
         ):

@@ -612,6 +612,7 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "projection_screen_enabled=draw_projection_screen" in eye_background
     assert "background_presenter.projection_fallback_needed()" not in eye_background
     assert "def projection_fallback_needed" in background_presenter
+    assert "ready = getattr(viewer, '_panorama_texture_ready', None)" in background_presenter
     assert "enabled = bool(projection_screen_enabled or has_panorama)" in background_presenter
     assert "if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):" in background_presenter
     assert "viewer._breakdown_inc('openxr_background_panorama')" in background_presenter
@@ -632,7 +633,7 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     assert "screen_presenter.render_projection_screen(" in render_eye
     assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in screen_presenter
     assert "background_presenter.projection_fallback_needed()" not in render_eye
-    assert "and not has_panorama" in background_presenter
+    assert "and not panorama_configured" in background_presenter
     assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" in background_presenter
 
 
@@ -642,6 +643,7 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     viewer = _make_default_viewer(monkeypatch)
     viewer._quad_layer_screen_presentable = lambda: True
     viewer._panorama_background_path = "room.hdr"
+    viewer._panorama_texture_ready = lambda: object()
     viewer._background_presenter = None
     viewer._env_model_visible = True
     viewer._env_model_prims = [object()]
@@ -732,6 +734,7 @@ def test_background_presenter_keeps_panorama_projection_fallback_without_screen(
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._breakdown_add_time = lambda name, seconds: None
+    viewer._panorama_texture_ready = lambda: object()
     viewer._render_panorama_background = lambda *_args: True
     viewer._render_env_model = lambda *_args: pytest.fail("env model should be skipped behind panorama")
     fbo = Fbo()
@@ -748,6 +751,41 @@ def test_background_presenter_keeps_panorama_projection_fallback_without_screen(
     assert rendered is True
     assert fbo.used == 1
     assert ("openxr_background_panorama", 1) in inc_calls
+
+
+def test_background_presenter_skips_configured_panorama_until_texture_ready(monkeypatch):
+    monkeypatch.chdir(SRC)
+    from xr_viewer.background_presenter import BackgroundPresenter
+
+    class Fbo:
+        def use(self):
+            raise AssertionError("background FBO should not be touched")
+
+    class Viewer:
+        pass
+
+    viewer = Viewer()
+    viewer._panorama_background_path = "room.hdr"
+    viewer._panorama_texture_ready = lambda: None
+    viewer._env_model_visible = True
+    viewer._env_model_prims = [object()]
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_add_time = lambda name, seconds: None
+    viewer._render_panorama_background = lambda *_args: pytest.fail("panorama should wait until ready")
+    viewer._render_env_model = lambda *_args: pytest.fail("configured panorama should not fall back to GLB mesh")
+
+    rendered = BackgroundPresenter(viewer).render_projection_background(
+        Fbo(),
+        object(),
+        object(),
+        object(),
+        eye_index=0,
+        projection_screen_enabled=False,
+    )
+
+    assert rendered is False
+    assert ("openxr_background_idle", 1) in inc_calls
 
 
 def test_quad_layer_build_failure_happens_before_projection_fallback_render():

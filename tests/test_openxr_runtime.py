@@ -2008,7 +2008,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "screen_presenter.prepare_projection_frame_state()" in preview_only
     assert "ProjectionLayerPresenter" not in implementation
     assert "ViewPoseTracker" not in implementation
-    assert "if self._quad_layer_can_replace_projection_screen():" not in render_frame[:prepare_idx]
+    assert "_quad_layer_can_replace_projection_screen" not in frame_renderer
     assert "self.screen_presenter.make_quad_layers(" not in frame_renderer
     assert "viewer._projection_layer_needed()" not in frame_renderer
     assert "composition_layers.append(" not in frame_renderer
@@ -2152,18 +2152,17 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)
 
-    assert viewer._quad_layer_can_replace_projection_screen() is True
+    assert viewer._quad_layer_screen_presentable() is True
     assert viewer._quad_layer_unavailable_reason() is None
 
     left_tex = viewer._runtime_eye_textures[0]
     viewer._runtime_eye_textures[1] = None
     assert viewer._quad_layer_source_texture(1)[0] is left_tex
     assert viewer._quad_layer_unavailable_reason() is None
-    assert viewer._quad_layer_can_replace_projection_screen() is True
+    assert viewer._quad_layer_screen_presentable() is True
 
     viewer._runtime_eye_textures[0] = None
     assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
-    assert viewer._quad_layer_can_replace_projection_screen() is False
     assert viewer._quad_layer_screen_presentable() is False
     viewer._quad_swapchain_presented_eyes = {0, 1}
     assert viewer._quad_layer_screen_presentable() is True
@@ -2171,26 +2170,28 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_has_frame = False
     assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
-    assert viewer._quad_layer_can_replace_projection_screen() is False
+    assert viewer._quad_layer_screen_presentable() is True
+    viewer._quad_swapchain_presented_eyes = set()
+    assert viewer._quad_layer_screen_presentable() is False
 
     viewer._runtime_eye_textures = [object(), object()]
     viewer._screen_curved = True
     assert viewer._quad_layer_unavailable_reason() == "curved_screen"
-    assert viewer._quad_layer_can_replace_projection_screen() is False
+    assert viewer._quad_layer_screen_presentable() is False
 
     viewer._screen_curved = False
     viewer._runtime_direct_source = False
     assert viewer._quad_layer_unavailable_reason() == "not_runtime_direct"
-    assert viewer._quad_layer_can_replace_projection_screen() is False
+    assert viewer._quad_layer_screen_presentable() is False
 
     viewer._runtime_direct_source = True
     viewer._xr_quad_layer_active = False
     assert viewer._quad_layer_unavailable_reason() == "inactive"
-    assert viewer._quad_layer_can_replace_projection_screen() is False
+    assert viewer._quad_layer_screen_presentable() is False
 
     viewer._xr_quad_layer_failed = True
     assert viewer._quad_layer_unavailable_reason() == "failed"
-    assert viewer._quad_layer_can_replace_projection_screen() is False
+    assert viewer._quad_layer_screen_presentable() is False
 
 
 def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():

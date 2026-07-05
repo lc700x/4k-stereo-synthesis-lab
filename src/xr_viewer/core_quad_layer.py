@@ -106,9 +106,6 @@ class CoreQuadLayerMixin:
             return "missing_source_texture"
         return None
 
-    def _quad_layer_can_replace_projection_screen(self):
-        return self._quad_layer_unavailable_reason() is None
-
     def _quad_layer_screen_presentable(self):
         reason = self._quad_layer_unavailable_reason()
         return reason is None or (reason == 'missing_source_texture' and self._quad_layer_has_presented_frame())

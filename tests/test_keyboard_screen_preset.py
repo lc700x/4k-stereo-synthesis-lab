@@ -596,7 +596,7 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
     quad_text = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
 
     quad_reason = quad_text.split("def _quad_layer_unavailable_reason(self):", 1)[1]
-    quad_reason = quad_reason.split("def _quad_layer_can_replace_projection_screen", 1)[0]
+    quad_reason = quad_reason.split("def _quad_layer_screen_presentable", 1)[0]
     make_quad = quad_text.split("def _make_quad_layer", 1)[1]
     update_quad = quad_text.split("def _update_quad_layer_swapchain", 1)[1].split(
         "def _update_quad_layer_swapchains", 1
@@ -612,8 +612,9 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
     assert "return \"curved_screen\"" in quad_reason
     assert "return \"missing_swapchain\"" in quad_reason
     assert "return \"missing_source_texture\"" in quad_reason
-    assert "return self._quad_layer_unavailable_reason() is None" in quad_text
+    assert "_quad_layer_can_replace_projection_screen" not in quad_text
     assert "def _quad_layer_screen_presentable" in quad_text
+    assert "reason is None or" in quad_text
     assert "reason == 'missing_source_texture' and self._quad_layer_has_presented_frame()" in quad_text
     assert "_quad_layer_pose_state()" in make_quad
     assert "_screen_pose_quat_xyzw()" not in make_quad

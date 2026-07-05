@@ -153,6 +153,7 @@ from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
 from .openxr_frame_gate import OpenXRFrameGate
 from .openxr_frame_renderer import OpenXRFrameRenderer
+from .openxr_frame_timing import OpenXRFrameTiming
 from .filters import *
 
 class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLifecycleMixin, CoreOpenXRInputMixin, CoreD3DInteropMixin, CoreCleanupMixin, CoreControllerActionsMixin, CoreControllerPoseMixin, CoreWindowInputMixin, CoreOverlayPanelsMixin, CoreScreenControlMixin, CoreLaserRenderMixin, CoreScreenStateMixin, CoreSourceStateMixin, CoreRuntimeEyeMixin, CoreFrameUploadMixin, CoreScreenQualityMixin, CoreQuadLayerMixin, CoreInputHelpersMixin, CoreKeyboardMixin, ControllerModelsMixin, CoreEnvironmentHooksMixin):
@@ -4403,23 +4404,14 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 if loop_trace_enabled:
                     _loop_mark('poll_no_upload')
 
-            # Wait for the runtime to signal frame timing.
-            xr_wait_start = time.perf_counter() if loop_breakdown_enabled else 0.0
-            frame_state = xr.wait_frame(self._xr_session, self._xr_frame_wait_info)
-            if loop_breakdown_enabled:
-                self._breakdown_add_time('openxr_wait_frame', time.perf_counter() - xr_wait_start)
-                predicted_time = getattr(frame_state, 'predicted_display_time', None)
-                previous_time = getattr(self, '_last_xr_predicted_display_time', None)
-                self._last_xr_predicted_display_time = predicted_time
-                if predicted_time is not None and previous_time is not None:
-                    predicted_delta_s = (int(predicted_time) - int(previous_time)) / 1_000_000_000.0
-                    if 0.0 < predicted_delta_s < 1.0:
-                        self._breakdown_add_time('openxr_predicted_period', predicted_delta_s)
+            frame_timing = getattr(self, '_openxr_frame_timing', None)
+            if frame_timing is None:
+                frame_timing = self._openxr_frame_timing = OpenXRFrameTiming(self)
+            frame_state, submit_start = frame_timing.begin_frame(
+                breakdown_enabled=loop_breakdown_enabled
+            )
             if loop_trace_enabled:
                 _loop_mark('wait_frame')
-            submit_start = time.perf_counter() if loop_breakdown_enabled else 0.0
-            xr.begin_frame(self._xr_session, self._xr_frame_begin_info)
-            if loop_trace_enabled:
                 _loop_mark('begin_frame')
 
             # sync_actions must happen before xr.locate_space for action spaces.

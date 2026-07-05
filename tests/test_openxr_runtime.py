@@ -1322,16 +1322,56 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
 def test_active_openxr_presenter_drains_source_after_begin_frame():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
-    pre_wait = run_body.split("# Wait for the runtime to signal frame timing.", 1)[0]
-    wait_to_upload = run_body.split("# Wait for the runtime to signal frame timing.", 1)[1].split(
+    pre_timing = run_body.split("frame_state, submit_start = frame_timing.begin_frame", 1)[0]
+    timing_to_upload = run_body.split("frame_state, submit_start = frame_timing.begin_frame", 1)[1].split(
         "frame_renderer = getattr(self, '_openxr_frame_renderer', None)", 1
     )[0]
 
-    assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_wait
-    assert "self._poll_source_frame(upload=False)" in pre_wait
-    assert "xr.begin_frame" in wait_to_upload
-    assert "screen_frame_uploaded = False" in wait_to_upload
-    assert "frame_renderer.render_frame(" not in wait_to_upload
+    assert "if self._session_ready_pending or not self._has_fresh_source_frame(now):" in pre_timing
+    assert "self._poll_source_frame(upload=False)" in pre_timing
+    assert "OpenXRFrameTiming(self)" in pre_timing
+    assert "xr.begin_frame" not in run_body
+    assert "screen_frame_uploaded = False" in timing_to_upload
+    assert "frame_renderer.render_frame(" not in timing_to_upload
+
+
+def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch):
+    import xr_viewer.openxr_frame_timing as frame_timing_module
+    from xr_viewer.openxr_frame_timing import OpenXRFrameTiming
+
+    calls = []
+
+    class FakeXR:
+        @staticmethod
+        def wait_frame(session, wait_info):
+            calls.append(("wait", session, wait_info))
+            return SimpleNamespace(predicted_display_time=2_000_000_000)
+
+        @staticmethod
+        def begin_frame(session, begin_info):
+            calls.append(("begin", session, begin_info))
+
+    viewer = SimpleNamespace(
+        _xr_session="session",
+        _xr_frame_wait_info="wait_info",
+        _xr_frame_begin_info="begin_info",
+        _last_xr_predicted_display_time=1_986_111_111,
+    )
+    metrics = []
+    viewer._breakdown_add_time = lambda name, seconds: metrics.append((name, seconds))
+    monkeypatch.setattr(frame_timing_module, "xr", FakeXR)
+
+    frame_state, submit_start = OpenXRFrameTiming(viewer).begin_frame(breakdown_enabled=True)
+
+    assert frame_state.predicted_display_time == 2_000_000_000
+    assert submit_start > 0.0
+    assert calls == [("wait", "session", "wait_info"), ("begin", "session", "begin_info")]
+    assert viewer._last_xr_predicted_display_time == 2_000_000_000
+    assert "openxr_wait_frame" in [name for name, _seconds in metrics]
+    assert any(
+        name == "openxr_predicted_period" and seconds == pytest.approx(1 / 72, rel=0.01)
+        for name, seconds in metrics
+    )
 
 
 def test_openxr_frame_renderer_builds_layers_from_latest_screen_frame():

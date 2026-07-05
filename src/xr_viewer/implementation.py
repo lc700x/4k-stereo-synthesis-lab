@@ -150,6 +150,7 @@ from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
 from .background_presenter import BackgroundPresenter
 from .effect_submitter import EffectSubmitter
+from .projection_layer_presenter import ProjectionLayerPresenter
 from .screen_layer_presenter import ScreenLayerPresenter
 from .filters import *
 
@@ -4830,60 +4831,16 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                             ))
 
                 else:
-                    for eye_index in range(2):
-                        swapchain = self._xr_swapchains[eye_index]
-
-                        img_index = xr.acquire_swapchain_image(
-                            swapchain, self._xr_sc_acquire_info
-                        )
-                        self._wait_swapchain_image(swapchain)
-                        released = False
-                        try:
-                            sc_image = self._swapchain_images[eye_index][img_index]
-                            sc_w, sc_h = self._swapchain_sizes[eye_index]
-
-                            view = views[eye_index] if views and views[eye_index] else None
-                            view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                            proj_mat = _fov_to_proj_mat4(view.fov)   if view else _default_proj
-
-                            raw_fbo, mgl_fbo = self._get_or_create_fbo(eye_index, img_index, sc_image.image, sc_w, sc_h)
-                            self._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)
-
-                            # Desktop preview: keep mirror off the Quad screen presenter path.
-                            if self._preview_active and eye_index == 0 and not updated_quad_eyes:
-                                pw, ph = glfw.get_window_size(self.window)
-                                if pw > 0 and ph > 0:
-                                    glBindFramebuffer(GL_READ_FRAMEBUFFER, raw_fbo)
-                                    glReadBuffer(GL_COLOR_ATTACHMENT0)
-                                    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
-                                    glBlitFramebuffer(0, 0, sc_w, sc_h, 0, 0, pw, ph,
-                                                      GL_COLOR_BUFFER_BIT, GL_LINEAR)
-                                    glfw.swap_buffers(self.window)
-
-                            xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                            released = True
-                        except Exception as exc:
-                            if not released:
-                                try:
-                                    xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
-                                except Exception:
-                                    pass
-                            self._breakdown_inc('openxr_projection_render_failed')
-                            print(f"[OpenXRViewer] OpenGL projection render failed: {type(exc).__name__}: {exc}")
-                            eye_layer_views = []
-                            break
-
-                        eye_layer_views.append(xr.CompositionLayerProjectionView(
-                            pose=view.pose if view else xr.Posef(),
-                            fov=view.fov  if view else _default_fov,
-                            sub_image=xr.SwapchainSubImage(
-                                swapchain=swapchain,
-                                image_rect=xr.Rect2Di(
-                                    offset=xr.Offset2Di(x=0, y=0),
-                                    extent=xr.Extent2Di(width=sc_w, height=sc_h),
-                                ),
-                            ),
-                        ))
+                    projection_presenter = getattr(self, '_projection_layer_presenter', None)
+                    if projection_presenter is None:
+                        projection_presenter = ProjectionLayerPresenter(self)
+                        self._projection_layer_presenter = projection_presenter
+                    eye_layer_views = projection_presenter.render_opengl(
+                        views,
+                        _default_fov,
+                        _default_proj,
+                        updated_quad_eyes=updated_quad_eyes,
+                    )
 
                 if eye_layer_views:
                     if loop_trace_enabled:

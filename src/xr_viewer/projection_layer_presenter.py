@@ -1,0 +1,83 @@
+import glfw
+import numpy as np
+from OpenGL.GL import (
+    GL_COLOR_ATTACHMENT0,
+    GL_COLOR_BUFFER_BIT,
+    GL_DRAW_FRAMEBUFFER,
+    GL_LINEAR,
+    GL_READ_FRAMEBUFFER,
+    glBindFramebuffer,
+    glBlitFramebuffer,
+    glReadBuffer,
+)
+
+from .xr_math import _fov_to_proj_mat4, _pose_to_view_mat4
+
+try:
+    import xr
+except ImportError:
+    xr = None
+
+
+class ProjectionLayerPresenter:
+    def __init__(self, viewer):
+        self.viewer = viewer
+
+    def render_opengl(self, views, default_fov, default_proj, *, updated_quad_eyes=()):
+        viewer = self.viewer
+        eye_layer_views = []
+        for eye_index in range(2):
+            swapchain = viewer._xr_swapchains[eye_index]
+            img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
+            viewer._wait_swapchain_image(swapchain)
+            released = False
+            try:
+                sc_image = viewer._swapchain_images[eye_index][img_index]
+                sc_w, sc_h = viewer._swapchain_sizes[eye_index]
+                view = views[eye_index] if views and views[eye_index] else None
+                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
+                proj_mat = _fov_to_proj_mat4(view.fov) if view else default_proj
+
+                raw_fbo, mgl_fbo = viewer._get_or_create_fbo(
+                    eye_index, img_index, sc_image.image, sc_w, sc_h
+                )
+                viewer._render_eye(eye_index, mgl_fbo, view_mat, proj_mat)
+
+                if viewer._preview_active and eye_index == 0 and not updated_quad_eyes:
+                    self._mirror_preview(raw_fbo, sc_w, sc_h)
+
+                xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                released = True
+            except Exception as exc:
+                if not released:
+                    try:
+                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                    except Exception:
+                        pass
+                viewer._breakdown_inc('openxr_projection_render_failed')
+                print(f"[OpenXRViewer] OpenGL projection render failed: {type(exc).__name__}: {exc}")
+                return []
+
+            eye_layer_views.append(xr.CompositionLayerProjectionView(
+                pose=view.pose if view else xr.Posef(),
+                fov=view.fov if view else default_fov,
+                sub_image=xr.SwapchainSubImage(
+                    swapchain=swapchain,
+                    image_rect=xr.Rect2Di(
+                        offset=xr.Offset2Di(x=0, y=0),
+                        extent=xr.Extent2Di(width=sc_w, height=sc_h),
+                    ),
+                ),
+            ))
+        return eye_layer_views
+
+    def _mirror_preview(self, raw_fbo, sc_w, sc_h):
+        viewer = self.viewer
+        pw, ph = glfw.get_window_size(viewer.window)
+        if pw <= 0 or ph <= 0:
+            return
+        glBindFramebuffer(GL_READ_FRAMEBUFFER, raw_fbo)
+        glReadBuffer(GL_COLOR_ATTACHMENT0)
+        glBindFramebuffer(GL_DRAW_FRAMEBUFFER, 0)
+        glBlitFramebuffer(0, 0, sc_w, sc_h, 0, 0, pw, ph, GL_COLOR_BUFFER_BIT, GL_LINEAR)
+        glfw.swap_buffers(viewer.window)

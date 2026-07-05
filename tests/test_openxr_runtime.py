@@ -1463,6 +1463,15 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "projection_views=eye_layer_views" in layer_append_block
     assert "projection_space=self._xr_space" in layer_append_block
     assert "quad_layer_headers=quad_layer_headers" in layer_append_block
+    opengl_fallback = render_tail.split("projection_presenter.render_opengl(", 1)[1].split(
+        "screen_presenter.append_frame_layers(", 1
+    )[0]
+    assert "_get_or_create_fbo" not in opengl_fallback
+    assert "glBlitFramebuffer" not in opengl_fallback
+    projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
+    assert "def render_opengl(" in projection_presenter
+    assert "viewer._get_or_create_fbo(" in projection_presenter
+    assert "glBlitFramebuffer" in projection_presenter
 
     d3d11_native_block = implementation.split("# Native D3D11 renderer", 1)[0].rsplit(
         "if self._use_d3d11:", 1

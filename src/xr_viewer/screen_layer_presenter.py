@@ -119,7 +119,12 @@ class ScreenLayerPresenter:
         if background_renderer is None:
             background_renderer = BackgroundLayerRenderer(viewer)
             viewer._background_layer_renderer = background_renderer
-        if background_renderer.panorama_ready() and not background_renderer.native_background_available():
+        try:
+            if background_renderer.panorama_ready() and not background_renderer.native_background_available():
+                return True
+        except Exception as exc:
+            print(f"[OpenXRViewer] Background projection gate failed: {type(exc).__name__}: {exc}")
+            viewer._breakdown_inc('openxr_background_layer_failed')
             return True
         if viewer._keyboard_visible and viewer._keyboard_tex is not None:
             return True

@@ -1494,6 +1494,12 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     assert presenter.projection_layer_needed() is False
     viewer._panorama_texture_ready = lambda: object()
     assert presenter.projection_layer_needed() is True
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._background_layer_renderer.panorama_ready = lambda: (_ for _ in ()).throw(RuntimeError("background gate failed"))
+    assert presenter.projection_layer_needed() is True
+    assert ("openxr_background_layer_failed", 1) in inc_calls
+    viewer._background_layer_renderer = None
     viewer._aim_mat_l = object()
     assert presenter.projection_layer_needed() is True
     viewer._aim_mat_l = None

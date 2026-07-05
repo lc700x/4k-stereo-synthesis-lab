@@ -4308,28 +4308,13 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._saved_dclick_time = _U32.GetDoubleClickTime()
             _U32.SystemParametersInfoW(0x0020, 1200, None, 0)  # SPI_SETDOUBLECLICKTIME
 
-        # Upload the first frame supplied by main.py
-        first_source_frame = None
-        if first_runtime_result is not None:
-            effect_source_rgb = self._update_runtime_frame(first_runtime_result)
-            self._queue_runtime_effect_submit(effect_source_rgb)
-            first_source_frame = (first_runtime_result, first_frame_ts)
-            if first_frame_ts is not None:
-                self.total_latency = (time.perf_counter() - first_frame_ts) * 1000.0
-        elif first_rgb is not None and first_depth is not None:
-            self._update_frame(first_rgb, first_depth)
-            first_source_frame = (first_rgb, first_depth, first_frame_ts)
-        if first_source_frame is not None:
-            bridge = self._screen_frame_bridge()
-            bridge.latest_frame = first_source_frame
-            bridge.frame_id += 1
-            bridge.latest_frame_id = bridge.frame_id
-            bridge.source_timestamp = first_frame_ts
-            if self._has_renderable_source_frame():
-                bridge.mark_presented(first_source_frame)
-                self._mark_source_frame_received()
-            else:
-                self._pending_source_frame = first_source_frame
+        frame_pipeline = self._openxr_frame_pipeline = OpenXRFramePipeline(self)
+        frame_pipeline.seed_first_frame(
+            first_rgb=first_rgb,
+            first_depth=first_depth,
+            first_runtime_result=first_runtime_result,
+            first_frame_ts=first_frame_ts,
+        )
 
         last_input_t = time.perf_counter()
 
@@ -4365,9 +4350,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 time.sleep(0.01)
                 continue
 
-            frame_pipeline = getattr(self, '_openxr_frame_pipeline', None)
-            if frame_pipeline is None:
-                frame_pipeline = self._openxr_frame_pipeline = OpenXRFramePipeline(self)
             frame_pipeline.render_frame(now=now, dt=dt)
 
         self.cleanup()

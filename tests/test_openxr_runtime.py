@@ -168,22 +168,24 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
     assert calls[0]["openxr_screen_distance"] == 9.5
 
 
-def test_openxr_run_seeds_screen_bridge_with_renderable_bootstrap_frame():
+def test_openxr_frame_pipeline_seeds_screen_bridge_with_renderable_bootstrap_frame():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    bootstrap_block = implementation.split("# Upload the first frame supplied by main.py", 1)[1].split(
-        "last_input_t = time.perf_counter()", 1
-    )[0]
+    frame_pipeline = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    run_body = implementation.split("def run(self, first_rgb=None", 1)[1].split("    # Cleanup", 1)[0]
+    seed_block = frame_pipeline.split("def seed_first_frame", 1)[1].split("def render_frame", 1)[0]
 
-    assert "first_source_frame = (first_runtime_result, first_frame_ts)" in bootstrap_block
-    assert "first_source_frame = (first_rgb, first_depth, first_frame_ts)" in bootstrap_block
-    assert "if self._has_renderable_source_frame():" in bootstrap_block
-    assert bootstrap_block.index("if self._has_renderable_source_frame():") < bootstrap_block.index(
+    assert "frame_pipeline.seed_first_frame(" in run_body
+    assert "first_source_frame" not in run_body
+    assert "first_source_frame = (first_runtime_result, first_frame_ts)" in seed_block
+    assert "first_source_frame = (first_rgb, first_depth, first_frame_ts)" in seed_block
+    assert "if viewer._has_renderable_source_frame():" in seed_block
+    assert seed_block.index("if viewer._has_renderable_source_frame():") < seed_block.index(
         "bridge.mark_presented(first_source_frame)"
     )
-    assert "self._mark_source_frame_received()" in bootstrap_block
-    assert "else:\n                self._pending_source_frame = first_source_frame" in bootstrap_block
-    assert bootstrap_block.index("bridge.mark_presented(first_source_frame)") < bootstrap_block.index(
-        "self._pending_source_frame = first_source_frame"
+    assert "viewer._mark_source_frame_received()" in seed_block
+    assert "else:\n            viewer._pending_source_frame = first_source_frame" in seed_block
+    assert seed_block.index("bridge.mark_presented(first_source_frame)") < seed_block.index(
+        "viewer._pending_source_frame = first_source_frame"
     )
 
 

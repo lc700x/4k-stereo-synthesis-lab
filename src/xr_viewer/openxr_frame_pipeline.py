@@ -30,6 +30,33 @@ class OpenXRFramePipeline:
         self.default_proj = _fov_to_proj_mat4(self.default_fov)
         self.default_proj_d3d = _fov_to_proj_mat4_d3d(self.default_fov)
 
+    def seed_first_frame(self, *, first_rgb=None, first_depth=None, first_runtime_result=None, first_frame_ts=None):
+        viewer = self.viewer
+        first_source_frame = None
+        if first_runtime_result is not None:
+            effect_source_rgb = viewer._update_runtime_frame(first_runtime_result)
+            viewer._queue_runtime_effect_submit(effect_source_rgb)
+            first_source_frame = (first_runtime_result, first_frame_ts)
+            if first_frame_ts is not None:
+                viewer.total_latency = (time.perf_counter() - first_frame_ts) * 1000.0
+        elif first_rgb is not None and first_depth is not None:
+            viewer._update_frame(first_rgb, first_depth)
+            first_source_frame = (first_rgb, first_depth, first_frame_ts)
+
+        if first_source_frame is None:
+            return
+
+        bridge = viewer._screen_frame_bridge()
+        bridge.latest_frame = first_source_frame
+        bridge.frame_id += 1
+        bridge.latest_frame_id = bridge.frame_id
+        bridge.source_timestamp = first_frame_ts
+        if viewer._has_renderable_source_frame():
+            bridge.mark_presented(first_source_frame)
+            viewer._mark_source_frame_received()
+        else:
+            viewer._pending_source_frame = first_source_frame
+
     def render_frame(self, *, now, dt):
         viewer = self.viewer
         perf_log_enabled = bool(getattr(viewer, '_openxr_perf_log', False))

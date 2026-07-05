@@ -37,16 +37,6 @@ class ProjectionLayerPresenter:
                 default_proj,
                 updated_quad_eyes=updated_quad_eyes,
             )
-        if (
-            not updated_quad_eyes
-            and viewer._d3d11_native_renderer is not None
-            and viewer._d3d11_native_renderer.has_frame
-        ):
-            return self.render_d3d11_native(
-                views,
-                default_fov,
-                default_proj_d3d,
-            )
         if viewer._interop_mode == 'nv_dx':
             return self.render_nv_dx_interop(
                 views,
@@ -58,77 +48,6 @@ class ProjectionLayerPresenter:
             default_fov,
             default_proj,
         )
-
-    def render_d3d11_native(self, views, default_fov, default_proj_d3d):
-        viewer = self.viewer
-        eye_layer_views = []
-        for eye_index in range(2):
-            swapchain = viewer._xr_swapchains[eye_index]
-            img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
-            viewer._wait_swapchain_image(swapchain)
-            released = False
-            try:
-                sc_image = viewer._swapchain_images[eye_index][img_index]
-                sc_w, sc_h = viewer._swapchain_sizes[eye_index]
-                view = views[eye_index] if views and views[eye_index] else None
-                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                proj_mat = _fov_to_proj_mat4_d3d(view.fov) if view else default_proj_d3d
-                mvp = proj_mat @ view_mat @ viewer._build_model_mat4()
-                if viewer._runtime_direct_source:
-                    viewer._d3d11_native_renderer.render_runtime_eye(
-                        sc_image.texture,
-                        sc_w,
-                        sc_h,
-                        eye_index,
-                        mvp,
-                    )
-                else:
-                    runtime_rgb_depth_max_disparity_px = float(
-                        getattr(viewer, '_runtime_rgb_depth_max_disparity_px', 0.0)
-                    )
-                    runtime_rgb_depth_render_width = int(
-                        getattr(viewer, '_runtime_rgb_depth_render_width', 0) or 0
-                    )
-                    if runtime_rgb_depth_render_width <= 0:
-                        source_size = viewer._texture_size or (0, 0)
-                        runtime_rgb_depth_render_width = int(source_size[0] or 0)
-                    screen_disparity_uv = 0.0
-                    if runtime_rgb_depth_render_width > 0:
-                        screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)
-                    screen_depth_strength = max(
-                        0.0,
-                        float(getattr(viewer, '_runtime_rgb_depth_depth_strength', viewer.depth_strength) or 0.0),
-                    )
-                    eye_sign = -1.0 if eye_index == 0 else 1.0
-                    viewer._d3d11_native_renderer.render_eye(
-                        sc_image.texture,
-                        sc_w,
-                        sc_h,
-                        eye_index,
-                        eye_sign * screen_disparity_uv / 2.0,
-                        screen_depth_strength,
-                        float(viewer.convergence),
-                        mvp,
-                        roll=viewer.screen_roll,
-                    )
-                xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
-                released = True
-                eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
-            except Exception as exc:
-                if not released:
-                    try:
-                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
-                    except Exception:
-                        pass
-                print(f"[OpenXRViewer] D3D11 native render failed: {exc}")
-                try:
-                    viewer._d3d11_native_renderer.cleanup()
-                except Exception:
-                    pass
-                viewer._d3d11_native_renderer = None
-                viewer._texture_size = None
-                return []
-        return eye_layer_views
 
     def render_nv_dx_interop(self, views, default_fov, default_proj):
         viewer = self.viewer

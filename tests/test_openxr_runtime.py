@@ -2236,21 +2236,20 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "glBlitFramebuffer" not in frame_renderer
     projection_presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     render_projection = projection_presenter.split("def render_projection", 1)[1].split(
-        "def render_d3d11_native", 1
+        "def render_nv_dx_interop", 1
     )[0]
     assert "def render_projection(" in projection_presenter
     assert "if not enabled:" in render_projection
     assert "not viewer._use_d3d11" in render_projection
     assert "return self.render_opengl(" in render_projection
-    assert "return self.render_d3d11_native(" in render_projection
+    assert "render_d3d11_native" not in projection_presenter
     assert "return self.render_nv_dx_interop(" in render_projection
     assert "openxr_projection_pbo_skipped_for_quad" not in render_projection
     assert "return self.render_d3d11_pbo(" in render_projection
     assert "def render_opengl(" in projection_presenter
     assert "viewer._get_or_create_fbo(" in projection_presenter
     assert "glBlitFramebuffer" in projection_presenter
-    assert "def render_d3d11_native(" in projection_presenter
-    assert "eye_sign * screen_disparity_uv" in projection_presenter
+    assert "eye_sign * screen_disparity_uv" not in projection_presenter
     assert "def render_nv_dx_interop(" in projection_presenter
     assert "_wglDXLockObjectsNV" in projection_presenter
     assert "def render_d3d11_pbo(" in projection_presenter
@@ -2279,7 +2278,6 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     presenter = ProjectionLayerPresenter(viewer)
     calls = []
     presenter.render_opengl = lambda *args, **kwargs: calls.append("opengl") or ["opengl"]
-    presenter.render_d3d11_native = lambda *args, **kwargs: calls.append("native") or ["native"]
     presenter.render_nv_dx_interop = lambda *args, **kwargs: calls.append("nv_dx") or ["nv_dx"]
     presenter.render_d3d11_pbo = lambda *args, **kwargs: calls.append("pbo") or ["pbo"]
     kwargs = dict(
@@ -2295,7 +2293,7 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["opengl"]
     viewer._use_d3d11 = True
     viewer._d3d11_native_renderer = Renderer()
-    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["native"]
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["pbo"]
     viewer._d3d11_native_renderer = None
     viewer._interop_mode = "nv_dx"
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["nv_dx"]
@@ -2303,7 +2301,7 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == ["pbo"]
     assert viewer.inc_calls == []
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["pbo"]
-    assert calls == ["opengl", "native", "nv_dx", "pbo", "pbo"]
+    assert calls == ["opengl", "pbo", "nv_dx", "pbo", "pbo"]
 
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():

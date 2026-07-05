@@ -1204,11 +1204,15 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     append_idx = frame_block.index("for quad_layer_header in quad_layer_headers:")
     assert poll_idx < update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
     assert "openxr_projection_layer_skipped" in render_tail
-    render_eye_block = implementation.split("draw_projection_screen = quad_unavailable_reason is not None", 1)[1].split(
-        "if draw_projection_screen:", 1
+    render_eye_block = implementation.split("draw_projection_screen = quad_unavailable_reason is not None", 1)[1]
+    source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
+    assert "if draw_projection_screen:" in source_gate
+    assert "self._runtime_eye_textures[eye_index] is None" in source_gate
+    background_gate = render_eye_block.split("background_start = time.perf_counter()", 1)[1].split(
+        "# -3. Environment model", 1
     )[0]
-    assert "if draw_projection_screen and getattr(self, '_panorama_background_path', None):" in render_eye_block
-    assert "if getattr(self, '_panorama_background_path', None):" not in render_eye_block
+    assert "if draw_projection_screen and getattr(self, '_panorama_background_path', None):" in background_gate
+    assert "if getattr(self, '_panorama_background_path', None):" not in background_gate
     quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
     assert "composition_layers.append(quad_layer_header)" in quad_layer_block
 

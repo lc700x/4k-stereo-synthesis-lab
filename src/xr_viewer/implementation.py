@@ -2208,17 +2208,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self.ctx.screen.use()
             return
 
-        if self._runtime_direct_source:
-            if self._runtime_eye_textures[eye_index] is None:
+        quad_unavailable_reason = self._quad_layer_unavailable_reason()
+        draw_projection_screen = quad_unavailable_reason is not None
+        if draw_projection_screen:
+            if self._runtime_direct_source:
+                if self._runtime_eye_textures[eye_index] is None:
+                    if perf_enabled:
+                        _mark_perf('no_source')
+                    self.ctx.screen.use()
+                    return
+            elif self.color_tex is None or self.depth_tex is None:
                 if perf_enabled:
                     _mark_perf('no_source')
                 self.ctx.screen.use()
                 return
-        elif self.color_tex is None or self.depth_tex is None:
-            if perf_enabled:
-                _mark_perf('no_source')
-            self.ctx.screen.use()
-            return
 
         # Pre-compute view-projection once per eye -all quads multiply their model
         # matrix against this rather than recomputing proj @ view each time.
@@ -2233,8 +2236,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # reflection light disabled while the second eye rendered it enabled
         # (left-eye flicker).
         self._ensure_screen_dimensions()
-        quad_unavailable_reason = self._quad_layer_unavailable_reason()
-        draw_projection_screen = quad_unavailable_reason is not None
         background_start = time.perf_counter()
         background_rendered = False
         if draw_projection_screen and getattr(self, '_panorama_background_path', None):

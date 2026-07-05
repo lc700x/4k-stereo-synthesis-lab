@@ -1,5 +1,6 @@
 import ctypes
 import math
+import time
 
 import moderngl
 from OpenGL.GL import (
@@ -168,7 +169,15 @@ class BackgroundLayerRenderer:
         if tex is None:
             return False
         self.viewer._background_equirect_pending_tex = None
-        self._upload_equirect_texture(tex)
+        start = time.perf_counter()
+        try:
+            self._upload_equirect_texture(tex)
+        except Exception as exc:
+            print(f"[OpenXRViewer] Background equirect upload failed: {type(exc).__name__}: {exc}")
+            self.viewer._breakdown_inc('openxr_background_layer_upload_failed')
+            return True
+        finally:
+            self.viewer._breakdown_add_time('openxr_background_upload', time.perf_counter() - start)
         return True
 
     def make_background_layers(self):

@@ -1281,6 +1281,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_background_projection_fallback",
         "openxr_background_layer",
         "openxr_background_layer_upload",
+        "openxr_background_layer_upload_failed",
+        "openxr_background_upload",
         "openxr_background_layer_failed",
         "openxr_effect_source_promote_reuse",
         "openxr_wall_light_mask_loaded",
@@ -1314,7 +1316,9 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "screen_quality_failed={rate('openxr_screen_quality_failed')" in breakdown
     assert "fx_ds_failed={rate('openxr_glow_downsample_failed')" in breakdown
     assert "bg_path=layer:{rate('openxr_background_layer')" in breakdown
+    assert "bg_upload={avg_ms('openxr_background_upload')" in breakdown
     assert "upload:{rate('openxr_background_layer_upload')" in breakdown
+    assert "upload_failed:{rate('openxr_background_layer_upload_failed')" in breakdown
     assert "fallback:{rate('openxr_background_projection_fallback')" in breakdown
     assert "layer_failed:{rate('openxr_background_layer_failed')" in breakdown
     assert "panorama:{rate('openxr_background_panorama')" in breakdown

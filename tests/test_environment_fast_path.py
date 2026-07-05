@@ -711,10 +711,12 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
         pass
 
     inc_calls = []
+    time_calls = []
     viewer = Viewer()
     viewer._panorama_texture_ready = lambda: object()
     viewer._openxr_equirect_background_supported = False
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
 
     headers, projection_fallback = BackgroundLayerRenderer(viewer).make_background_layers()
 
@@ -757,7 +759,14 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
         "height": 512,
     }
     assert uploads == [tex]
+    assert any(name == "openxr_background_upload" for name, _seconds in time_calls)
     assert ("openxr_background_layer", 1) in inc_calls
+
+    viewer._background_equirect_pending_tex = tex
+    monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda _value: (_ for _ in ()).throw(RuntimeError("upload failed")))
+    assert renderer.flush_pending_upload_after_submit() is True
+    assert viewer._background_equirect_pending_tex is None
+    assert ("openxr_background_layer_upload_failed", 1) in inc_calls
 
     viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 1, (0.5, 0.5), (0.25, 0.25))
     renderer = BackgroundLayerRenderer(viewer)

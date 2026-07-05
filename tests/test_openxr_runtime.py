@@ -171,7 +171,7 @@ def test_run_openxr_mode_passes_depth_strength_to_viewer(monkeypatch):
 def test_openxr_run_seeds_screen_bridge_with_renderable_bootstrap_frame():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     bootstrap_block = implementation.split("# Upload the first frame supplied by main.py", 1)[1].split(
-        "# Default fallback projection", 1
+        "last_input_t = time.perf_counter()", 1
     )[0]
 
     assert "first_source_frame = (first_runtime_result, first_frame_ts)" in bootstrap_block
@@ -1340,6 +1340,12 @@ def test_active_openxr_presenter_drains_source_after_begin_frame():
     assert "_update_aim_poses" not in run_body
     assert "_poll_controller_input" not in run_body
     assert "self.renderer.render_frame(" in frame_pipeline
+    assert "_default_fov" not in run_body
+    assert "_default_proj" not in run_body
+    assert "_frame_ts_ring.append" not in run_body
+    assert "self.default_fov = xr.Fovf(" in frame_pipeline
+    assert "def record_presented_frame(self):" in frame_pipeline
+    assert "viewer._frame_ts_ring.append" in frame_pipeline
     assert frame_pipeline.index("self.timing.begin_frame(") < frame_pipeline.index("self.renderer.render_frame(")
 
 
@@ -1351,6 +1357,8 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
         _openxr_perf_log=False,
         _session_ready_pending=True,
         _frame_count=7,
+        _frame_ts_ring=[],
+        actual_fps=0.0,
     )
     viewer._breakdown_inc = lambda name, amount=1: calls.append(("inc", name, amount))
     viewer._has_fresh_source_frame = lambda now: calls.append(("fresh", now)) or False
@@ -1381,13 +1389,11 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
         flush_after_submit=lambda **kwargs: calls.append(("effect", kwargs)) or True
     )
 
-    assert pipeline.render_frame(
-        now=10.0,
-        dt=0.25,
-        default_fov="fov",
-        default_proj="proj",
-        default_proj_d3d="proj_d3d",
-    ) is True
+    pipeline.default_fov = "fov"
+    pipeline.default_proj = "proj"
+    pipeline.default_proj_d3d = "proj_d3d"
+
+    assert pipeline.render_frame(now=10.0, dt=0.25) is True
 
     assert calls[0] == ("inc", "openxr_loop", 1)
     assert ("poll", False) in calls
@@ -1396,9 +1402,12 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
     assert names.index("gate") < names.index("render") < names.index("submit") < names.index("effect")
     render_call = next(call for call in calls if call[0] == "render")
     assert render_call[1]["display_time"] == 123
+    assert render_call[1]["default_fov"] == "fov"
+    assert render_call[1]["default_proj"] == "proj"
     assert render_call[1]["default_proj_d3d"] == "proj_d3d"
     effect_call = next(call for call in calls if call[0] == "effect")
     assert effect_call[1] == {"should_render": True, "screen_frame_uploaded": False}
+    assert len(viewer._frame_ts_ring) == 1
 
 
 def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch):

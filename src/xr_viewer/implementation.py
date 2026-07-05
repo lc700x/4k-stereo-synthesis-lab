@@ -4331,14 +4331,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             else:
                 self._pending_source_frame = first_source_frame
 
-        # Default fallback projection (used before first locate_views succeeds)
-        _default_fov = xr.Fovf(
-            angle_left=-0.785, angle_right=0.785,
-            angle_up=0.785,   angle_down=-0.785,
-        )
-        _default_proj = _fov_to_proj_mat4(_default_fov)
-        _default_proj_d3d = _fov_to_proj_mat4_d3d(_default_fov)
-
         last_input_t = time.perf_counter()
 
         while (
@@ -4376,24 +4368,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             frame_pipeline = getattr(self, '_openxr_frame_pipeline', None)
             if frame_pipeline is None:
                 frame_pipeline = self._openxr_frame_pipeline = OpenXRFramePipeline(self)
-            update_fps = frame_pipeline.render_frame(
-                now=now,
-                dt=dt,
-                default_fov=_default_fov,
-                default_proj=_default_proj,
-                default_proj_d3d=_default_proj_d3d,
-            )
-            if not update_fps:
-                continue
-
-            # Timestamp-ring FPS: (N-1) frames / (last_ts - first_ts) -exact, O(1)
-            t_now = time.perf_counter()
-            self._frame_ts_ring.append(t_now)
-            n = len(self._frame_ts_ring)
-            if n >= 2:
-                span = t_now - self._frame_ts_ring[0]
-                if span > 0:
-                    self.actual_fps = (n - 1) / span
+            frame_pipeline.render_frame(now=now, dt=dt)
 
         self.cleanup()
 

@@ -1,11 +1,17 @@
 import time
 
+from .xr_math import _fov_to_proj_mat4, _fov_to_proj_mat4_d3d
 from .effect_submitter import EffectSubmitter
 from .frame_submitter import FrameSubmitter
 from .openxr_frame_gate import OpenXRFrameGate
 from .openxr_frame_input import OpenXRFrameInput
 from .openxr_frame_renderer import OpenXRFrameRenderer
 from .openxr_frame_timing import OpenXRFrameTiming
+
+try:
+    import xr
+except ImportError:
+    xr = None
 
 
 class OpenXRFramePipeline:
@@ -17,8 +23,14 @@ class OpenXRFramePipeline:
         self.gate = OpenXRFrameGate(viewer, self.frame_submitter)
         self.renderer = OpenXRFrameRenderer(viewer)
         self.effect_submitter = EffectSubmitter(viewer)
+        self.default_fov = xr.Fovf(
+            angle_left=-0.785, angle_right=0.785,
+            angle_up=0.785,   angle_down=-0.785,
+        )
+        self.default_proj = _fov_to_proj_mat4(self.default_fov)
+        self.default_proj_d3d = _fov_to_proj_mat4_d3d(self.default_fov)
 
-    def render_frame(self, *, now, dt, default_fov, default_proj, default_proj_d3d):
+    def render_frame(self, *, now, dt):
         viewer = self.viewer
         perf_log_enabled = bool(getattr(viewer, '_openxr_perf_log', False))
         breakdown_enabled = callable(getattr(viewer, '_fps_breakdown_add_time', None))
@@ -75,9 +87,9 @@ class OpenXRFramePipeline:
             screen_frame_uploaded, view_pose_adjusted, rendered_projection = self.renderer.render_frame(
                 composition_layers=composition_layers,
                 display_time=frame_state.predicted_display_time,
-                default_fov=default_fov,
-                default_proj=default_proj,
-                default_proj_d3d=default_proj_d3d,
+                default_fov=self.default_fov,
+                default_proj=self.default_proj,
+                default_proj_d3d=self.default_proj_d3d,
             )
             mark('poll_upload')
             mark('locate_views')
@@ -103,7 +115,19 @@ class OpenXRFramePipeline:
         if session_idle_timeout:
             self.gate.enter_idle_if_needed(session_idle_timeout)
             return False
+        self.record_presented_frame()
         return True
+
+    def record_presented_frame(self):
+        viewer = self.viewer
+        t_now = time.perf_counter()
+        viewer._frame_ts_ring.append(t_now)
+        n = len(viewer._frame_ts_ring)
+        if n < 2:
+            return
+        span = t_now - viewer._frame_ts_ring[0]
+        if span > 0:
+            viewer.actual_fps = (n - 1) / span
 
     def _log_perf(self, frame_state, marks, t0):
         viewer = self.viewer

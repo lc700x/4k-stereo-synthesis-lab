@@ -1344,23 +1344,17 @@ def test_screen_effect_source_texture_is_cached_per_frame(monkeypatch):
     viewer._frame_count = 8
     viewer._runtime_direct_source = True
     _set_runtime_effect_safe(viewer, source_tex, (1280, 720), 4)
-    viewer._promote_count = 0
     viewer._age_count = 0
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    def _promote():
-        viewer._promote_count += 1
-
     def _record_age(_source_tex, _frame_id=None):
         viewer._age_count += 1
 
-    viewer._promote_runtime_effect_ready_texture = _promote
     viewer._record_screen_effect_safe_age = _record_age
 
     assert viewer._screen_effect_source_texture() == (source_tex, (1280, 720))
     assert viewer._screen_effect_source_texture() == (source_tex, (1280, 720))
-    assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
 
@@ -1372,24 +1366,18 @@ def test_screen_effect_source_cache_refreshes_when_safe_source_changes(monkeypat
     viewer._frame_count = 8
     viewer._runtime_direct_source = True
     _set_runtime_effect_safe(viewer, first_tex, (1280, 720), 4)
-    viewer._promote_count = 0
     viewer._age_count = 0
     viewer._breakdown_inc = lambda *args, **kwargs: None
-
-    def _promote():
-        viewer._promote_count += 1
 
     def _record_age(_source_tex, _frame_id=None):
         viewer._age_count += 1
 
-    viewer._promote_runtime_effect_ready_texture = _promote
     viewer._record_screen_effect_safe_age = _record_age
 
     assert viewer._screen_effect_source_texture() == (first_tex, (1280, 720))
     _set_runtime_effect_safe(viewer, next_tex, (1280, 720), 5)
     assert viewer._screen_effect_source_texture() == (next_tex, (1280, 720))
 
-    assert viewer._promote_count == 0
     assert viewer._age_count == 2
 
 
@@ -1399,23 +1387,17 @@ def test_no_room_screen_effect_source_texture_uses_safe_runtime_source(monkeypat
     viewer._frame_count = 6
     viewer._runtime_direct_source = True
     _set_runtime_effect_safe(viewer, source_tex, (640, 360), 2)
-    viewer._promote_count = 0
     viewer._age_count = 0
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    def _promote():
-        viewer._promote_count += 1
-
     def _record_age(_source_tex, _frame_id=None):
         viewer._age_count += 1
 
-    viewer._promote_runtime_effect_ready_texture = _promote
     viewer._record_screen_effect_safe_age = _record_age
 
     assert viewer._screen_effect_source_texture() == (source_tex, (640, 360))
     assert viewer._screen_effect_source_texture() == (source_tex, (640, 360))
-    assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert ("openxr_screen_effect_source_reuse", 1) in inc_calls
 
@@ -1539,26 +1521,20 @@ def test_screen_light_source_texture_reuses_prewarmed_downsample(monkeypatch):
     viewer._glow_ds_tex = light_tex
     viewer._glow_ds_size = (96, 54)
     viewer._glow_ds_cache_key = (3, 7, 1920, 1080, 96, 54)
-    viewer._promote_count = 0
     viewer._age_count = 0
     viewer._prepare_count = 0
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._record_screen_effect_safe_age = lambda _source_tex, _frame_id=None: setattr(viewer, "_age_count", viewer._age_count + 1)
 
-    def _promote():
-        viewer._promote_count += 1
-
     def _prepare(_source_tex, _source_size):
         viewer._prepare_count += 1
         return object()
 
-    viewer._promote_runtime_effect_ready_texture = _promote
     viewer._prepare_glow_downsample_texture = _prepare
 
     assert viewer._screen_light_source_texture() == (light_tex, (96, 54))
     assert viewer._screen_light_source_texture() == (light_tex, (96, 54))
-    assert viewer._promote_count == 0
     assert viewer._age_count == 1
     assert viewer._prepare_count == 0
     assert ("openxr_screen_light_downsample_source", 1) in inc_calls
@@ -1572,27 +1548,21 @@ def test_screen_light_source_waits_for_prewarmed_downsample_when_safe_source_cha
     viewer._frame_count = 12
     viewer._runtime_direct_source = True
     _set_runtime_effect_safe(viewer, first_tex, (1920, 1080), 3)
-    viewer._promote_count = 0
     viewer._age_count = 0
     viewer._prepare_count = 0
     viewer._breakdown_inc = lambda *args, **kwargs: None
     viewer._record_screen_effect_safe_age = lambda _source_tex, _frame_id=None: setattr(viewer, "_age_count", viewer._age_count + 1)
 
-    def _promote():
-        viewer._promote_count += 1
-
     def _prepare(_source_tex, _source_size):
         viewer._prepare_count += 1
         return object()
 
-    viewer._promote_runtime_effect_ready_texture = _promote
     viewer._prepare_glow_downsample_texture = _prepare
 
     assert viewer._screen_light_source_texture() == (None, None)
     _set_runtime_effect_safe(viewer, next_tex, (1920, 1080), 4)
     assert viewer._screen_light_source_texture() == (None, None)
 
-    assert viewer._promote_count == 0
     assert viewer._age_count == 2
     assert viewer._prepare_count == 0
 

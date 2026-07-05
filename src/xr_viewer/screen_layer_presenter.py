@@ -295,6 +295,16 @@ class ScreenLayerPresenter:
             mark_perf('fgfx')
         return True
 
+    def render_quad_screen_overlay(self, *, mgl_fbo, vp_mat, mark_perf=None):
+        viewer = self.viewer
+        viewer._breakdown_inc("openxr_projection_screen_skipped")
+        if mark_perf:
+            mark_perf('screen_quad_layer')
+        if not viewer._screen_curved:
+            viewer._render_border(mgl_fbo, vp_mat)
+        if mark_perf:
+            mark_perf('border')
+
     def projection_layer_needed(self):
         viewer = self.viewer
         if self.projection_screen_needed():

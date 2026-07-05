@@ -619,7 +619,7 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
     assert "viewer._breakdown_inc(f\"openxr_quad_unavailable_{quad_unavailable_reason}\")" in render_screen
     assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_screen
     assert "screen_depth_tex = viewer._runtime_depth_texture" in render_screen
-    assert "openxr_projection_screen_skipped" in impl_text
+    assert "openxr_projection_screen_skipped" in presenter_text
 
 
 def test_curved_screen_geometry_uses_beta_fixed_angle_arc_and_gl_state_reset():

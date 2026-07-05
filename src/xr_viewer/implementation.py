@@ -2236,13 +2236,11 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             ):
                 return
         else:
-            self._breakdown_inc("openxr_projection_screen_skipped")
-            if perf_enabled:
-                _mark_perf('screen_quad_layer')
-            if not self._screen_curved:
-                self._render_border(mgl_fbo, vp_mat)
-            if perf_enabled:
-                _mark_perf('border')
+            self._screen_layer_presenter.render_quad_screen_overlay(
+                mgl_fbo=mgl_fbo,
+                vp_mat=vp_mat,
+                mark_perf=_mark_perf if perf_enabled else None,
+            )
         # 3. Keyboard
         if self._keyboard_visible and self._keyboard_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'keyboard', lambda: (

@@ -113,19 +113,25 @@ class BackgroundLayerRenderer:
                 viewer.ctx.depth_mask = prev_depth_mask
             viewer.ctx.enable(moderngl.DEPTH_TEST)
 
-    def _make_equirect_layer(self):
-        tex = self._panorama_texture()
-        if tex is None:
-            return None
-        self._upload_equirect_texture(tex)
-        width, height = self.viewer._background_equirect_size
+    def _panorama_stereo_layout(self):
+        settings = getattr(self.viewer, '_panorama_render_settings', None)
+        if callable(settings):
+            try:
+                return int(settings()[3])
+            except Exception:
+                return 0
+        profile = getattr(self.viewer, '_panorama_background_settings', {}) or {}
+        raw = str(profile.get('stereo_layout', 'mono')).lower()
+        return 1 if raw in ('sbs', 'side_by_side', 'side-by-side', 'stereo_sbs') else 0
+
+    def _make_equirect_layer(self, eye_visibility, x, width, height):
         return xr.CompositionLayerEquirect2KHR(
             space=self.viewer._xr_space,
-            eye_visibility=xr.EyeVisibility.BOTH,
+            eye_visibility=eye_visibility,
             sub_image=xr.SwapchainSubImage(
                 swapchain=self.viewer._background_equirect_swapchain,
                 image_rect=xr.Rect2Di(
-                    offset=xr.Offset2Di(x=0, y=0),
+                    offset=xr.Offset2Di(x=int(x), y=0),
                     extent=xr.Extent2Di(width=int(width), height=int(height)),
                 ),
                 image_array_index=0,
@@ -137,6 +143,20 @@ class BackgroundLayerRenderer:
             lower_vertical_angle=float(-math.pi * 0.5),
         )
 
+    def _make_equirect_layers(self):
+        tex = self._panorama_texture()
+        if tex is None:
+            return None
+        self._upload_equirect_texture(tex)
+        width, height = self.viewer._background_equirect_size
+        if self._panorama_stereo_layout() == 1:
+            eye_w = int(width) // 2
+            return [
+                self._make_equirect_layer(xr.EyeVisibility.LEFT, 0, eye_w, height),
+                self._make_equirect_layer(xr.EyeVisibility.RIGHT, eye_w, eye_w, height),
+            ]
+        return [self._make_equirect_layer(xr.EyeVisibility.BOTH, 0, width, height)]
+
     def make_background_layers(self):
         self._frame_background_layers = []
         if not self.panorama_ready():
@@ -146,7 +166,7 @@ class BackgroundLayerRenderer:
             return [], True
         make_layer = getattr(self.viewer, '_make_equirect_background_layer', None)
         if not callable(make_layer):
-            make_layer = self._make_equirect_layer
+            make_layer = self._make_equirect_layers
         try:
             layer = make_layer()
         except Exception as exc:
@@ -156,6 +176,13 @@ class BackgroundLayerRenderer:
         if layer is None:
             self.viewer._breakdown_inc('openxr_background_projection_fallback')
             return [], True
-        self._frame_background_layers = [layer]
+        layers = list(layer) if isinstance(layer, (list, tuple)) else [layer]
+        if not layers:
+            self.viewer._breakdown_inc('openxr_background_projection_fallback')
+            return [], True
+        self._frame_background_layers = layers
         self.viewer._breakdown_inc('openxr_background_layer')
-        return [ctypes.cast(ctypes.pointer(layer), ctypes.POINTER(xr.CompositionLayerBaseHeader))], False
+        return [
+            ctypes.cast(ctypes.pointer(item), ctypes.POINTER(xr.CompositionLayerBaseHeader))
+            for item in layers
+        ], False

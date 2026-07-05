@@ -693,7 +693,11 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
 
     class _FakeXR:
         CompositionLayerBaseHeader = ctypes.c_int
-        EyeVisibility = type("EyeVisibility", (), {"BOTH": "both"})
+        EyeVisibility = type(
+            "EyeVisibility",
+            (),
+            {"BOTH": "both", "LEFT": "left", "RIGHT": "right"},
+        )
         Posef = staticmethod(lambda: "pose")
         Offset2Di = staticmethod(lambda **kwargs: kwargs)
         Extent2Di = staticmethod(lambda **kwargs: kwargs)
@@ -724,6 +728,7 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     viewer._background_equirect_swapchain = "swapchain"
     viewer._background_equirect_size = (1024, 512)
     viewer._xr_space = "space"
+    viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 0, (0.5, 0.5), (0.25, 0.25))
     renderer = BackgroundLayerRenderer(viewer)
     uploads = []
     monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda value: uploads.append(value))
@@ -739,6 +744,27 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     }
     assert uploads == [tex]
     assert ("openxr_background_layer", 1) in inc_calls
+
+    viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 1, (0.5, 0.5), (0.25, 0.25))
+    renderer = BackgroundLayerRenderer(viewer)
+    uploads = []
+    monkeypatch.setattr(renderer, "_upload_equirect_texture", lambda value: uploads.append(value))
+    headers, projection_fallback = renderer.make_background_layers()
+
+    assert len(headers) == 2
+    assert projection_fallback is False
+    left, right = renderer._frame_background_layers
+    assert left.kwargs["eye_visibility"] == "left"
+    assert right.kwargs["eye_visibility"] == "right"
+    assert left.kwargs["sub_image"]["image_rect"] == {
+        "offset": {"x": 0, "y": 0},
+        "extent": {"width": 512, "height": 512},
+    }
+    assert right.kwargs["sub_image"]["image_rect"] == {
+        "offset": {"x": 512, "y": 0},
+        "extent": {"width": 512, "height": 512},
+    }
+    assert uploads == [tex]
 
     presenter = ScreenLayerPresenter(viewer)
     composition_layers = []

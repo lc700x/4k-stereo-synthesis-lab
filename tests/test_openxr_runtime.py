@@ -762,6 +762,31 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     viewer._prewarm_runtime_effect_downsample()
 
 
+def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    viewer = Viewer()
+    scheduler = viewer._runtime_effect_submit_scheduler()
+    scheduler.pool.safe_tex = object()
+    scheduler.pool.safe_size = (640, 360)
+    scheduler.pool.safe_frame_id = 3
+    viewer._glow_mode = "screen"
+    viewer._glow_intensity_multiplier = 1.0
+    viewer._glow_shell_intensity_multiplier = 0.0
+    viewer._screen_light_intensity = 0.0
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._prepare_glow_downsample_texture = lambda *_args: (_ for _ in ()).throw(RuntimeError("downsample failed"))
+
+    viewer._prewarm_runtime_effect_downsample()
+
+    assert ("openxr_effect_downsample_prewarm_failed", 1) in inc_calls
+    assert ("openxr_effect_downsample_prewarm", 1) not in inc_calls
+
+
 def test_runtime_effect_submit_budget_skip_does_not_call_submit():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter

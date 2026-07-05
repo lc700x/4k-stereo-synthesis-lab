@@ -110,6 +110,7 @@ class CoreQuadLayerMixin:
     def _update_quad_layer_swapchain(self, eye_index):
         if not (self._xr_quad_layer_active and eye_index in self._quad_swapchains):
             return False
+        self._quad_swapchain_presented_eyes = getattr(self, '_quad_swapchain_presented_eyes', set())
         source_tex, source_size, flip_y = self._quad_layer_source_texture(eye_index)
         if source_tex is None or source_size is None:
             return False
@@ -138,6 +139,7 @@ class CoreQuadLayerMixin:
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True
+            self._quad_swapchain_presented_eyes.add(int(eye_index))
             return True
         except Exception as exc:
             self._xr_quad_layer_active = False
@@ -156,9 +158,17 @@ class CoreQuadLayerMixin:
                 self.ctx.depth_mask = prev_depth_mask
             self.ctx.enable(moderngl.DEPTH_TEST)
 
-    def _update_quad_layer_swapchains(self):
+    def _quad_layer_has_presented_frame(self):
+        presented = getattr(self, '_quad_swapchain_presented_eyes', set())
+        return 0 in presented and 1 in presented
+
+    def _update_quad_layer_swapchains(self, *, force=False):
         if not self._quad_layer_can_replace_projection_screen():
             return []
+        if not force and self._quad_layer_has_presented_frame():
+            self._breakdown_inc('openxr_quad_reused_screen_frame')
+            return [0, 1]
+        self._quad_swapchain_presented_eyes = getattr(self, '_quad_swapchain_presented_eyes', set())
         shared_swapchain = (
             self._quad_swapchains.get(0) is not None
             and self._quad_swapchains.get(0) is self._quad_swapchains.get(1)
@@ -205,6 +215,7 @@ class CoreQuadLayerMixin:
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True
+            self._quad_swapchain_presented_eyes.update((0, 1))
             return [0, 1]
         except Exception as exc:
             self._xr_quad_layer_active = False

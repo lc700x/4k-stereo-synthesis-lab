@@ -1170,16 +1170,20 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
 
 def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    frame_block = implementation.split("# Drain depth_q non-blocking", 1)[1].split(
+        "_submit_openxr_frame(composition_layers)", 1
+    )[0]
     render_tail = implementation.split("# On the first valid frame", 1)[1].split(
         "_submit_openxr_frame(composition_layers)", 1
     )[0]
-    update_idx = render_tail.index("updated_quad_eyes = self._update_quad_layer_swapchains()")
-    build_idx = render_tail.index("for quad_eye_index in updated_quad_eyes:")
-    failure_idx = render_tail.index("self._xr_quad_layer_failed = True", build_idx)
-    render_idx = render_tail.index("eye_layer_views = []")
-    skip_idx = render_tail.index("render_projection_layer = self._projection_layer_needed()")
-    append_idx = render_tail.index("for quad_layer_header in quad_layer_headers:")
-    assert update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
+    poll_idx = frame_block.index("screen_frame_uploaded = self._poll_source_frame(upload=True)")
+    update_idx = frame_block.index("updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)")
+    build_idx = frame_block.index("for quad_eye_index in updated_quad_eyes:")
+    failure_idx = frame_block.index("self._xr_quad_layer_failed = True", build_idx)
+    render_idx = frame_block.index("eye_layer_views = []")
+    skip_idx = frame_block.index("render_projection_layer = self._projection_layer_needed()")
+    append_idx = frame_block.index("for quad_layer_header in quad_layer_headers:")
+    assert poll_idx < update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
     assert "openxr_projection_layer_skipped" in render_tail
     quad_layer_block = render_tail.split("for quad_layer_header in quad_layer_headers:", 1)[1]
     assert "composition_layers.append(quad_layer_header)" in quad_layer_block
@@ -1253,6 +1257,35 @@ def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
     assert "and self._d3d11_native_renderer is not None" in d3d11
     assert "renderer.has_frame and renderer.runtime_eye_size is not None" in core_quad
     assert "source_tex.render_runtime_eye(sc_image.texture, quad_w, quad_h, eye_index" in core_quad
+
+
+def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused():
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._xr_quad_layer_enabled = True
+    viewer._xr_quad_layer_active = True
+    viewer._xr_quad_layer_failed = False
+    viewer._screen_curved = False
+    viewer._runtime_direct_source = True
+    viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._runtime_eye_textures = [object(), object()]
+    viewer._runtime_eye_texture_size = (1920, 1080)
+    viewer._quad_swapchain_presented_eyes = {0, 1}
+    inc_calls = []
+    viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._update_quad_layer_swapchain = lambda _eye_index: pytest.fail("quad swapchain should be reused")
+
+    assert viewer._update_quad_layer_swapchains(force=False) == [0, 1]
+    assert ("openxr_quad_reused_screen_frame", 1) in inc_calls
+
+    updated = []
+    viewer._update_quad_layer_swapchain = lambda eye_index: updated.append(eye_index) or True
+    assert viewer._update_quad_layer_swapchains(force=True) == [0, 1]
+    assert updated == [0, 1]
 
 
 def test_quad_layer_update_requires_both_eyes_for_quad_submit():

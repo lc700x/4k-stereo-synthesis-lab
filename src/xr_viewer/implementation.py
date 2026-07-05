@@ -4543,7 +4543,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
             if frame_state.should_render:
                 # Drain depth_q non-blocking -keep only the newest frame
-                self._poll_source_frame(upload=True)
+                screen_frame_uploaded = self._poll_source_frame(upload=True)
                 if loop_trace_enabled:
                     _loop_mark('poll_upload')
 
@@ -4616,7 +4616,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 updated_quad_eyes = []
                 if self._quad_layer_can_replace_projection_screen():
                     quad_update_start = time.perf_counter()
-                    updated_quad_eyes = self._update_quad_layer_swapchains()
+                    updated_quad_eyes = self._update_quad_layer_swapchains(force=screen_frame_uploaded)
                     self._breakdown_add_time('openxr_quad_update', time.perf_counter() - quad_update_start)
                     if loop_trace_enabled:
                         _loop_mark('quad_update')

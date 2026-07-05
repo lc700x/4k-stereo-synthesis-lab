@@ -188,6 +188,11 @@ class CoreQuadLayerMixin:
                 if self._update_quad_layer_swapchain(eye_index):
                     updated.append(eye_index)
             if len(updated) != 2:
+                if self._quad_layer_has_presented_frame():
+                    breakdown_inc = getattr(self, '_breakdown_inc', None)
+                    if callable(breakdown_inc):
+                        breakdown_inc('openxr_quad_update_partial_reuse')
+                    return [0, 1]
                 self._xr_quad_layer_active = False
                 self._xr_quad_layer_failed = True
                 breakdown_inc = getattr(self, '_breakdown_inc', None)

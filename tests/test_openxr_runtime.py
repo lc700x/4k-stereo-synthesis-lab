@@ -744,17 +744,23 @@ def _publish_effect_safe(scheduler, tex, size=(640, 360), frame_id=3):
 def test_runtime_effect_submit_flush_prewarms_downsample_after_submit():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter
+    from xr_viewer.effect_worker import EffectWorker
 
     class Viewer(CoreSourceStateMixin):
         pass
+
+    class Worker(EffectWorker):
+        def prewarm_after_submit(self):
+            prewarm_calls.append(True)
 
     viewer = Viewer()
     prewarm_calls = []
     viewer._runtime_effect_submit_scheduler().queue_source(object())
     viewer._submit_runtime_effect_source_texture = lambda _value: None
-    viewer._prewarm_runtime_effect_downsample = lambda: prewarm_calls.append(True)
+    submitter = EffectSubmitter(viewer)
+    submitter.worker = Worker(viewer)
 
-    assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._runtime_effect_submit_scheduler().pending_source is None
     assert prewarm_calls == [True]
@@ -762,6 +768,7 @@ def test_runtime_effect_submit_flush_prewarms_downsample_after_submit():
 
 def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_worker import EffectWorker
 
     class Viewer(CoreSourceStateMixin):
         pass
@@ -776,16 +783,18 @@ def test_runtime_effect_submit_skips_downsample_prewarm_when_not_needed():
     viewer._screen_light_intensity = 0.0
     viewer._prepare_glow_downsample_texture = lambda *_args: pytest.fail("downsample should not be prewarmed")
 
-    viewer._prewarm_runtime_effect_downsample()
+    EffectWorker(viewer).prewarm_after_submit()
 
 
 def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
     from xr_viewer.core_source_state import CoreSourceStateMixin
+    from xr_viewer.effect_worker import EffectWorker
 
     class Viewer(CoreSourceStateMixin):
         pass
 
     viewer = Viewer()
+    worker = EffectWorker(viewer)
     scheduler = viewer._runtime_effect_submit_scheduler()
     _publish_effect_safe(scheduler, object())
     viewer._glow_mode = "screen"
@@ -799,10 +808,10 @@ def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
     viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
     viewer._prepare_glow_downsample_texture = lambda *args: prepare_calls.append(args) or (_ for _ in ()).throw(RuntimeError("downsample failed"))
 
-    viewer._prewarm_runtime_effect_downsample()
-    viewer._prewarm_runtime_effect_downsample()
+    worker.prewarm_after_submit()
+    worker.prewarm_after_submit()
     _publish_effect_safe(scheduler, object())
-    viewer._prewarm_runtime_effect_downsample()
+    worker.prewarm_after_submit()
 
     assert inc_calls.count(("openxr_effect_downsample_prewarm_failed", 1)) == 2
     assert ("openxr_effect_downsample_prewarm_suppressed", 1) in inc_calls
@@ -817,18 +826,24 @@ def test_runtime_effect_downsample_prewarm_failure_does_not_escape():
 def test_runtime_effect_submit_budget_includes_prewarm():
     from xr_viewer.core_source_state import CoreSourceStateMixin
     from xr_viewer.effect_submitter import EffectSubmitter
+    from xr_viewer.effect_worker import EffectWorker
 
     class Viewer(CoreSourceStateMixin):
         pass
+
+    class Worker(EffectWorker):
+        def prewarm_after_submit(self):
+            time.sleep(0.001)
 
     viewer = Viewer()
     viewer._openxr_effect_submit_budget_ms = 0.001
     viewer._openxr_effect_submit_budget_skip_armed = False
     viewer._runtime_effect_submit_scheduler().queue_source(object())
     viewer._submit_runtime_effect_source_texture = lambda _value: None
-    viewer._prewarm_runtime_effect_downsample = lambda: time.sleep(0.001)
+    submitter = EffectSubmitter(viewer)
+    submitter.worker = Worker(viewer)
 
-    assert EffectSubmitter(viewer).flush_after_submit(should_render=True, screen_frame_uploaded=True)
+    assert submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
 
     assert viewer._openxr_effect_submit_budget_skip_armed is True
 
@@ -847,7 +862,7 @@ def test_runtime_effect_submit_budget_skip_does_not_call_submit():
     viewer._openxr_effect_submit_budget_skip_armed = True
     viewer._runtime_effect_submit_scheduler().queue_source(pending)
     viewer._submit_runtime_effect_source_texture = lambda _value: pytest.fail("budget skip should not submit")
-    viewer._prewarm_runtime_effect_downsample = lambda: pytest.fail("budget skip should not prewarm")
+    submitter.worker.prewarm_after_submit = lambda: pytest.fail("budget skip should not prewarm")
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     assert not submitter.flush_after_submit(should_render=True, screen_frame_uploaded=True)
@@ -912,7 +927,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def latest_safe_light_probe" in scheduler_text
     assert "def latest_safe_downsample" in scheduler_text
     assert "prepare_downsample" not in scheduler_text
-    assert "prepare(source_tex, source_size)" in source_state
+    assert "prepare(source_tex, source_size)" not in source_state
+    assert "prepare(source_tex, source_size)" in worker_text
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" not in runtime_eye
@@ -941,8 +957,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "openxr_effect_source_safe_publish" in submitter_text
     assert "class EffectWorker" in worker_text
     assert "prewarm_after_submit" in submitter_text
+    assert "_prewarm_runtime_effect_downsample" not in source_state
     assert "_prewarm_runtime_effect_downsample" not in submitter_text
-    assert "_prewarm_runtime_effect_downsample" in worker_text
     assert "openxr_screen_effect_source_reuse" in effects
     assert "scheduler.latest_safe_downsample(" in environment_renderer
     assert "scheduler.latest_safe_light_probe()" in environment_renderer

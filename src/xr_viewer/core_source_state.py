@@ -379,46 +379,6 @@ class CoreSourceStateMixin:
         if scheduler.queue_source(effect_source_rgb):
             self._breakdown_inc("openxr_effect_submit_overwrite")
 
-    def _prewarm_runtime_effect_downsample(self):
-        scheduler = self._runtime_effect_submit_scheduler()
-        source_tex, source_size, _source_frame_id = scheduler.latest_safe()
-        if source_tex is None or source_size is None:
-            return
-        mode = str(getattr(self, "_glow_mode", "") or "").strip().lower()
-        glow_needs_downsample = (
-            mode in ("screen", "surround")
-            and (
-                float(getattr(self, "_glow_intensity_multiplier", 0.0) or 0.0) > 0.0
-                or float(getattr(self, "_glow_shell_intensity_multiplier", 0.0) or 0.0) > 0.0
-            )
-        )
-        light_needs_downsample = float(getattr(self, "_screen_light_intensity", 0.0) or 0.0) > 0.0 and (
-            getattr(self, "_panorama_background_path", None)
-            or bool(getattr(self, "_env_model_visible", False) and getattr(self, "_env_model_prims", []))
-        )
-        if not (glow_needs_downsample or light_needs_downsample):
-            return
-        source_key = (id(source_tex), tuple(source_size))
-        if getattr(self, "_runtime_effect_downsample_failed_key", None) == source_key:
-            self._breakdown_inc("openxr_effect_downsample_prewarm_suppressed")
-            return
-        prepare = getattr(self, "_prepare_glow_downsample_texture", None)
-        if not callable(prepare):
-            return
-        start = time.perf_counter()
-        try:
-            tex = prepare(source_tex, source_size)
-        except Exception as exc:
-            self._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
-            print(f"[OpenXRViewer] Runtime effect downsample prewarm failed: {type(exc).__name__}: {exc}")
-            self._runtime_effect_downsample_failed_key = source_key
-            self._breakdown_inc("openxr_effect_downsample_prewarm_failed")
-            return
-        self._breakdown_add_time("openxr_effect_downsample_prewarm", time.perf_counter() - start)
-        self._runtime_effect_downsample_failed_key = None
-        if tex is not None:
-            self._breakdown_inc("openxr_effect_downsample_prewarm")
-
     def _poll_source_frame(self, upload=False):
         if upload:
             from .screen_layer_presenter import ScreenLayerPresenter

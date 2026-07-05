@@ -43,11 +43,8 @@ class ProjectionLayerPresenter:
                 default_fov,
                 default_proj,
             )
-        return self.render_d3d11_pbo(
-            views,
-            default_fov,
-            default_proj,
-        )
+        viewer._breakdown_inc('openxr_projection_d3d11_no_interop_skip')
+        return []
 
     def render_nv_dx_interop(self, views, default_fov, default_proj):
         viewer = self.viewer
@@ -85,63 +82,6 @@ class ProjectionLayerPresenter:
                         pass
                 viewer._disable_nv_interop_after_failure(exc)
                 return []
-        return eye_layer_views
-
-    def render_d3d11_pbo(self, views, default_fov, default_proj):
-        viewer = self.viewer
-        pending = []
-        eye_layer_views = []
-
-        for eye_index in range(2):
-            swapchain = viewer._xr_swapchains[eye_index]
-            img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
-            viewer._wait_swapchain_image(swapchain)
-            released = False
-            try:
-                sc_image = viewer._swapchain_images[eye_index][img_index]
-                sc_w, sc_h = viewer._swapchain_sizes[eye_index]
-                view = views[eye_index] if views and views[eye_index] else None
-                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
-                proj_mat = _fov_to_proj_mat4(view.fov) if view else default_proj
-
-                mgl_fbo, raw_fbo_id = viewer._get_or_create_offscreen_fbo(eye_index, img_index, sc_w, sc_h)
-                viewer._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)
-
-                pbo_id = viewer._get_or_create_d3d11_pbo(eye_index, img_index, sc_w, sc_h)
-                viewer._submit_pbo_readback(raw_fbo_id, pbo_id, sc_w, sc_h)
-                pending.append((pbo_id, sc_image.texture, sc_w, sc_h, swapchain, view))
-                released = True
-            except Exception as exc:
-                if not released:
-                    try:
-                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
-                    except Exception:
-                        pass
-                viewer._breakdown_inc('openxr_projection_render_failed')
-                print(f"[OpenXRViewer] D3D11 PBO projection render failed: {type(exc).__name__}: {exc}")
-                for _pbo_id, _tex, _w, _h, pending_swapchain, _view in pending:
-                    try:
-                        xr.release_swapchain_image(pending_swapchain, viewer._xr_sc_release_info)
-                    except Exception:
-                        pass
-                return []
-
-        for pbo_id, d3d11_tex, sc_w, sc_h, swapchain, view in pending:
-            released = False
-            try:
-                viewer._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)
-                xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
-                released = True
-            except Exception as exc:
-                viewer._breakdown_inc('openxr_projection_render_failed')
-                print(f"[OpenXRViewer] D3D11 PBO projection upload failed: {type(exc).__name__}: {exc}")
-                if not released:
-                    try:
-                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
-                    except Exception:
-                        pass
-                return []
-            eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
         return eye_layer_views
 
     def render_opengl(self, views, default_fov, default_proj, *, updated_quad_eyes=()):

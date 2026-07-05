@@ -21,7 +21,7 @@ from . import d3d_interop as _d3d_interop
 
 
 class CoreD3DInteropMixin:
-    """D3D11 GPU interop setup, fallback, and cleanup."""
+    """D3D11 GPU interop setup and cleanup."""
 
     @staticmethod
     def _is_nvidia_gpu():
@@ -42,20 +42,16 @@ class CoreD3DInteropMixin:
         return False
 
     def _setup_gpu_interop_d3d11(self):
-        """Attempt GPU interop to eliminate the PBO readback path.
+        """Attempt GPU interop for D3D11 projection layers.
 
-        Order: NV_DX_interop2 for NVIDIA GPUs, then the PBO fallback.
-        Falls back to the PBO path (already configured) if neither is available.
-
-        Interop is skipped for BGRA swapchains (common on WMR) because GL
-        renders RGBA natively and the R/B mismatch would swap colours.
-        The PBO path handles BGRA via GL_BGRA readback format.
+        NV_DX_interop2 is the only D3D11 projection path; without it the
+        projection layer is skipped instead of falling back to PBO readback.
         """
         if not sys.platform == "win32":
             return
 
         if self._swapchain_is_bgra:
-            print("[OpenXRViewer] BGRA swapchain - GPU interop disabled (using PBO with GL_BGRA readback)")
+            print("[OpenXRViewer] BGRA swapchain - D3D11 projection interop disabled")
             return
 
         is_nv = self._is_nvidia_gpu()
@@ -70,13 +66,13 @@ class CoreD3DInteropMixin:
                 print(f"[OpenXRViewer] NV_DX_interop2 setup failed: {e}")
 
         self._interop_mode = None
-        print("[OpenXRViewer] D3D11 GPU interop unavailable - using PBO fallback")
+        print("[OpenXRViewer] D3D11 GPU interop unavailable - projection layer will be skipped")
 
     def _disable_nv_interop_after_failure(self, reason):
         print(f"[OpenXRViewer] NV_DX_interop2 disabled after swapchain registration failure: {reason}")
         self._cleanup_interop()
         self._interop_mode = None
-        print("[OpenXRViewer] D3D11 GPU interop unavailable - using PBO fallback")
+        print("[OpenXRViewer] D3D11 GPU interop unavailable - projection layer will be skipped")
 
     def _init_interop_nv(self):
         """Set up WGL_NV_DX_interop2: register the D3D11 device with GL.

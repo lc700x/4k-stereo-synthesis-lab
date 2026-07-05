@@ -92,13 +92,6 @@ class CoreCleanupMixin:
                 pass
         self._depth_rb_cache.clear()
 
-        if self._d3d11_pbo_cache:
-            try:
-                glDeleteBuffers(len(self._d3d11_pbo_cache), [v[0] for v in self._d3d11_pbo_cache.values()])
-            except Exception:
-                pass
-            self._d3d11_pbo_cache.clear()
-
         offscreen_raw_ids = [entry[1] for entry in self._offscreen_fbo_cache.values()]
         if offscreen_raw_ids:
             try:

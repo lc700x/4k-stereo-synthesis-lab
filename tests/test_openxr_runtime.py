@@ -332,9 +332,9 @@ def test_cpu_fallback_paths_emit_red_console_warnings(monkeypatch):
     assert "D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD" in implementation
     assert "os.environ.get('D2S_OPENXR_RUNTIME_EYE_TEXTURE_GPU_UPLOAD', '1')" in implementation
     assert "_runtime_eye_texture_components = 4" in implementation
-    assert "OpenXR D3D11 projection submit" in implementation
-    assert "pbo_glreadpixels" in implementation
-    assert "openxr_d3d11_pbo_readback" in implementation
+    assert "OpenXR D3D11 projection submit" not in implementation
+    assert "pbo_glreadpixels" not in implementation
+    assert "openxr_d3d11_pbo_readback" not in implementation
     assert "warn_cpu_fallback" in frame_upload
     assert "OpenXR RGB+depth texture upload" in frame_upload
     assert "OpenXR depth texture upload" in frame_upload
@@ -1382,16 +1382,10 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "openxr_input_trigger_failed" in trigger_block
     assert "if updated_quad_eyes:" not in projection_presenter
     assert "openxr_projection_pbo_skipped_for_quad" not in projection_presenter
-    pbo_projection_block = projection_presenter.split("def render_d3d11_pbo", 1)[1].split(
-        "def render_opengl", 1
-    )[0]
-    assert "try:" in pbo_projection_block
-    assert "viewer._render_eye(eye_index, mgl_fbo, view_mat, proj_mat, flip_y=True)" in pbo_projection_block
-    assert "openxr_projection_render_failed" in pbo_projection_block
-    assert "xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)" in pbo_projection_block
-    assert "for _pbo_id, _tex, _w, _h, pending_swapchain, _view in pending:" in pbo_projection_block
-    assert "viewer._upload_pbo_to_d3d11(pbo_id, d3d11_tex, sc_w, sc_h)" in pbo_projection_block
-    assert "eye_layer_views = []" in pbo_projection_block
+    assert "def render_d3d11_pbo" not in projection_presenter
+    assert "_submit_pbo_readback" not in projection_presenter
+    assert "_upload_pbo_to_d3d11" not in projection_presenter
+    assert "openxr_projection_d3d11_no_interop_skip" in projection_presenter
     opengl_projection_block = projection_presenter.split("def render_opengl", 1)[1].split(
         "def _projection_view", 1
     )[0]
@@ -2255,16 +2249,16 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "render_d3d11_native" not in projection_presenter
     assert "return self.render_nv_dx_interop(" in render_projection
     assert "openxr_projection_pbo_skipped_for_quad" not in render_projection
-    assert "return self.render_d3d11_pbo(" in render_projection
+    assert "openxr_projection_d3d11_no_interop_skip" in render_projection
     assert "def render_opengl(" in projection_presenter
     assert "viewer._get_or_create_fbo(" in projection_presenter
     assert "glBlitFramebuffer" in projection_presenter
     assert "eye_sign * screen_disparity_uv" not in projection_presenter
     assert "def render_nv_dx_interop(" in projection_presenter
     assert "_wglDXLockObjectsNV" in projection_presenter
-    assert "def render_d3d11_pbo(" in projection_presenter
-    assert "_submit_pbo_readback" in projection_presenter
-    assert "_upload_pbo_to_d3d11" in projection_presenter
+    assert "def render_d3d11_pbo(" not in projection_presenter
+    assert "_submit_pbo_readback" not in projection_presenter
+    assert "_upload_pbo_to_d3d11" not in projection_presenter
 
 
 def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
@@ -2289,7 +2283,6 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     calls = []
     presenter.render_opengl = lambda *args, **kwargs: calls.append("opengl") or ["opengl"]
     presenter.render_nv_dx_interop = lambda *args, **kwargs: calls.append("nv_dx") or ["nv_dx"]
-    presenter.render_d3d11_pbo = lambda *args, **kwargs: calls.append("pbo") or ["pbo"]
     kwargs = dict(
         views=[],
         default_fov=object(),
@@ -2303,15 +2296,15 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["opengl"]
     viewer._use_d3d11 = True
     viewer._d3d11_native_renderer = Renderer()
-    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["pbo"]
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == []
     viewer._d3d11_native_renderer = None
     viewer._interop_mode = "nv_dx"
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["nv_dx"]
     viewer._interop_mode = "none"
-    assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == ["pbo"]
-    assert viewer.inc_calls == []
-    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["pbo"]
-    assert calls == ["opengl", "pbo", "nv_dx", "pbo", "pbo"]
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == []
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == []
+    assert calls == ["opengl", "nv_dx"]
+    assert viewer.inc_calls == [("openxr_projection_d3d11_no_interop_skip", 1)] * 3
 
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():

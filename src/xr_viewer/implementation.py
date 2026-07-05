@@ -24,7 +24,6 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 Image.MAX_IMAGE_PIXELS = None  # Allow loading large 16K atlas images.
 from utils import ROWS, ENV_ROWS
-from utils.cpu_warnings import warn_cpu_fallback
 from viewer.assets import get_font_type
 from OpenGL.GL import (
     glGenFramebuffers, glBindFramebuffer, glFramebufferTexture2D,
@@ -35,8 +34,8 @@ from OpenGL.GL import (
     GL_FRAMEBUFFER_COMPLETE, GL_RGBA8,
     glGenBuffers, glDeleteBuffers, glBindBuffer, glBufferData, glBufferSubData,
     glBindTexture, glTexSubImage2D, glGenerateMipmap,
-    GL_PIXEL_UNPACK_BUFFER, GL_PIXEL_PACK_BUFFER, GL_DYNAMIC_DRAW, GL_STREAM_DRAW, GL_STREAM_READ,
-    GL_RGB, GL_RED, GL_RGBA, GL_BGRA, GL_UNSIGNED_BYTE, GL_FLOAT,
+    GL_PIXEL_UNPACK_BUFFER, GL_DYNAMIC_DRAW, GL_STREAM_DRAW,
+    GL_RGB, GL_RED, GL_RGBA, GL_UNSIGNED_BYTE, GL_FLOAT,
     glDisable, glEnable, GL_FRAMEBUFFER_SRGB, GL_CULL_FACE,
     glFrontFace, GL_CW, GL_CCW,
     glReadBuffer, glBlitFramebuffer, glGenRenderbuffers, glBindRenderbuffer,
@@ -44,8 +43,7 @@ from OpenGL.GL import (
     GL_READ_FRAMEBUFFER, GL_DRAW_FRAMEBUFFER, GL_COLOR_BUFFER_BIT, GL_DEPTH_BUFFER_BIT, GL_LINEAR,
     GL_RENDERBUFFER, GL_DEPTH_ATTACHMENT, GL_DEPTH_COMPONENT24,
     glTexParameterf, GL_TEXTURE_LOD_BIAS,
-    glMapBuffer, glUnmapBuffer, GL_READ_ONLY, GL_MAP_UNSYNCHRONIZED_BIT,
-    glClear, glReadPixels, glFlush, glGenTextures, glDeleteTextures,
+    glClear, glGenTextures, glDeleteTextures,
     glGetError, GL_NO_ERROR
 )
 
@@ -1032,16 +1030,12 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # Offscreen GL FBOs used when rendering for D3D11 swapchain images.
         # Key: (eye_index, img_index) ->(mgl_fbo, mgl_tex, raw_fbo_id, w, h)
         self._offscreen_fbo_cache   = {}
-        # PBOs for the legacy GL-to-D3D11 fallback path.
-        # Key: (eye_index, img_index) ->(pbo_id, w, h)
-        self._d3d11_pbo_cache       = {}
         self._cpu_pbo_color         = None
         self._cpu_pbo_depth         = None
         self._cpu_pbo_size          = (0, 0)
 
-        # GPU interop state. NV_DX_interop2 is the only no-wait GL/D3D path;
-        # D3D11 native rendering and PBO fallback cover the other runtimes.
-        self._interop_mode      = None   # 'nv_dx' | None (PBO fallback)
+        # GPU interop state. NV_DX_interop2 is the only no-wait GL/D3D path.
+        self._interop_mode      = None   # 'nv_dx' | None
         self._nv_dx_device      = None   # HANDLE from wglDXOpenDeviceNV
         self._nv_dx_objects     = {}     # {img_index: GL_tex_id} for registered swapchain textures
 
@@ -1693,66 +1687,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._offscreen_fbo_cache[key] = (mgl_fbo, raw_id, mgl_tex, w, h, depth_rb)
         return mgl_fbo, raw_id
 
-    def _get_or_create_d3d11_pbo(self, eye_index, img_index, w, h):
-        """Return a GL PBO id sized for (w, h) RGBA readback, creating/resizing as needed."""
-        key = (eye_index, img_index)
-        cached = self._d3d11_pbo_cache.get(key)
-        if cached and cached[1] == w and cached[2] == h:
-            return cached[0]
-        if cached:
-            glDeleteBuffers(1, [cached[0]])
-        pbo_id = int(glGenBuffers(1))
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_id)
-        glBufferData(GL_PIXEL_PACK_BUFFER, w * h * 4, None, GL_STREAM_READ)
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0)
-        self._d3d11_pbo_cache[key] = (pbo_id, w, h)
-        return pbo_id
-
-    def _submit_pbo_readback(self, raw_fbo_id, pbo_id, w, h):
-        """Submit an async glReadPixels into pbo_id and flush to kick off DMA immediately.
-
-        Uses GL_BGRA for BGRA swapchains (WMR) so the byte order matches D3D11 directly.
-        """
-        warn_cpu_fallback(
-            "OpenXR D3D11 projection submit",
-            "pbo_glreadpixels",
-            detail=f"size={w}x{h}",
-            key="openxr_d3d11_projection_pbo_readback",
-        )
-        self._breakdown_inc("openxr_d3d11_pbo_readback")
-        pixel_fmt = GL_BGRA if self._swapchain_is_bgra else GL_RGBA
-        glBindFramebuffer(GL_FRAMEBUFFER, raw_fbo_id)
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_id)
-        glReadPixels(0, 0, w, h, pixel_fmt, GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
-        glFlush()  # push the DMA command to the GPU so it starts while we render eye 1
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0)
-        glBindFramebuffer(GL_FRAMEBUFFER, 0)
-
-    def _upload_pbo_to_d3d11(self, pbo_id, d3d11_texture_ptr, w, h):
-        """Map the readback PBO and upload straight into the D3D11 swapchain texture.
-
-        GL renders Y-flipped (see _render_eye flip_y) so glReadPixels already
-        produces top-down rows -no CPU row-reversal needed.  The mapped PBO
-        pointer is passed directly to D3D11 UpdateSubresource, eliminating the
-        intermediate flip-buffer and its per-frame memcpy.
-        """
-        row_bytes = w * 4
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, pbo_id)
-        # UNSYNCHRONIZED: the Phase-1/Phase-2 pipelining gives the DMA enough time
-        # to finish; if it hasn't, we accept a one-frame visual glitch rather than
-        # stalling the pipeline.
-        src_ptr = glMapBuffer(GL_PIXEL_PACK_BUFFER, GL_READ_ONLY | GL_MAP_UNSYNCHRONIZED_BIT)
-        if src_ptr:
-            try:
-                _d3d11_update_subresource(
-                    self._d3d11_context, d3d11_texture_ptr,
-                    int(src_ptr), row_bytes,
-                )
-            except Exception as exc:
-                print(f"[OpenXRViewer] d3d11 upload failed: {exc}")
-            glUnmapBuffer(GL_PIXEL_PACK_BUFFER)
-        glBindBuffer(GL_PIXEL_PACK_BUFFER, 0)
-
     def _render_preview_only_frame(self, proj_mat):
         """Render a single desktop-preview frame without an active XR session."""
         self._ensure_preview_swapchain_size()
@@ -2133,8 +2067,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         u_eye_offset is the resolved per-eye parallax offset from the runtime budget.
 
-        If flip_y is True the projection is Y-flipped so glReadPixels produces
-        top-down rows for D3D11, eliminating the CPU row-reversal copy.
+        If flip_y is True the projection is Y-flipped for D3D interop orientation.
         """
         if flip_y:
             proj_mat = proj_mat.copy()
@@ -4047,14 +3980,6 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             except Exception:
                 pass
         self._depth_rb_cache.clear()
-
-        # Release D3D11-path PBOs used for async pixel readback
-        if self._d3d11_pbo_cache:
-            try:
-                glDeleteBuffers(len(self._d3d11_pbo_cache), [v[0] for v in self._d3d11_pbo_cache.values()])
-            except Exception:
-                pass
-            self._d3d11_pbo_cache.clear()
 
         # Release D3D11-path offscreen FBOs and their backing textures
         offscreen_raw_ids = [entry[1] for entry in self._offscreen_fbo_cache.values()]

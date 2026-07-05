@@ -189,7 +189,7 @@ def test_environment_light_bind_failure_disables_uniform(monkeypatch):
     assert viewer._cl_uniform_frame == -5
 
 
-def test_runtime_effect_consumers_only_read_existing_safe_texture(monkeypatch):
+def test_runtime_effect_consumers_only_read_existing_safe_results(monkeypatch):
     safe_tex = object()
     inc_calls = []
 
@@ -209,11 +209,11 @@ def test_runtime_effect_consumers_only_read_existing_safe_texture(monkeypatch):
     viewer._cached_glow_downsample_texture = lambda _tex, _size: None
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    assert viewer._screen_light_source_texture()[0] is safe_tex
+    assert viewer._screen_light_source_texture() == (None, None)
     assert ("openxr_effect_source_promote_failed", 1) not in inc_calls
 
 
-def test_screen_light_source_lookup_failure_reuses_safe_texture(monkeypatch):
+def test_screen_light_source_lookup_failure_disables_light_without_safe_downsample(monkeypatch):
     safe_tex = object()
     inc_calls = []
     viewer = _make_default_viewer(monkeypatch)
@@ -224,7 +224,7 @@ def test_screen_light_source_lookup_failure_reuses_safe_texture(monkeypatch):
     viewer._cached_glow_downsample_texture = lambda *_args: (_ for _ in ()).throw(RuntimeError("cache failed"))
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    assert viewer._screen_light_source_texture() == (safe_tex, (16, 9))
+    assert viewer._screen_light_source_texture() == (None, None)
     assert ("openxr_screen_light_source_failed", 1) in inc_calls
 
 
@@ -1305,9 +1305,8 @@ def test_screen_effects_do_not_sample_runtime_eye_texture():
     assert "_runtime_effect_latest_safe()" not in base_text.split("def _screen_effect_source_texture", 1)[1].split("def _render_screen_background_effects", 1)[0]
     assert "_promote_runtime_effect_ready_texture" not in base_text
     assert "_screen_effect_source_texture()" in no_room_glow
-    assert "if getattr(self, '_runtime_direct_source', False):" in no_room_glow
-    assert "_cached_glow_downsample_texture(source_tex, source_size)" in no_room_glow
-    assert "else:\n            glow_tex = self._prepare_glow_downsample_texture" in no_room_glow
+    assert "glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)" in no_room_glow
+    assert "_prepare_glow_downsample_texture" not in no_room_glow
     assert "getattr(self, 'color_tex', None)" not in no_room_glow
 
 
@@ -1453,7 +1452,8 @@ def test_glow_downsample_cache_is_shared_across_eyes():
     assert "if getattr(self, '_runtime_direct_source', False):" in shell_func
     assert "latest_safe_downsample(" in shell_func
     assert "_cached_glow_downsample_texture" in shell_func
-    assert "else:\n            glow_tex = self._prepare_glow_downsample_texture" in shell_func
+    assert "glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)" in shell_func
+    assert "_prepare_glow_downsample_texture" not in shell_func
     assert "except Exception as exc:" in prepare_func
     assert "openxr_glow_downsample_failed" in prepare_func
     assert "finally:" in prepare_func
@@ -1493,9 +1493,10 @@ def test_screen_light_uses_effect_source_texture_not_runtime_eye_texture():
     assert "_promote_runtime_effect_ready_texture" not in source_func
     assert "_record_screen_effect_safe_age" in source_func
     assert "latest_safe_downsample(" in source_func
-    assert "_prepare_glow_downsample_texture" not in runtime_direct_block
-    assert "_cached_glow_downsample_texture" in runtime_direct_block
+    assert "_prepare_glow_downsample_texture" not in source_func
+    assert "_cached_glow_downsample_texture" in source_func
     assert "_glow_ds_size" in source_func
+    assert "value = (None, None)" in source_func
     assert "_runtime_eye_textures" not in source_func
     assert "_current_eye_index" not in source_func
 

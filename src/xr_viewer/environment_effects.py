@@ -381,7 +381,7 @@ class EnvironmentEffectsMixin:
                 cached_downsample=getattr(self, '_cached_glow_downsample_texture', None)
             )
         else:
-            glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
+            glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
         if mgl_fbo is not None:
             mgl_fbo.use()
         center = getattr(self, '_head_pos_w', None)

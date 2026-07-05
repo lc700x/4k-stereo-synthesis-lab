@@ -151,10 +151,7 @@ class ScreenEffectsMixin:
         uv_glow_extent = glow_margin / uv_scale
 
         source_tex, source_size = self._screen_effect_source_texture()
-        if getattr(self, '_runtime_direct_source', False):
-            glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
-        else:
-            glow_tex = self._prepare_glow_downsample_texture(source_tex, source_size)
+        glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
 
         previous_depth_mask = self.ctx.depth_mask
         try:

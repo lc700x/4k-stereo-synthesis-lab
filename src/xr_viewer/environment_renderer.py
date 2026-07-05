@@ -142,17 +142,16 @@ class EnvironmentRendererMixin:
         if getattr(self, '_screen_light_source_cache_key', None) == cache_key:
             self._breakdown_inc("openxr_screen_light_source_reuse")
             return getattr(self, '_screen_light_source_cache_value', (source_tex, source_size))
-        prepare_light_tex = getattr(self, '_prepare_glow_downsample_texture', None)
-        if source_tex is not None and source_size is not None and callable(prepare_light_tex):
-            light_tex = prepare_light_tex(source_tex, source_size)
-            if light_tex is not None:
-                self._breakdown_inc("openxr_screen_light_downsample_source")
-                value = (light_tex, getattr(self, '_glow_ds_size', None))
-                self._screen_light_source_cache_key = cache_key
-                self._screen_light_source_cache_frame = frame_id
-                self._screen_light_source_cache_value = value
-                return value
-        value = (source_tex, source_size)
+        cached_light_tex = self._cached_glow_downsample_texture(source_tex, source_size)
+        cached_light_size = getattr(self, '_glow_ds_size', None)
+        if cached_light_tex is not None and cached_light_size is not None:
+            self._breakdown_inc("openxr_screen_light_downsample_source")
+            value = (cached_light_tex, cached_light_size)
+            self._screen_light_source_cache_key = cache_key
+            self._screen_light_source_cache_frame = frame_id
+            self._screen_light_source_cache_value = value
+            return value
+        value = (None, None)
         self._screen_light_source_cache_key = cache_key
         self._screen_light_source_cache_frame = frame_id
         self._screen_light_source_cache_value = value

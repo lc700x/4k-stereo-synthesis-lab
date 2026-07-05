@@ -34,7 +34,6 @@ def _set_runtime_effect_safe(viewer, tex, size, frame_id):
         scheduler = EffectScheduler()
         viewer._runtime_effect_scheduler = lambda: scheduler
         viewer._runtime_effect_submit_scheduler = lambda: scheduler
-        viewer._runtime_effect_latest_safe = scheduler.latest_safe
     pool = viewer._runtime_effect_scheduler().pool
     pool.safe_tex = tex
     pool.safe_size = size
@@ -1546,7 +1545,8 @@ def test_screen_glow_shader_uses_region_color_grid():
     assert "textureLod(u_screen_light_tex" in glsl_text
     assert "glow_grid_color" in glsl_text
     assert "def _screen_effect_source_texture" in effects_text
-    assert "_runtime_effect_latest_safe()" in effects_text
+    assert "_runtime_effect_submit_scheduler().latest_safe()" in effects_text
+    assert "_runtime_effect_latest_safe" not in effects_text
 
 
 def test_no_room_glow_pass_restores_gl_state_on_failure():

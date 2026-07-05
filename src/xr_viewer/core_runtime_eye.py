@@ -217,9 +217,6 @@ class CoreRuntimeEyeMixin:
     def _runtime_effect_pool(self):
         return self._runtime_effect_scheduler().pool
 
-    def _runtime_effect_latest_safe(self):
-        return self._runtime_effect_scheduler().latest_safe()
-
     def _runtime_effects_need_source_texture(self):
         if not getattr(self, '_openxr_async_effects_enabled', True):
             return False

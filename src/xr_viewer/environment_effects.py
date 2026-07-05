@@ -138,7 +138,7 @@ class EnvironmentEffectsMixin:
         if source_tex is None:
             return
         if safe_frame_id is None:
-            _tex, _size, safe_frame_id = self._runtime_effect_latest_safe()
+            _tex, _size, safe_frame_id = self._runtime_effect_submit_scheduler().latest_safe()
         safe_frame_id = int(safe_frame_id or 0)
         current_frame = int(getattr(self, '_frame_count', 0) or 0)
         if safe_frame_id > 0 and current_frame >= safe_frame_id:

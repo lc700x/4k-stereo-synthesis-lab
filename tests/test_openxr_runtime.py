@@ -826,7 +826,7 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "def _ensure_runtime_effect_staging_texture" in runtime_eye
     assert "def _publish_runtime_effect_staging_texture" in runtime_eye
     assert "def _promote_runtime_effect_ready_texture" not in runtime_eye
-    assert "def _runtime_effect_latest_safe" in runtime_eye
+    assert "def _runtime_effect_latest_safe" not in runtime_eye
     assert "def promote_ready_once" in scheduler_text
     assert "_runtime_effect_spare_source_tex" not in runtime_eye
     assert "self.ready_tex = self.staging_tex" in scheduler_text
@@ -888,7 +888,8 @@ def test_runtime_effect_source_uses_safe_texture_swap_and_reuses_on_failure():
     assert "self._release_runtime_effect_source_texture()" not in update_block.split(
         "if self._try_update_runtime_effect_source_texture_gpu(frame, w, h):", 1
     )[1]
-    assert "self._runtime_effect_latest_safe()" in effects
+    assert "self._runtime_effect_latest_safe()" not in effects
+    assert "self._runtime_effect_submit_scheduler().latest_safe()" in effects
     assert "getattr(self, '_runtime_effect_safe_source_tex', None)" not in effects
     assert "openxr_effect_ready_age_frames" in effects
     assert "_promote_runtime_effect_ready_texture" not in effects

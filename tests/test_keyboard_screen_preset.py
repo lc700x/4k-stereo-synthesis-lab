@@ -596,6 +596,8 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
     assert "return \"missing_swapchain\"" in quad_reason
     assert "return \"missing_source_texture\"" in quad_reason
     assert "return self._quad_layer_unavailable_reason() is None" in quad_text
+    assert "def _quad_layer_screen_presentable" in quad_text
+    assert "reason == 'missing_source_texture' and self._quad_layer_has_presented_frame()" in quad_text
     assert "_quad_layer_pose_state()" in make_quad
     assert "_screen_pose_quat_xyzw()" not in make_quad
     for finally_block in (update_quad_finally, update_quads_finally):
@@ -606,7 +608,7 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
     render_eye = render_eye.split("# 3. Keyboard", 1)[0]
     assert "quad_unavailable_reason = self._quad_layer_unavailable_reason()" in render_eye
-    assert "draw_projection_screen = quad_unavailable_reason is not None" in render_eye
+    assert "draw_projection_screen = not self._quad_layer_screen_presentable()" in render_eye
     assert "openxr_quad_unavailable_" in render_eye
     assert "if draw_projection_screen:" in render_eye
     assert "self.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_eye

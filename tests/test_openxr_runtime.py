@@ -1344,11 +1344,9 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     append_idx = frame_block.index("for quad_layer_header in quad_layer_headers:")
     assert poll_idx < update_idx < build_idx < failure_idx < render_idx < skip_idx < append_idx
     assert "openxr_projection_layer_skipped" in render_tail
-    render_eye_prefix, render_eye_block = implementation.split("draw_projection_screen = quad_unavailable_reason is not None", 1)
-    assert "quad_unavailable_reason == 'missing_source_texture' and self._quad_layer_has_presented_frame()" in render_eye_prefix
-    assert render_eye_prefix.rfind("quad_unavailable_reason == 'missing_source_texture'") > render_eye_prefix.rfind(
-        "quad_unavailable_reason = self._quad_layer_unavailable_reason()"
-    )
+    render_eye = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
+    render_eye_prefix, render_eye_block = render_eye.split("draw_projection_screen = not self._quad_layer_screen_presentable()", 1)
+    assert "quad_unavailable_reason == 'missing_source_texture'" not in render_eye_prefix
     source_gate = render_eye_block.split("# Pre-compute view-projection once per eye", 1)[0]
     assert "if draw_projection_screen:" in source_gate
     assert "self._runtime_eye_textures[eye_index] is None" in source_gate
@@ -1399,6 +1397,9 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._runtime_eye_textures[0] = None
     assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
     assert viewer._quad_layer_can_replace_projection_screen() is False
+    assert viewer._quad_layer_screen_presentable() is False
+    viewer._quad_swapchain_presented_eyes = {0, 1}
+    assert viewer._quad_layer_screen_presentable() is True
 
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_has_frame = False

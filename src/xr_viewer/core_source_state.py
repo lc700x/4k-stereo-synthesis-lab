@@ -519,7 +519,7 @@ class CoreSourceStateMixin:
             payload = {"screen_roll": self.screen_roll}
             if include_stereo:
                 depth_strength = float(self.depth_strength)
-                if self._quad_layer_can_replace_projection_screen():
+                if self._quad_layer_screen_presentable():
                     depth_strength *= float(getattr(self, '_xr_quad_layer_stereo_boost', 1.0))
                 payload.update(
                     depth_strength=depth_strength,

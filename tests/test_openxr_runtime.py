@@ -180,6 +180,10 @@ def test_openxr_run_seeds_screen_bridge_with_renderable_bootstrap_frame():
         "bridge.mark_presented(first_source_frame)"
     )
     assert "self._mark_source_frame_received()" in bootstrap_block
+    assert "else:\n                self._pending_source_frame = first_source_frame" in bootstrap_block
+    assert bootstrap_block.index("bridge.mark_presented(first_source_frame)") < bootstrap_block.index(
+        "self._pending_source_frame = first_source_frame"
+    )
 
 
 def test_run_openxr_mode_bootstraps_without_waiting_for_first_runtime_frame(monkeypatch):

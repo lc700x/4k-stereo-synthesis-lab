@@ -1272,7 +1272,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_source_latency",
         "openxr_screen_quality_failed",
         "openxr_screen_upload_budget_skip",
-        "openxr_projection_screen_skipped",
+        "openxr_quad_screen_overlay",
         "openxr_background_panorama",
         "openxr_background_panorama_failed",
         "openxr_background_env_model",
@@ -2203,7 +2203,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "_render_screen_foreground_effects" not in screen_presenter_text
     assert "screen_presenter.render_projection_screen(" not in render_eye_block
     assert "render_quad_screen_overlay(" in render_eye_block
-    assert "openxr_projection_screen_skipped" not in render_eye_block
+    assert "openxr_projection_screen_skipped" not in screen_presenter_text
     assert "runtime_rgb_depth_max_disparity_px = (" not in render_eye_block
     background_gate = render_eye_block.split("background_presenter.render_projection_background(", 1)[1].split(
         "if perf_enabled:", 1

@@ -105,7 +105,7 @@ class ScreenLayerPresenter:
 
     def render_quad_screen_overlay(self, *, mgl_fbo, vp_mat, mark_perf=None):
         viewer = self.viewer
-        viewer._breakdown_inc("openxr_projection_screen_skipped")
+        viewer._breakdown_inc("openxr_quad_screen_overlay")
         if mark_perf:
             mark_perf('screen_quad_layer')
         if not viewer._screen_curved:

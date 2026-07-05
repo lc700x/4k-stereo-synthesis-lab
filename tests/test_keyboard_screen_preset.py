@@ -520,36 +520,6 @@ def test_curved_screen_uses_same_fragment_path_as_flat_screen():
         assert f"viewer._curved_prog['{uniform}']" in curved_block
 
 
-def test_openxr_screen_shader_uniforms_are_initialized_for_flat_and_curved_paths():
-    presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    render_screen = presenter_text.split("def render_projection_screen", 1)[1].split(
-        "def projection_layer_needed", 1
-    )[0]
-
-    assert "screen_source_size = (" in render_screen
-    assert "runtime_rgb_depth_max_disparity_px = (" in render_screen
-    assert "runtime_rgb_depth_render_width = (" in render_screen
-    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in render_screen
-    assert "screen_depth_strength = (" in render_screen
-    assert "if viewer._runtime_direct_source" in render_screen
-    assert "_runtime_rgb_depth_depth_strength" in render_screen
-    assert "screen_eye_offset = 0.0 if viewer._runtime_direct_source else eye_sign * screen_disparity_uv / 2.0" in render_screen
-    assert "runtime_rgb_depth_stereo_scale" not in render_screen
-    assert "runtime_rgb_depth_max_shift_ratio" not in render_screen
-    assert "screen_ipd_uv" not in render_screen
-    assert "shader_resolution_mode = str(getattr(viewer, '_openxr_rgb_depth_shader_resolution', 'source') or 'source')" in render_screen
-    assert "elif shader_resolution_mode == 'swapchain':" in render_screen
-    assert "shader_resolution = None" in render_screen
-    assert "f\" max_disparity_px={runtime_rgb_depth_max_disparity_px:.3f}\"" in render_screen
-    assert "f\" render_width={runtime_rgb_depth_render_width}\"" in render_screen
-    assert "f\" disparity_uv={screen_disparity_uv:.6f}\"" in render_screen
-    assert "feather_enabled = bool(runtime_rgb_depth and viewer._openxr_rgb_depth_feather)" in render_screen
-    for program_name in ("viewer.prog", "viewer._curved_prog"):
-        assert f"{program_name}['u_eye_offset'].value = screen_eye_offset" in render_screen
-        assert f"{program_name}['u_depth_strength'].value = screen_depth_strength" in render_screen
-        for uniform in ("u_resolution", "u_feather_enabled", "u_feather_width", "u_viewport"):
-            assert f"{program_name}['{uniform}']" in render_screen
-
 
 def test_viewer_shader_uses_beta_subpixel_screen_edge_clip():
     shader_text = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
@@ -577,21 +547,8 @@ def test_curved_screen_grip_drag_uses_curved_uv_hit_point_not_flat_plane():
     assert "np.dot(screen_normal, ray_dir)" not in curved_branch
 
 
-def test_curved_border_is_rendered_behind_screen_not_over_image():
-    presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    render_screen = presenter_text.split("def render_projection_screen", 1)[1].split(
-        "def projection_layer_needed", 1
-    )[0]
-    before_main, after_main = render_screen.split("mgl_fbo.use()", 1)
-    after_main = after_main.split("# Optional screen effects on/around", 1)[0]
 
-    assert "if viewer._screen_curved:" in before_main
-    assert "viewer._render_border(mgl_fbo, vp_mat)" in before_main
-    assert "if not viewer._screen_curved:" in after_main
-    assert "viewer._render_border(mgl_fbo, vp_mat)" in after_main
-
-
-def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_ready():
+def test_quad_layer_screen_overlay_has_no_projection_screen_body():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     quad_text = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
 
@@ -606,7 +563,7 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
         "def _screen_pose_quat_xyzw", 1
     )[0]
     update_quads_finally = update_quads.split("finally:", 1)[1]
-    assert "return \"disabled\"" in quad_reason
+    assert "return \"disabled\"" not in quad_reason
     assert "return \"inactive\"" in quad_reason
     assert "return \"not_runtime_direct\"" in quad_reason
     assert "return \"curved_screen\"" in quad_reason
@@ -624,14 +581,14 @@ def test_quad_layer_gate_can_replace_projection_screen_when_runtime_texture_is_r
         assert "self.ctx.enable(moderngl.DEPTH_TEST)" in finally_block
 
     presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    render_screen = presenter_text.split("def render_projection_screen", 1)[1].split(
+    assert "def render_projection_screen" not in presenter_text
+    render_overlay = presenter_text.split("def render_quad_screen_overlay", 1)[1].split(
         "def projection_layer_needed", 1
     )[0]
-    assert "quad_unavailable_reason = viewer._openxr_projection_screen_unavailable_reason or 'unknown'" in render_screen
-    assert "viewer._breakdown_inc(f\"openxr_quad_unavailable_{quad_unavailable_reason}\")" in render_screen
-    assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" in render_screen
-    assert "screen_depth_tex = viewer._runtime_depth_texture" in render_screen
-    assert "openxr_projection_screen_skipped" in presenter_text
+    assert "openxr_quad_screen_overlay" in render_overlay
+    assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" not in render_overlay
+    assert "screen_depth_tex = viewer._runtime_depth_texture" not in render_overlay
+    assert "openxr_projection_screen_skipped" not in presenter_text
 
 
 def test_curved_screen_geometry_uses_beta_fixed_angle_arc_and_gl_state_reset():
@@ -658,16 +615,6 @@ def test_curved_screen_geometry_uses_beta_fixed_angle_arc_and_gl_state_reset():
     assert "radius = half_w / max(half_ang, 1e-6)" in laser_hit
     assert "origin = np.array([self.screen_pan_x, self.screen_pan_y, -self.screen_distance]" in laser_hit
     assert "radius = max(self.screen_distance" not in laser_hit
-
-    presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    render_screen = presenter_text.split("def render_projection_screen", 1)[1].split(
-        "if viewer._screen_curved and viewer._curved_prog is not None:", 1
-    )[0]
-    assert "viewer.ctx.enable(moderngl.DEPTH_TEST)" in render_screen
-    assert "viewer.ctx.depth_mask = True" in render_screen
-    assert "viewer.ctx.disable(moderngl.BLEND)" in render_screen
-    assert "viewer.ctx.disable(moderngl.CULL_FACE)" in render_screen
-    assert "glFrontFace(GL_CCW)" in render_screen
 
 
 def test_x_long_press_cycles_default_glow_and_y_no_longer_uses_grip_glow():

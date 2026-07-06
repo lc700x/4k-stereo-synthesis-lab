@@ -52,6 +52,14 @@ def test_use_environment_viewer_requires_real_environment_name():
     assert use_environment_viewer("studio")
 
 
+def test_controller_render_debug_logs_at_most_five_times():
+    text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    render_func = text.split("def _render_controllers", 1)[1].split("    def _sort_primitives", 1)[0]
+
+    assert "log_count < 5" in render_func
+    assert "_controller_render_debug_count = log_count + 1" in render_func
+
+
 def test_frame_size_from_eye_uses_height_width_shape_for_array_like():
     eye = SimpleNamespace(shape=(720, 1280, 4))
 

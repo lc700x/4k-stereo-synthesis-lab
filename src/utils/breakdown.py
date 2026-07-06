@@ -61,6 +61,8 @@ class FPSBreakdown:
             "openxr_upload_count": 0,
         }
         self.last_log = time.perf_counter()
+        self.log_count = 0
+        self.log_limit = 10
 
     def inc(self, name: str, amount: int | float = 1) -> None:
         if not self.enabled:
@@ -163,6 +165,10 @@ class FPSBreakdown:
         if elapsed < 1.0:
             return
         with self.lock:
+            if self.log_count >= self.log_limit:
+                self.last_log = now
+                return
+            self.log_count += 1
             stats = dict(self.stats)
             for key in list(self.stats.keys()):
                 if key in LATEST_KEYS:

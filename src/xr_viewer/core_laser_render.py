@@ -375,8 +375,10 @@ class CoreLaserRenderMixin:
         if getattr(self, '_openxr_debug', False):
             now_log = time.perf_counter()
             last_log = float(getattr(self, '_controller_render_debug_last', 0.0) or 0.0)
-            if now_log - last_log >= 2.0:
+            log_count = int(getattr(self, '_controller_render_debug_count', 0) or 0)
+            if log_count < 5 and now_log - last_log >= 2.0:
                 self._controller_render_debug_last = now_log
+                self._controller_render_debug_count = log_count + 1
                 print(
                     "[OpenXRViewer][debug] controller render: "
                     f"l_grip={self._grip_mat_l is not None} r_grip={self._grip_mat_r is not None} "

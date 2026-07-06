@@ -17,13 +17,13 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Current focus:
 
 ```text
-OpenXR asynchronous decoupled rendering implementation, validation logging, GPU glow constraints, and real-device presentation/runtime handoff follow-ups
+OpenXR projection-main stereo presentation, validation logging, GPU glow constraints, and real-device presentation/runtime handoff follow-ups
 ```
 
 Latest pushed task commit:
 
 ```text
-ed078ff feat(openxr): add async validation summary
+c03f61a fix: improve OpenXR quad stereo diagnostics
 ```
 
 Canonical specs for current work:
@@ -40,7 +40,8 @@ Canonical specs for current work:
 - Treat `docs/01-Realtime-2d-to-3d-specification.md` as canonical when Parallax Budget, render_size, OpenXR, or output contract details differ from the prompt or historical docs.
 - Keep `stereo_runtime` responsible for depth inference, stereo synthesis, OpenXR render-core config, output tensors, timings, and provider/debug contracts.
 - Keep capture/session/window lifecycle, GUI settings persistence, OpenXR session/swapchain timing, and final display/submit outside `stereo_runtime`.
-- For OpenXR asynchronous rendering, treat the virtual screen as the hard-realtime path. Background, Glow, and wall reflection are soft-realtime paths that must consume already-safe GPU results and must not block `xrEndFrame`.
+- For OpenXR rendering, treat the virtual screen as the hard-realtime path. Background, Glow, and wall reflection are soft-realtime paths that must consume already-safe GPU results and must not block `xrEndFrame`.
+- Real-device VDXR validation showed Quad layer submission can carry distinct left/right runtime textures but still appear mono in the headset. Do not rely on Quad layer as the main stereo presentation path under VDXR; use projection-layer rendering for the main 3D screen and keep Quad as an experimental/diagnostic or overlay path.
 - Keep compatibility paths where recent tasks introduced new contracts: `RuntimeSettingsSnapshot`, normalized parallax budgets, and `CapturedFrame` metadata.
 - Do not commit or upload runtime artifacts: `models/`, `outputs/`, `python3/`, `python-cu13/`, `downloads/`, `.codegraph/`, or `4K.jpg`.
 
@@ -51,6 +52,7 @@ Canonical specs for current work:
 - The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
 - TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
 - CUDA/GL image texture upload must remain image-texture-first. PBO is an acceptable GPU fallback, but it must be logged as fallback and must not hide the original image texture failure. Any CPU upload fallback in OpenXR, local viewer, stream/debug realtime display, or depth provider hot path must print a red console warning and record the reason.
+- OpenXR Quad layer is not a reliable VDXR main stereo display path. The latest logs prove runtime left/right eye tensors differ, OpenGL shared-array Quad swapchains are created, and Quad headers submit `eye0 array=0` / `eye1 array=1`; however the headset still shows no useful 3D. Projection layer remains the known-good OpenXR stereo path because it uses standard per-eye projection views.
 - OpenXR Glow / screen-light sampling must follow `docs/20-openxr-gpu-glow-guide.md`: use GPU source texture, low-resolution glow texture, shader/compute sampling, or future D3D/Vulkan GPU passes. Do not reintroduce realtime `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` as screen-light sampling sources.
 
 ## Future Work
@@ -69,9 +71,45 @@ Current task queue:
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
 10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
-11. Continue OpenXR asynchronous decoupled rendering validation per `docs/36`: code structure is largely in place, but completion now depends on real-device logs proving `openxr_async_ok=1`, stable screen present under slow runtime/effect/background paths, and no Quad/PBO hard failures.
+11. Rebase OpenXR main-screen presentation on the projection layer for VDXR. Keep Quad layer diagnostics and optional shared-array experimentation available, but do not use Quad as the default proof path for headset 3D.
 
 ## Current Status
+
+### 2026-07-07 OpenXR Quad/Projection Real-Device Finding
+
+Implemented and pushed:
+
+```text
+c03f61a fix: improve OpenXR quad stereo diagnostics
+```
+
+Findings from VDXR headset validation:
+
+- Runtime full-synthesis eyes are genuinely different; diagnostic logs showed `runtime eye diff mean=4.580/255 max=255/255` during the shared-array run.
+- The OpenGL Quad path can create a shared-array swapchain by default and submit per-eye Quad headers with `eye0 array=0` and `eye1 array=1`.
+- VDXR still presented the Quad screen without useful 3D depth. This means the remaining failure is not runtime synthesis and not D2S failing to submit two eyes; it is the runtime/compositor treatment of Quad overlay stereo.
+- Projection layer remains the reliable 3D path because OpenXR projection views are explicitly per-eye and VDXR handles them as the normal VR stereo render path.
+- Fixed two OpenGL state issues discovered while validating: removed unnecessary Quad `glDepthMask` calls and drained stale GL errors before projection FBO/render entry points.
+
+Verification:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\stereo_runtime\pipeline.py src\stereo_runtime\runtime.py src\utils\breakdown.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_quad_layer.py src\xr_viewer\implementation.py src\xr_viewer\screen_layer_presenter.py tests\test_breakdown.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py
+.\src\python3\python.exe -m pytest tests\test_breakdown.py tests\test_runtime_pipeline.py::test_runtime_pipeline_waits_briefly_for_pending_cuda_before_dropping tests\test_runtime_pipeline.py::test_runtime_pending_cuda_wait_defaults_to_zero_in_openxr tests\test_runtime_pipeline.py::test_runtime_pipeline_publishes_newest_ready_pending_cuda_result -q -p no:cacheprovider
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_quad_layer_shared_array_swapchain_flag_uses_one_swapchain tests\test_openxr_runtime.py::test_quad_layer_shared_array_swapchain_is_default tests\test_openxr_runtime.py::test_quad_layer_update_requires_both_eyes_for_quad_submit tests\test_openxr_runtime.py::test_quad_layer_reuses_presented_frame_on_partial_update tests\test_openxr_runtime.py::test_quad_layer_shared_swapchain_reuses_presented_frame_when_source_missing tests\test_openxr_runtime.py::test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+7 runtime/breakdown tests passed
+6 OpenXR Quad tests passed
+```
+
+Next validation target:
+
+- Switch the main virtual screen back to projection-layer stereo rendering for VDXR, using the runtime-produced left/right eye textures or equivalent per-eye projection shader path. Keep Quad layer as optional diagnostics/overlay only.
 
 ### 2026-07-06 OpenXR Phase 6 Validation Diagnostic Follow-up
 
@@ -113,8 +151,8 @@ ed078ff feat(openxr): add async validation summary
 
 Current state:
 
-- OpenXR async code structure is estimated at about 80% complete: Quad Layer is the screen main path, projection screen body fallback is removed, screen/background/effect/submit paths are separated, panorama/HDR/SBS/light-probe paths are present, and D3D11/PBO legacy boundaries are guarded by tests.
-- Final completion is not proven yet. Runtime/headset validation is still required to show complex background cost does not drag down screen present, slow runtime frames reuse the last Quad texture instead of blocking, and slow/failing effect workers do not affect `xrEndFrame` cadence.
+- At the time of this 2026-07-06 summary, OpenXR async code structure was estimated at about 80% complete with Quad Layer as the screen main path. 2026-07-07 VDXR validation supersedes that main-path assumption; projection-layer stereo rendering is now the reliable main-screen target. The screen/background/effect/submit separation, panorama/HDR/SBS/light-probe paths, and D3D11/PBO legacy boundary tests remain useful.
+- Final completion is not proven yet. Runtime/headset validation is still required to show complex background cost does not drag down screen present, slow runtime frames reuse the last good projection screen source instead of blocking, and slow/failing effect workers do not affect `xrEndFrame` cadence.
 - `FPSBreakdown.validate_openxr_async()` and the log fields `openxr_async_ok`, `openxr_async_missing`, and `openxr_async_failed` are now the primary quick health signal for OpenXR async acceptance. A passing real-device run should report `openxr_async_ok=1`, `openxr_async_missing=none`, and `openxr_async_failed=none` after the scene is actively presenting.
 - D3D11 native is explicitly scoped to runtime-eye -> Quad Layer swapchain upload. Projection overlays use OpenGL or NV_DX interop; the display body must not return to a D3D11 projection swapchain/PBO path.
 
@@ -147,7 +185,7 @@ Implemented locally in the current worktree:
 - The plan treats the virtual display as the hard-realtime OpenXR path and treats room background, Glow, and wall reflection as soft-realtime effects that consume previously completed GPU results.
 - The plan intentionally uses the target architecture from docs/35 as the north star instead of letting current partial implementation limits define the goal.
 - The plan explicitly requires GPU-only screen-light sampling based on `docs/20-openxr-gpu-glow-guide.md`; realtime CPU sampling via `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` is forbidden for Glow / screen-light color.
-- First implementation milestone should be flags + diagnostics, `ScreenFrameBridge`, and Quad-layer screen presenter. Panorama background, async GPU Glow, and wall reflection should follow only after the hard-realtime display path is proven.
+- First implementation milestone was originally flags + diagnostics, `ScreenFrameBridge`, and Quad-layer screen presenter. 2026-07-07 VDXR validation supersedes the Quad-main assumption: the hard-realtime display path should now be proven through projection-layer stereo rendering.
 
 Verification for this doc pass:
 
@@ -165,7 +203,7 @@ Documentation-only update; no code tests required.
 
 Handoff notes:
 
-- Do not treat existing disabled/partial Quad layer behavior as the target boundary. Quad layer screen presentation is the intended hard-realtime OpenXR display path.
+- This 2026-07-04 note originally treated Quad layer screen presentation as the intended hard-realtime OpenXR display path. 2026-07-07 VDXR validation supersedes that assumption: projection-layer stereo rendering is the reliable main-screen path; Quad remains optional diagnostics/overlay.
 - Do not rewrite Glow around CPU average-color sampling. Existing GPU glow/downsample/shader technology remains the baseline and should be moved behind an async result-pool contract.
 - OpenXR async work should preserve latest-frame queue semantics: runtime producer and viewer presenter must not block each other.
 

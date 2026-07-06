@@ -62,6 +62,19 @@ def test_fps_breakdown_validates_openxr_async_contract():
     assert validation.failed == ("quad_layer_failed", "d3d11_pbo_readback")
 
 
+def test_fps_breakdown_logs_at_most_ten_times(capsys):
+    breakdown = FPSBreakdown(enabled=True, target_fps=72)
+    now = breakdown.last_log
+
+    for _ in range(12):
+        now += 1.0
+        breakdown.inc("openxr_new_screen_frame", 1)
+        breakdown.inc("openxr_effect_source_reused_safe", 1)
+        breakdown.log(now=now)
+
+    assert capsys.readouterr().out.count("[FPSBreakdown]") == 10
+
+
 def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown = FPSBreakdown(enabled=True, target_fps=72)
     now = breakdown.last_log + 1.0

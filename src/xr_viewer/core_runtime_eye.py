@@ -1,5 +1,6 @@
 import ctypes
 import logging
+import os
 import time
 
 import moderngl
@@ -111,6 +112,12 @@ class CoreRuntimeEyeMixin:
                 right = right_eye.detach()
                 if left.shape != right.shape:
                     print(f"[OpenXRViewer] runtime eye diff unavailable: shape mismatch left={tuple(left.shape)} right={tuple(right.shape)}")
+                elif str(os.environ.get("D2S_OPENXR_EYE_DIFF_SYNC", "")).strip().lower() in {"1", "true", "yes", "on"}:
+                    diff = (left.float() - right.float()).abs()
+                    print(
+                        f"[OpenXRViewer] runtime eye diff mean={float(diff.mean().detach().cpu()):.3f}/255 "
+                        f"max={float(diff.max().detach().cpu()):.0f}/255 shape={tuple(left.shape)}"
+                    )
                 else:
                     print(f"[OpenXRViewer] runtime eye diff skipped: no-sync tensor path shape={tuple(left.shape)}")
                 self._runtime_eye_diff_logged = True

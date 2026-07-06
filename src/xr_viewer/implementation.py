@@ -1647,6 +1647,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if key in self._fbo_cache:
             return self._fbo_cache[key]
 
+        while glGetError() != GL_NO_ERROR:
+            pass
         raw_id = glGenFramebuffers(1)
         glBindFramebuffer(GL_FRAMEBUFFER, raw_id)
         glFramebufferTexture2D(
@@ -2113,6 +2115,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # gamma-encoded.  Disabling GL_FRAMEBUFFER_SRGB prevents AMD (and compliant
         # drivers) from applying a second sRGB encoding pass on write, which would
         # cause pale/washed-out colours.
+        while glGetError() != GL_NO_ERROR:
+            pass
         glDisable(GL_FRAMEBUFFER_SRGB)
 
         mgl_fbo.use()

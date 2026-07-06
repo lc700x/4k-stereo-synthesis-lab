@@ -381,7 +381,7 @@ def _runtime_pending_depth_limit() -> int:
 def _runtime_pending_cuda_wait_s(ctx) -> float:
     raw = os.environ.get("D2S_RUNTIME_PENDING_CUDA_WAIT_MS")
     if raw is None:
-        raw = "3" if getattr(ctx, "run_mode", None) == "OpenXR" else "0"
+        raw = "0"
     try:
         return max(0.0, float(str(raw).strip()) / 1000.0)
     except ValueError:

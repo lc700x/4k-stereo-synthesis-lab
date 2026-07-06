@@ -215,6 +215,32 @@ class ScreenLayerPresenter:
                 print(f"[OpenXRViewer] Projection layer append failed: {type(exc).__name__}: {exc}")
                 self.viewer._breakdown_inc('openxr_projection_render_failed')
                 self._frame_projection_layer = None
+        if (
+            quad_layer_headers
+            and getattr(self.viewer, '_openxr_debug', False)
+            and not getattr(self.viewer, '_quad_submit_diag_logged', False)
+        ):
+            self.viewer._quad_submit_diag_logged = True
+            details = []
+            for idx, layer in enumerate(self._frame_quad_layers):
+                sub_image = getattr(layer, 'sub_image', None)
+                swapchain = getattr(sub_image, 'swapchain', None)
+                try:
+                    swapchain_id = int(swapchain)
+                except Exception:
+                    swapchain_id = id(swapchain) if swapchain is not None else None
+                details.append(
+                    f"eye{idx}:visibility={getattr(layer, 'eye_visibility', None)} "
+                    f"swapchain={swapchain_id} "
+                    f"array={getattr(sub_image, 'image_array_index', None)}"
+                )
+            print(
+                "[OpenXRViewer] Quad submit diag: "
+                f"total_layers={len(composition_layers) + len(quad_layer_headers)} "
+                f"quad_headers={len(quad_layer_headers)} "
+                + "; ".join(details),
+                flush=True,
+            )
         composition_layers.extend(quad_layer_headers)
         return composition_layers
 

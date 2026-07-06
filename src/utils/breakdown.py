@@ -22,6 +22,12 @@ LATEST_KEYS = {
     "rt_sbs_backend",
     "rt_occ_backend",
     "rt_fill_backend",
+    "rt_depth_strength",
+    "rt_convergence",
+    "rt_max_disparity_px",
+    "rt_resolved_max_disparity_px",
+    "rt_parallax_preset",
+    "rt_parallax_budget_preset",
     "rt_depth_total_ms",
     "rt_depth_model_ms",
     "rt_synthesis_ms",
@@ -138,6 +144,16 @@ class FPSBreakdown:
                 self.stats["rt_fast_plus_fused_skip"] = str(debug.get("fast_plus_fused_skip"))
             if "fast_plus_fused_temporal_bypass" in debug:
                 self.stats["rt_fast_plus_fused_temporal_bypass"] = str(debug.get("fast_plus_fused_temporal_bypass"))
+            for debug_key, stat_key in (
+                ("depth_strength", "rt_depth_strength"),
+                ("convergence", "rt_convergence"),
+                ("max_disparity_px", "rt_max_disparity_px"),
+                ("resolved_max_disparity_px", "rt_resolved_max_disparity_px"),
+                ("parallax_preset", "rt_parallax_preset"),
+                ("parallax_budget_preset", "rt_parallax_budget_preset"),
+            ):
+                if debug_key in debug:
+                    self.stats[stat_key] = str(debug.get(debug_key))
 
     def log(self, now: float | None = None) -> None:
         if not self.enabled:
@@ -319,6 +335,10 @@ class FPSBreakdown:
             f"rt_out={stats.get('rt_output_dtype', 'unknown')} "
             f"rt_pack={stats.get('rt_output_pack', 'n/a')} "
             f"rt_sbs={stats.get('rt_sbs_backend', 'unknown')} "
+            f"rt_depth_strength={stats.get('rt_depth_strength', 'n/a')} "
+            f"rt_convergence={stats.get('rt_convergence', 'n/a')} "
+            f"rt_max_disp={stats.get('rt_resolved_max_disparity_px', stats.get('rt_max_disparity_px', 'n/a'))} "
+            f"rt_parallax={stats.get('rt_parallax_budget_preset', stats.get('rt_parallax_preset', 'n/a'))} "
             f"rt_occ={stats.get('rt_occ_backend', 'n/a')} "
             f"rt_fill={stats.get('rt_fill_backend', 'n/a')} "
             f"rt_fused={stats.get('rt_fast_plus_fused_backend', 'n/a')} "

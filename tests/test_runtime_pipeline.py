@@ -15,6 +15,7 @@ from stereo_runtime.pipeline import (
     _attach_pipeline_debug,
     _add_cuda_event_timings,
     _is_fatal_runtime_preparation_error,
+    _runtime_pending_cuda_wait_s,
     _runtime_sync_after_frame_enabled,
 )
 from stereo_runtime.render_size import RenderSizeConfig, RenderSizePolicy
@@ -760,6 +761,11 @@ def test_runtime_pipeline_waits_briefly_for_pending_cuda_before_dropping(monkeyp
     assert "runtime_drop_cuda_inflight" not in stats
     assert stats["runtime_pending_cuda_wait"] == 1
     assert breakdown["runtime_pending_cuda_wait"] == 1
+
+
+def test_runtime_pending_cuda_wait_defaults_to_zero_in_openxr(monkeypatch):
+    monkeypatch.delenv("D2S_RUNTIME_PENDING_CUDA_WAIT_MS", raising=False)
+    assert _runtime_pending_cuda_wait_s(SimpleNamespace(run_mode="OpenXR")) == 0.0
 
 
 def test_runtime_pipeline_publishes_newest_ready_pending_cuda_result():

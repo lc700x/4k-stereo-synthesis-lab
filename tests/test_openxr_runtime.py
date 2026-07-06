@@ -427,6 +427,100 @@ def test_quad_layer_uses_runtime_ordered_quad_format_candidates(monkeypatch):
     assert viewer._quad_swapchain_format == 32856
 
 
+def test_quad_layer_shared_array_swapchain_flag_uses_one_swapchain(monkeypatch):
+    from xr_viewer import core_quad_layer
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    created = []
+
+    class FakeSwapchainCreateInfo:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    def create_swapchain(_session, sc_info):
+        created.append(sc_info)
+        return "shared-swap"
+
+    fake_xr = SimpleNamespace(
+        SwapchainUsageFlags=SimpleNamespace(COLOR_ATTACHMENT_BIT=1, SAMPLED_BIT=2),
+        SwapchainCreateInfo=FakeSwapchainCreateInfo,
+        create_swapchain=create_swapchain,
+        enumerate_swapchain_images=lambda _swapchain, _image_type: [SimpleNamespace(image=1)],
+        destroy_swapchain=lambda _swapchain: None,
+    )
+    monkeypatch.setattr(core_quad_layer, "xr", fake_xr)
+    monkeypatch.setenv("D2S_OPENXR_QUAD_SHARED_ARRAY", "1")
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._quad_fbo_cache = {}
+    viewer._quad_swapchains = {}
+    viewer._quad_swapchain_images = {}
+    viewer._quad_swapchain_sizes = {}
+    viewer._quad_swapchain_array_size = {}
+    viewer._quad_swapchain_presented_eyes = set()
+    viewer._quad_swapchain_format = 32856
+    viewer._quad_swapchain_formats = (32856,)
+    viewer._quad_swapchain_image_type = object
+    viewer._quad_swapchain_max_size = (4000, 3000)
+    viewer._xr_session = object()
+    viewer._use_d3d11 = False
+    viewer._xr_quad_layer_active = False
+    viewer._xr_quad_layer_failed = False
+
+    assert viewer._ensure_quad_layer_swapchains_for_source((3840, 2160)) is True
+    assert len(created) == 1
+    assert created[0].array_size == 2
+    assert viewer._quad_swapchains[0] is viewer._quad_swapchains[1]
+    assert viewer._quad_swapchain_array_size == {0: 2, 1: 2}
+
+
+def test_quad_layer_shared_array_swapchain_is_default(monkeypatch):
+    from xr_viewer import core_quad_layer
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    created = []
+
+    class FakeSwapchainCreateInfo:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    fake_xr = SimpleNamespace(
+        SwapchainUsageFlags=SimpleNamespace(COLOR_ATTACHMENT_BIT=1, SAMPLED_BIT=2),
+        SwapchainCreateInfo=FakeSwapchainCreateInfo,
+        create_swapchain=lambda _session, sc_info: created.append(sc_info) or "shared-swap",
+        enumerate_swapchain_images=lambda _swapchain, _image_type: [SimpleNamespace(image=1)],
+        destroy_swapchain=lambda _swapchain: None,
+    )
+    monkeypatch.setattr(core_quad_layer, "xr", fake_xr)
+    monkeypatch.delenv("D2S_OPENXR_QUAD_SHARED_ARRAY", raising=False)
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._quad_fbo_cache = {}
+    viewer._quad_swapchains = {}
+    viewer._quad_swapchain_images = {}
+    viewer._quad_swapchain_sizes = {}
+    viewer._quad_swapchain_array_size = {}
+    viewer._quad_swapchain_presented_eyes = set()
+    viewer._quad_swapchain_format = 32856
+    viewer._quad_swapchain_formats = (32856,)
+    viewer._quad_swapchain_image_type = object
+    viewer._quad_swapchain_max_size = (4000, 3000)
+    viewer._xr_session = object()
+    viewer._use_d3d11 = False
+    viewer._xr_quad_layer_active = False
+    viewer._xr_quad_layer_failed = False
+
+    assert viewer._ensure_quad_layer_swapchains_for_source((3840, 2160)) is True
+    assert len(created) == 1
+    assert created[0].array_size == 2
+
+
 def test_quad_layer_retries_same_format_after_transient_create_failure(monkeypatch, capsys):
     from xr_viewer import core_quad_layer
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
@@ -3122,9 +3216,10 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
 
     left_tex = viewer._runtime_eye_textures[0]
     viewer._runtime_eye_textures[1] = None
-    assert viewer._quad_layer_source_texture(1)[0] is left_tex
-    assert viewer._quad_layer_unavailable_reason() is None
-    assert viewer._quad_layer_screen_presentable() is True
+    assert viewer._quad_layer_source_texture(0)[0] is left_tex
+    assert viewer._quad_layer_source_texture(1)[0] is None
+    assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
+    assert viewer._quad_layer_screen_presentable() is False
 
     viewer._runtime_eye_textures[0] = None
     assert viewer._quad_layer_unavailable_reason() == "missing_source_texture"
@@ -3248,11 +3343,12 @@ def test_quad_layer_update_requires_both_eyes_for_quad_submit():
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)
     viewer._quad_swapchain_array_size = {0: 1, 1: 1}
+    viewer._ensure_quad_layer_swapchains_for_source = lambda _source_size: True
     viewer._update_quad_layer_swapchain = lambda eye_index: eye_index == 0
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
-    assert viewer._update_quad_layer_swapchains() == []
+    assert viewer._update_quad_layer_swapchains(force=True) == []
     assert viewer._xr_quad_layer_active is False
     assert viewer._xr_quad_layer_failed is True
     assert viewer._quad_layer_unavailable_reason() == "partial_update_without_presented_frame"
@@ -3276,6 +3372,7 @@ def test_quad_layer_reuses_presented_frame_on_partial_update():
     viewer._runtime_eye_texture_size = (1920, 1080)
     viewer._quad_swapchain_array_size = {0: 1, 1: 1}
     viewer._quad_swapchain_presented_eyes = {0, 1}
+    viewer._ensure_quad_layer_swapchains_for_source = lambda _source_size: True
     viewer._update_quad_layer_swapchain = lambda eye_index: eye_index == 0
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
@@ -3304,6 +3401,7 @@ def test_quad_layer_shared_swapchain_reuses_presented_frame_when_source_missing(
     viewer._runtime_eye_texture_size = None
     viewer._quad_swapchain_array_size = {0: 2, 1: 2}
     viewer._quad_swapchain_presented_eyes = {0, 1}
+    viewer._ensure_quad_layer_swapchains_for_source = lambda _source_size: True
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 

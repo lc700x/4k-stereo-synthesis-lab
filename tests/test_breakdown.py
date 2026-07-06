@@ -156,6 +156,20 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.add_time("rt_gpu_synth_sbs", 0.009)
     breakdown.add_time("rt_gpu_pack", 0.003)
     breakdown.add_time("rt_gpu_openxr_pack", 0.002)
+    breakdown.add_runtime_timing(
+        type(
+            "RuntimeResult",
+            (),
+            {
+                "debug_info": {
+                    "depth_strength": 0.25,
+                    "convergence": 0.0,
+                    "resolved_max_disparity_px": 96.0,
+                    "parallax_budget_preset": "standard",
+                }
+            },
+        )()
+    )
 
     breakdown.log(now=now)
 
@@ -237,6 +251,10 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "rt_gpu_syn_sbs=9.00ms" in output
     assert "rt_gpu_pack=3.00ms" in output
     assert "rt_gpu_openxr_pack=2.00ms" in output
+    assert "rt_depth_strength=0.25" in output
+    assert "rt_convergence=0.0" in output
+    assert "rt_max_disp=96.0" in output
+    assert "rt_parallax=standard" in output
     assert "openxr_async_ok=0" in output
     assert "openxr_async_missing=none" in output
     assert "openxr_async_failed=quad_layer_failed,d3d11_pbo_readback" in output

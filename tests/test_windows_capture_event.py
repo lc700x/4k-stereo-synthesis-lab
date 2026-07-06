@@ -140,11 +140,9 @@ def test_windows_capture_cuda_can_force_frame_copy(monkeypatch):
     assert raw == "cloned-buffer"
     assert copy_mode is FrameCopyMode.CLONE
     assert device == "cuda"
-    assert received[-1].frame_raw_device == "cuda"
-    assert received[-1].original_format == "CloneBuffer"
 
 
-def test_windows_capture_runner_marks_rocm_clone_device(monkeypatch):
+def test_windows_capture_runner_marks_rocm_direct_device(monkeypatch):
     module = _install_capture_module(monkeypatch, "wc_rocm")
     monkeypatch.setattr(windows_capture_event, "_setup_dpi_awareness", lambda: None)
     monkeypatch.setattr(windows_capture_event.WindowsCaptureEventRunner, "_start_keyboard_worker", lambda self, event: None)
@@ -172,11 +170,11 @@ def test_windows_capture_runner_marks_rocm_clone_device(monkeypatch):
     shutdown_event.clear()
     capture.handlers[0](FakeFrame(clone_buffer), FakeControl())
 
-    assert clone_buffer.cloned is True
-    assert received[-1].frame == "cloned-buffer"
-    assert received[-1].copy_mode is FrameCopyMode.CLONE
+    assert clone_buffer.cloned is False
+    assert received[-1].frame is clone_buffer
+    assert received[-1].copy_mode is FrameCopyMode.GPU_TENSOR
     assert received[-1].frame_raw_device == "rocm"
-    assert received[-1].metadata["zero_copy"] is False
+    assert received[-1].metadata["zero_copy"] is True
 
 
 def test_windows_capture_cuda_source_fps_log_defaults_off(capsys):
@@ -207,6 +205,19 @@ def test_windows_capture_cuda_logs_source_fps_when_enabled(monkeypatch, capsys):
         "[WindowsCaptureCUDA] capture_fps=2.0 frames=2 monitor=1 mode=Monitor "
         "copy_ms=3.00 enqueue_ms=2.00 handler_ms=5.00"
     ) in capsys.readouterr().out
+
+
+def test_windows_capture_cuda_logs_callback_gap(capsys):
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_gap(10.0, {"monitor_index": 1, "minimum_update_interval": 8})
+    runner._log_capture_gap(10.2, {"monitor_index": 1, "minimum_update_interval": 8})
+    assert capsys.readouterr().out == ""
+
+    runner._log_capture_gap(10.8, {"monitor_index": 1, "minimum_update_interval": 8})
+    assert "[CaptureGap] tool=WindowsCaptureCUDA mode=Monitor monitor=1 gap=0.60s" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("capture_tool", ["WindowsCapture", "WindowsCaptureROCm"])

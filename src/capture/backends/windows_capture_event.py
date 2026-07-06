@@ -102,6 +102,7 @@ class WindowsCaptureEventRunner:
         self._fps_copy_seconds = 0.0
         self._fps_enqueue_seconds = 0.0
         self._fps_handler_seconds = 0.0
+        self._last_frame_ts = 0.0
 
     @property
     def session(self):
@@ -154,6 +155,20 @@ class WindowsCaptureEventRunner:
         self._fps_copy_seconds += copy_seconds
         self._fps_enqueue_seconds += enqueue_seconds
         self._fps_handler_seconds += handler_seconds
+
+    def _log_capture_gap(self, now: float, capture_kwargs: dict) -> None:
+        if self.capture_tool != "WindowsCaptureCUDA":
+            self._last_frame_ts = now
+            return
+        gap = now - self._last_frame_ts if self._last_frame_ts > 0.0 else 0.0
+        self._last_frame_ts = now
+        if gap < 0.5:
+            return
+        print(
+            f"[CaptureGap] tool={self.capture_tool} mode={self.config.capture_mode} "
+            f"monitor={self.config.monitor_index} gap={gap:.2f}s kwargs={capture_kwargs}",
+            flush=True,
+        )
 
     def _start_keyboard_worker(self, shutdown_event):
         user32 = ctypes.windll.user32
@@ -247,6 +262,7 @@ class WindowsCaptureEventRunner:
                     if on_paused is not None:
                         on_paused("paused")
                     return
+                self._log_capture_gap(capture_start_time, capture_kwargs)
                 self._log_capture_fps(capture_start_time)
                 copy_start_time = time.perf_counter()
                 raw, copy_mode, frame_raw_device = _copy_frame_buffer(frame.frame_buffer, self.capture_tool)

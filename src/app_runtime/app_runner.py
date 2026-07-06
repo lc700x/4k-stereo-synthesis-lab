@@ -331,6 +331,9 @@ def run_app_mode(mode, *, runtime_q, thread_latencies, settings: AppModeSettings
             breakdown_inc=callbacks.breakdown_inc,
             breakdown_add_time=callbacks.breakdown_add_time,
             breakdown_add_value=callbacks.breakdown_add_value,
+            render_active_event=callbacks.render_active_event,
+            source_active_event=callbacks.source_active_event,
+            idle_active_event=callbacks.idle_active_event,
         )
         return AppRunResult(
             stats=stats,

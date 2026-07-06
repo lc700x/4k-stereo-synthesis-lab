@@ -549,14 +549,6 @@ class RuntimePipelineLoop:
                     ctx.breakdown_inc("runtime_diag_raw")
                     continue
 
-                try:
-                    runtime_backpressured = ctx.runtime_q.full()
-                except Exception:
-                    runtime_backpressured = False
-                if runtime_backpressured:
-                    ctx.source_stat_inc("runtime_drop_backpressure")
-                    ctx.breakdown_inc("runtime_drop_backpressure")
-                    continue
                 if len(self._pending_runtime_items) >= _runtime_pending_depth_limit() and not _cuda_event_ready(self._last_cuda_ready_event):
                     ctx.source_stat_inc("runtime_drop_cuda_inflight")
                     ctx.breakdown_inc("runtime_drop_cuda_inflight")

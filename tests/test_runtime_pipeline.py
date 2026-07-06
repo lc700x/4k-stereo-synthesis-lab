@@ -399,7 +399,7 @@ def test_runtime_pipeline_stops_after_fatal_model_preparation_error(capsys):
     assert runtime_q.empty()
 
 
-def test_runtime_pipeline_drops_raw_when_runtime_queue_is_backpressured():
+def test_runtime_pipeline_overwrites_stale_runtime_queue_with_latest_frame():
     raw_q = queue.Queue(maxsize=1)
     runtime_q = queue.Queue(maxsize=1)
     raw_q.put(("raw", (2, 2), 10.0))
@@ -414,8 +414,12 @@ def test_runtime_pipeline_drops_raw_when_runtime_queue_is_backpressured():
     def breakdown_inc(name, amount=1):
         breakdown[name] = breakdown.get(name, 0) + amount
 
-    def fail_gpu_work(*args, **kwargs):
-        raise AssertionError("backpressure drop must not run GPU work")
+    def put_latest(q, item):
+        try:
+            q.put_nowait(item)
+        except queue.Full:
+            q.get_nowait()
+            q.put_nowait(item)
 
     context = RuntimePipelineContext(
         shutdown_event=OneShotShutdown(),
@@ -429,9 +433,9 @@ def test_runtime_pipeline_drops_raw_when_runtime_queue_is_backpressured():
         use_cudart=False,
         thread_latencies={},
         stereo_runtime=FakeRuntime(),
-        capture_frame_to_rgb=fail_gpu_work,
-        prepare_rgb_for_stereo_runtime=fail_gpu_work,
-        current_openxr_render_config=fail_gpu_work,
+        capture_frame_to_rgb=lambda frame, size, **kwargs: SimpleNamespace(_d2s_preprocess_backend="fake-preprocess"),
+        prepare_rgb_for_stereo_runtime=lambda frame, **kwargs: "runtime-rgb",
+        current_openxr_render_config=lambda: SimpleNamespace(),
         is_hard_idle=lambda: False,
         is_source_paused=lambda: False,
         log_source_health=lambda: None,
@@ -442,7 +446,7 @@ def test_runtime_pipeline_drops_raw_when_runtime_queue_is_backpressured():
         set_preprocess_backend=lambda *args, **kwargs: None,
         queue_clear=lambda q: None,
         queue_drain_latest=lambda q, first_item: first_item,
-        queue_put_latest=lambda q, item: q.put_nowait(item),
+        queue_put_latest=put_latest,
         log_stereo_runtime_mode_once=lambda: None,
         apply_stereo_hot_reload_if_needed=lambda: None,
         warmup_stereo_once_for_frame=lambda frame: None,
@@ -451,11 +455,17 @@ def test_runtime_pipeline_drops_raw_when_runtime_queue_is_backpressured():
 
     RuntimePipelineLoop(context).run()
 
-    assert runtime_q.get_nowait() == ("old-runtime", 9.0)
+    runtime_result, capture_start_time = runtime_q.get_nowait()
+    assert runtime_result.depth == "depth"
+    assert capture_start_time == 10.0
     assert raw_q.empty()
     assert stats["raw_get"] == 1
-    assert stats["runtime_drop_backpressure"] == 1
-    assert breakdown["runtime_drop_backpressure"] == 1
+    assert stats["runtime_frames"] == 1
+    assert stats["runtime_overwrite"] == 1
+    assert breakdown["runtime"] == 1
+    assert breakdown["runtime_overwrite"] == 1
+    assert "runtime_drop_backpressure" not in stats
+    assert "runtime_drop_backpressure" not in breakdown
 
 
 def test_runtime_pipeline_holds_pending_result_until_cuda_event_ready(monkeypatch):

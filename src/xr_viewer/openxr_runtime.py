@@ -36,6 +36,9 @@ class OpenXRRuntimeCallbacks:
     breakdown_inc: Callable = _noop
     breakdown_add_time: Callable = _noop
     breakdown_add_value: Callable = _noop
+    render_active_event: object | None = None
+    source_active_event: object | None = None
+    idle_active_event: object | None = None
 
 
 def use_environment_viewer(environment_model):
@@ -112,9 +115,9 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
             show_preview_window=config.show_preview_window,
             capture_mode=config.capture_mode,
             monitor_index=config.monitor_index,
-            render_active_event=None,
-            source_active_event=None,
-            idle_active_event=None,
+            render_active_event=callbacks.render_active_event,
+            source_active_event=callbacks.source_active_event,
+            idle_active_event=callbacks.idle_active_event,
             runtime_config_callback=callbacks.update_runtime_config,
         )
         viewer._fps_breakdown_inc = callbacks.breakdown_inc

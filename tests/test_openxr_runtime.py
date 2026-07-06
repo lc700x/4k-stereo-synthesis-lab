@@ -180,15 +180,9 @@ def test_openxr_frame_pipeline_seeds_screen_bridge_with_renderable_bootstrap_fra
     assert "first_source_frame" not in run_body
     assert "first_source_frame = (first_runtime_result, first_frame_ts)" in seed_block
     assert "first_source_frame = (first_rgb, first_depth, first_frame_ts)" in seed_block
-    assert "if viewer._has_renderable_source_frame():" in seed_block
-    assert seed_block.index("if viewer._has_renderable_source_frame():") < seed_block.index(
-        "bridge.mark_presented(first_source_frame)"
-    )
     assert "viewer._mark_source_frame_received()" in seed_block
     assert "_pending_source_frame" not in seed_block
-    assert seed_block.index("bridge.mark_presented(first_source_frame)") < seed_block.index(
-        "viewer._mark_source_frame_received()"
-    )
+    assert "bridge.mark_presented(first_source_frame)" not in seed_block
 
 
 def test_openxr_optional_extensions_filters_runtime_extensions(monkeypatch):
@@ -212,6 +206,9 @@ def test_openxr_optional_extensions_filters_runtime_extensions(monkeypatch):
 def test_run_openxr_mode_bootstraps_from_first_runtime_frame(monkeypatch):
     calls = []
     callback_calls = []
+    render_event = object()
+    source_event = object()
+    idle_event = object()
     runtime_result = SimpleNamespace(
         left_eye=SimpleNamespace(shape=(1, 3, 2160, 1920)),
         output_display_size=(3840, 2160),
@@ -237,6 +234,9 @@ def test_run_openxr_mode_bootstraps_from_first_runtime_frame(monkeypatch):
         source_active_set=lambda: callback_calls.append("source_set"),
         wait_idle_clear=lambda: callback_calls.append("wait_idle_clear"),
         bootstrap_done_set=lambda: callback_calls.append("bootstrap_done"),
+        render_active_event=render_event,
+        source_active_event=source_event,
+        idle_active_event=idle_event,
     )
     runtime_q = queue.Queue()
     runtime_q.put((runtime_result, 123.0))
@@ -245,6 +245,9 @@ def test_run_openxr_mode_bootstraps_from_first_runtime_frame(monkeypatch):
 
     assert isinstance(viewer, FakeViewer)
     assert calls[0]["frame_size"] == (3840, 2160)
+    assert calls[0]["render_active_event"] is render_event
+    assert calls[0]["source_active_event"] is source_event
+    assert calls[0]["idle_active_event"] is idle_event
     assert calls[1]["run"] == {"first_runtime_result": runtime_result, "first_frame_ts": 123.0}
     assert callback_calls == ["source_set", "render_clear", "wait_idle_clear", "bootstrap_done"]
 

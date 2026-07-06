@@ -1,7 +1,10 @@
 # xrviewer_final.py
 # Desktop2Stereo OpenXR viewer: no-room profile with built-in screen effects.
 
+import moderngl
+
 from .implementation import *
+from .gl_state import get_depth_mask, set_depth_mask
 from .overlay import OverlayMixin
 
 
@@ -153,9 +156,9 @@ class ScreenEffectsMixin:
         source_tex, source_size = self._screen_effect_source_texture()
         glow_tex = self._cached_glow_downsample_texture(source_tex, source_size)
 
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         try:
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
             model = self._screen_effect_model(glow_w, glow_h, z_offset=-self._screen_back_offset(1.0))
@@ -175,7 +178,7 @@ class ScreenEffectsMixin:
             self._breakdown_inc("openxr_screen_glow_failed")
         finally:
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
 
     def _render_shadow(self, mgl_fbo, vp_mat):
         if not getattr(self, '_shadow_enabled', True):
@@ -188,7 +191,7 @@ class ScreenEffectsMixin:
         shadow_w = self.screen_width * 1.4
         shadow_h = self.screen_height * 0.35
         y_off = -(self.screen_height / 2.0 + shadow_h / 2.0)
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         model = self._screen_effect_model(shadow_w, shadow_h, z_offset=-self._screen_back_offset(1.2), y_offset=y_off)
@@ -197,7 +200,7 @@ class ScreenEffectsMixin:
         self._shadow_prog['u_opacity'].value = opacity
         self._shadow_vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     def _render_ground_light(self, mgl_fbo, vp_mat):
         if not getattr(self, '_ground_light_enabled', False):
@@ -210,7 +213,7 @@ class ScreenEffectsMixin:
         ground_w = self.screen_width * 1.5
         ground_h = self.screen_height * 0.45
         y_off = -(self.screen_height / 2.0 + ground_h / 2.0)
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         model = self._screen_effect_model(ground_w, ground_h, z_offset=-self._screen_back_offset(1.4), y_offset=y_off)
@@ -220,7 +223,7 @@ class ScreenEffectsMixin:
         self._ground_prog['u_intensity'].value = intensity
         self._ground_vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     def _render_metallic_border(self, mgl_fbo, vp_mat):
         if not getattr(self, '_metallic_border_enabled', True):
@@ -236,7 +239,7 @@ class ScreenEffectsMixin:
         if alpha <= 0.0:
             return
         self.ctx.disable(moderngl.DEPTH_TEST)
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         border_w = self.screen_width * 1.012
@@ -249,7 +252,7 @@ class ScreenEffectsMixin:
         prog['u_border_uv'].value = (0.015, 0.022)
         vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
         self.ctx.enable(moderngl.DEPTH_TEST)
 
 class OpenXRViewer(ScreenEffectsMixin, OpenXRViewerCore, OverlayMixin):

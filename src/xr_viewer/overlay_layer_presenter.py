@@ -1,4 +1,5 @@
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 from OpenGL.GL import GL_CCW, glFrontFace
 
 
@@ -20,7 +21,7 @@ class OverlayLayerPresenter:
                 mgl_fbo.use()
                 viewer.ctx.viewport = (0, 0, sc_w, sc_h)
                 viewer.ctx.disable(moderngl.BLEND)
-                viewer.ctx.depth_mask = True
+                set_depth_mask(True)
                 viewer.ctx.enable(moderngl.DEPTH_TEST)
                 return False
 
@@ -67,7 +68,7 @@ class OverlayLayerPresenter:
             _try_aux_render('openxr_controller_render_failed', 'controller', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer.ctx.disable(moderngl.BLEND),
-                setattr(viewer.ctx, 'depth_mask', True),
+                set_depth_mask(True),
                 glFrontFace(GL_CCW),
                 viewer._render_controllers(mgl_fbo, vp_mat, view_mat),
             ))
@@ -75,13 +76,13 @@ class OverlayLayerPresenter:
         _try_aux_render('openxr_laser_render_failed', 'laser hit circle', lambda: (
             setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
             viewer.ctx.disable(moderngl.DEPTH_TEST),
-            setattr(viewer.ctx, 'depth_mask', False),
+            set_depth_mask(False),
             viewer.ctx.enable(moderngl.BLEND),
             setattr(viewer.ctx, 'blend_func', (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)),
             viewer._render_lasers(mgl_fbo, vp_mat, blend=True),
         ))
         viewer.ctx.disable(moderngl.BLEND)
-        viewer.ctx.depth_mask = True
+        set_depth_mask(True)
         viewer.ctx.enable(moderngl.DEPTH_TEST)
 
         if viewer._hand_fps_visible and viewer._overlay_tex is not None:

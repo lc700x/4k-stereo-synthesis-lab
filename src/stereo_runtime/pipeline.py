@@ -477,12 +477,19 @@ class RuntimePipelineLoop:
     def _publish_ready_pending_items(self) -> int:
         if not self._pending_runtime_items:
             return 0
-        item = self._pending_runtime_items[-1]
-        pending_result = item[0]
-        if not _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
-            self._pending_runtime_items[:] = [item]
+        ready_index = None
+        for index in range(len(self._pending_runtime_items) - 1, -1, -1):
+            pending_result = self._pending_runtime_items[index][0]
+            if _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
+                ready_index = index
+                break
+        if ready_index is None:
+            pending_limit = _runtime_pending_depth_limit()
+            if len(self._pending_runtime_items) > pending_limit:
+                self._pending_runtime_items[:] = self._pending_runtime_items[-pending_limit:]
             return 0
-        self._pending_runtime_items.clear()
+        item = self._pending_runtime_items[ready_index]
+        self._pending_runtime_items[:] = self._pending_runtime_items[ready_index + 1:]
         self._publish_runtime_item(item)
         return 1
 
@@ -701,9 +708,12 @@ class RuntimePipelineLoop:
                 ctx.thread_latencies["runtime"] = runtime_latency
 
                 if not _cuda_event_ready(self._last_cuda_ready_event):
-                    self._pending_runtime_items[:] = [
+                    self._pending_runtime_items.append(
                         (runtime_result, capture_start_time, process_latency, runtime_latency, time.perf_counter())
-                    ]
+                    )
+                    pending_limit = _runtime_pending_depth_limit()
+                    if len(self._pending_runtime_items) > pending_limit:
+                        self._pending_runtime_items[:] = self._pending_runtime_items[-pending_limit:]
                     ctx.breakdown_inc("runtime_pending_cuda")
                     ctx.source_stat_inc("runtime_pending_cuda")
                     ctx.breakdown_add_time("rt_loop", time.perf_counter() - loop_start_time)

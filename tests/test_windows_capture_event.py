@@ -103,19 +103,19 @@ def test_windows_capture_runner_uses_copy_or_clone_buffers(monkeypatch):
     runner.run(shutdown_event=shutdown_event, on_frame=on_frame, on_error=on_error)
 
     capture = module.WindowsCapture.last_instance
-    assert capture.kwargs == {"monitor_index": 3}
+    assert capture.kwargs == {"monitor_index": 3, "minimum_update_interval": 17}
     assert len(capture.handlers) == 2
 
     shutdown_event.clear()
     copy_buffer = CopyBuffer()
     capture.handlers[0](FakeFrame(copy_buffer), FakeControl())
-    assert copy_buffer.copied is True
+    assert copy_buffer.copied is False
     assert isinstance(received[-1], CapturedFrame)
-    assert received[-1].frame == "copied-buffer"
+    assert received[-1].frame is copy_buffer
     assert received[-1].target_height == (3840, 2160)
-    assert received[-1].copy_mode is FrameCopyMode.COPY
+    assert received[-1].copy_mode is FrameCopyMode.GPU_TENSOR
     assert received[-1].frame_raw_device == "cuda"
-    assert received[-1].metadata["zero_copy"] is False
+    assert received[-1].metadata["zero_copy"] is True
     assert received[-1].capture_tool == "WindowsCaptureCUDA"
     assert received[-1].capture_mode == "Monitor"
     assert received[-1].monitor_index == 3
@@ -125,9 +125,21 @@ def test_windows_capture_runner_uses_copy_or_clone_buffers(monkeypatch):
     shutdown_event.clear()
     clone_buffer = CloneBuffer()
     capture.handlers[0](FakeFrame(clone_buffer), FakeControl())
+    assert clone_buffer.cloned is False
+    assert received[-1].frame is clone_buffer
+    assert received[-1].copy_mode is FrameCopyMode.GPU_TENSOR
+
+
+def test_windows_capture_cuda_can_force_frame_copy(monkeypatch):
+    monkeypatch.setenv("D2S_WGC_COPY_FRAME_BUFFER", "1")
+    clone_buffer = CloneBuffer()
+
+    raw, copy_mode, device = windows_capture_event._copy_frame_buffer(clone_buffer, "WindowsCaptureCUDA")
+
     assert clone_buffer.cloned is True
-    assert received[-1].frame == "cloned-buffer"
-    assert received[-1].copy_mode is FrameCopyMode.CLONE
+    assert raw == "cloned-buffer"
+    assert copy_mode is FrameCopyMode.CLONE
+    assert device == "cuda"
     assert received[-1].frame_raw_device == "cuda"
     assert received[-1].original_format == "CloneBuffer"
 
@@ -239,13 +251,17 @@ def test_windows_capture_runner_uses_window_name_for_window_capture(monkeypatch)
 def test_windows_capture_cuda_accepts_env_capture_options(monkeypatch):
     config = CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
 
-    assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {"monitor_index": 1}
+    assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {
+        "monitor_index": 1,
+        "minimum_update_interval": 17,
+    }
 
     monkeypatch.setenv("D2S_WGC_REUSE_OUTPUT_BUFFER", "1")
     monkeypatch.setenv("D2S_WGC_OUTPUT_BUFFER_COUNT", "6")
 
     assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {
         "monitor_index": 1,
+        "minimum_update_interval": 17,
         "reuse_output_buffer": True,
         "output_buffer_count": 6,
     }

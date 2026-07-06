@@ -1,5 +1,7 @@
 # Desktop2Stereo OpenXR viewer: environment model loading and switching helpers.
 
+import moderngl
+
 from .implementation import *
 
 

@@ -408,6 +408,11 @@ class GUIProcessMixin:
             child_env = os.environ.copy()
             child_env["DESKTOP2STEREO_LOCALE"] = self.locale
             child_env["PYTHONIOENCODING"] = "utf-8"
+            if self.run_mode_key == "OpenXR Link":
+                child_env.setdefault("D2S_FPS_BREAKDOWN", "1")
+                child_env.setdefault("D2S_OPENXR_DEBUG", "1")
+                child_env.setdefault("D2S_OPENXR_ASYNC_EFFECTS", "0")
+                child_env.setdefault("D2S_RUNTIME_PENDING_CUDA_DEPTH", "3")
             if OS_NAME == "Windows":
                 self.process = await asyncio.create_subprocess_exec(
                     *child_args,
@@ -481,7 +486,9 @@ class GUIProcessMixin:
         if not text:
             return
         lower = text.lower()
-        if any(token in lower for token in ("traceback", "exception", "error", "failed", "exited with code")):
+        if text.startswith("[FPSBreakdown]"):
+            child_logger.info(text)
+        elif any(token in lower for token in ("traceback", "exception", "error", "failed", "exited with code")):
             child_logger.error(text)
         elif any(token in lower for token in ("warning", "warn")):
             child_logger.warning(text)

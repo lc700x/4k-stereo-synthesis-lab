@@ -35,7 +35,7 @@ class CoreOpenXRLifecycleMixin:
             if sys.platform != "win32":
                 raise
             if not quiet:
-                print("[OpenXRViewer] OpenGL init failed, fallback to D3D11")
+                print(f"[OpenXRViewer] OpenGL init failed, fallback to D3D11: {type(e).__name__}: {e}")
             self._cleanup_partial_openxr(destroy_instance=True)
 
         self._init_openxr_d3d11(quiet=quiet)
@@ -59,7 +59,7 @@ class CoreOpenXRLifecycleMixin:
                 if not quiet:
                     print(
                         f"[OpenXRViewer] OpenGL probe retry {attempt}/{attempts} "
-                        f"in {interval:.1f}s"
+                        f"in {interval:.1f}s after {type(exc).__name__}: {exc}"
                     )
                 time.sleep(interval)
         raise last_exc

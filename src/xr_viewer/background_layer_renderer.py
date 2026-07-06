@@ -3,6 +3,7 @@ import math
 import time
 
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 from OpenGL.GL import (
     glBindFramebuffer,
     glCheckFramebufferStatus,
@@ -99,7 +100,7 @@ class BackgroundLayerRenderer:
             viewer.ctx.viewport = (0, 0, width, height)
             viewer.ctx.disable(moderngl.DEPTH_TEST)
             viewer.ctx.disable(moderngl.BLEND)
-            viewer.ctx.depth_mask = False
+            set_depth_mask(False)
             tex.use(location=0)
             viewer._quad_copy_prog['u_flip_y'].value = 0
             viewer._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
@@ -116,7 +117,7 @@ class BackgroundLayerRenderer:
             if prev_viewport is not None:
                 viewer.ctx.viewport = prev_viewport
             if prev_depth_mask is not None:
-                viewer.ctx.depth_mask = prev_depth_mask
+                set_depth_mask(prev_depth_mask)
             viewer.ctx.enable(moderngl.DEPTH_TEST)
 
     def _panorama_stereo_layout(self):

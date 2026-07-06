@@ -73,6 +73,35 @@ Current task queue:
 
 ## Current Status
 
+### 2026-07-06 OpenXR Phase 6 Validation Diagnostic Follow-up
+
+Implemented locally in the current worktree:
+
+- Continued from the existing `docs/36` phase 6 state; this is not a restart of phase 1/2.
+- Fixed a validation/diagnostic gap at the existing `ScreenFrameBridge` boundary: `drain_latest()` now advances `frame_id` by the number of dequeued producer frames, so `openxr_screen_frame_age_frames` reflects real latest-frame overwrite/drain distance when `runtime_q` accumulates multiple frames between OpenXR presents.
+- Added coverage for the screen upload budget path where the presenter drains multiple queued runtime frames, keeps only the latest pending frame, skips upload for the current present, and reuses the last presented screen texture without dropping the pending latest frame.
+- This improves phase 6 acceptance evidence: producer fast -> drain latest and count drops; presenter over budget -> reuse old screen; latest pending frame remains available for the next no-wait upload attempt.
+
+Verification run during this pass:
+
+```powershell
+src\python3\python.exe -m py_compile src\xr_viewer\core_source_state.py src\xr_viewer\screen_layer_presenter.py tests\test_openxr_runtime.py tests\test_breakdown.py
+src\python3\python.exe -m pytest tests\test_openxr_runtime.py -q -p no:cacheprovider
+src\python3\python.exe -m pytest tests\test_breakdown.py -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+85 OpenXR runtime tests passed, 2 existing mss deprecation warnings
+4 breakdown tests passed
+```
+
+Next validation target:
+
+- On headset, enable FPS breakdown and confirm `screen_age` rises above 1 when runtime produces multiple frames between OpenXR presents, while `openxr_reused_screen_frame`, `openxr_screen_upload_budget_skip`, `viewer_drop`, `openxr_async_ok/missing/failed`, `xr_submit`, and `xr_end` remain explainable.
+
 ### 2026-07-06 OpenXR Async Validation Summary
 
 Implemented and pushed:

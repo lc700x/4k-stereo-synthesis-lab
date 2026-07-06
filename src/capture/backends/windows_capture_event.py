@@ -26,6 +26,16 @@ def _env_int(name):
     return int(value)
 
 
+def _fps_to_minimum_update_interval_ms(fps):
+    try:
+        fps_value = int(fps)
+    except (TypeError, ValueError):
+        return None
+    if fps_value <= 0:
+        return None
+    return max(1, int(round(1000.0 / fps_value)))
+
+
 def _windows_capture_kwargs(config, capture_tool):
     if config.capture_mode == "Window":
         kwargs = {"window_name": config.window_title}
@@ -33,6 +43,7 @@ def _windows_capture_kwargs(config, capture_tool):
         kwargs = {"monitor_index": config.monitor_index}
     if capture_tool == "WindowsCaptureCUDA":
         optional = {
+            "minimum_update_interval": _fps_to_minimum_update_interval_ms(getattr(config, "fps", None)),
             "reuse_output_buffer": _env_bool("D2S_WGC_REUSE_OUTPUT_BUFFER"),
             "output_buffer_count": _env_int("D2S_WGC_OUTPUT_BUFFER_COUNT"),
         }
@@ -61,6 +72,8 @@ def _event_capture_device(capture_tool):
 
 def _copy_frame_buffer(frame_buffer, capture_tool):
     device = _event_capture_device(capture_tool)
+    if device in ("cuda", "rocm") and not _env_bool("D2S_WGC_COPY_FRAME_BUFFER"):
+        return frame_buffer, FrameCopyMode.GPU_TENSOR, device
     prefer_clone = device in ("cuda", "rocm")
     if prefer_clone and hasattr(frame_buffer, "clone"):
         return frame_buffer.clone(), FrameCopyMode.CLONE, device
@@ -249,7 +262,7 @@ class WindowsCaptureEventRunner:
                         frame_raw_device=frame_raw_device,
                         metadata={
                             "backend": "windows_capture_event",
-                            "zero_copy": False,
+                            "zero_copy": copy_mode is FrameCopyMode.GPU_TENSOR,
                         },
                     )
                 )

@@ -602,8 +602,8 @@ def test_runtime_pipeline_continues_until_pending_cuda_depth_limit(monkeypatch):
     assert runtime.rgb_calls == 2
     assert raw_q.empty()
     assert runtime_q.empty()
-    assert len(loop._pending_runtime_items) == 1
-    assert loop._pending_runtime_items[0][1] == 11.0
+    assert len(loop._pending_runtime_items) == 2
+    assert [item[1] for item in loop._pending_runtime_items] == [10.0, 11.0]
     assert stats["runtime_pending_cuda"] == 2
     assert breakdown["runtime_pending_cuda"] == 2
 
@@ -676,6 +676,123 @@ def test_runtime_pipeline_drops_raw_when_pending_cuda_depth_is_full():
     assert stats["raw_get"] == 1
     assert stats["runtime_drop_cuda_inflight"] == 1
     assert breakdown["runtime_drop_cuda_inflight"] == 1
+
+
+def test_runtime_pipeline_publishes_newest_ready_pending_cuda_result():
+    runtime_q = queue.Queue(maxsize=2)
+    stats = {}
+    breakdown = {}
+
+    class Event:
+        def __init__(self, ready):
+            self.ready = ready
+
+        def query(self):
+            return self.ready
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=queue.Queue(),
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=lambda *args, **kwargs: None,
+        prepare_rgb_for_stereo_runtime=lambda *args, **kwargs: None,
+        current_openxr_render_config=lambda: None,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+    loop = RuntimePipelineLoop(context)
+    loop._pending_runtime_items = [
+        (SimpleNamespace(name="old-ready", cuda_ready_event=Event(True)), 8.0, 0.0, 0.0, 1.0),
+        (SimpleNamespace(name="new-ready", cuda_ready_event=Event(True)), 9.0, 0.0, 0.0, 1.0),
+        (SimpleNamespace(name="latest-inflight", cuda_ready_event=Event(False)), 10.0, 0.0, 0.0, 1.0),
+    ]
+
+    assert loop._publish_ready_pending_items() == 1
+
+    runtime_result, capture_start_time = runtime_q.get_nowait()
+    assert runtime_result.name == "new-ready"
+    assert capture_start_time == 9.0
+    assert [item[0].name for item in loop._pending_runtime_items] == ["latest-inflight"]
+    assert stats["runtime_frames"] == 1
+    assert breakdown["runtime"] == 1
+
+
+def test_runtime_pipeline_keeps_unready_pending_cuda_items(monkeypatch):
+    monkeypatch.setenv("D2S_RUNTIME_PENDING_CUDA_DEPTH", "2")
+    runtime_q = queue.Queue(maxsize=2)
+
+    class Event:
+        def query(self):
+            return False
+
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=queue.Queue(),
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=lambda *args, **kwargs: None,
+        prepare_rgb_for_stereo_runtime=lambda *args, **kwargs: None,
+        current_openxr_render_config=lambda: None,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=lambda *args, **kwargs: None,
+        breakdown_inc=lambda *args, **kwargs: None,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+    loop = RuntimePipelineLoop(context)
+    loop._pending_runtime_items = [
+        (SimpleNamespace(name="old-inflight", cuda_ready_event=Event()), 8.0, 0.0, 0.0, 1.0),
+        (SimpleNamespace(name="new-inflight", cuda_ready_event=Event()), 9.0, 0.0, 0.0, 1.0),
+    ]
+
+    assert loop._publish_ready_pending_items() == 0
+    assert [item[0].name for item in loop._pending_runtime_items] == ["old-inflight", "new-inflight"]
+    assert runtime_q.empty()
 
 
 def test_runtime_pipeline_drop_only_drains_raw_without_gpu_work(monkeypatch):

@@ -1,6 +1,9 @@
 # Desktop2Stereo OpenXR viewer: screen glow and background effect helpers.
 
+import moderngl
+
 from .implementation import *
+from .gl_state import get_depth_mask, set_depth_mask
 
 
 class EnvironmentEffectsMixin:
@@ -218,9 +221,9 @@ class EnvironmentEffectsMixin:
         uv_glow_width = glow_width / uv_scale
         uv_glow_extent = glow_extent / uv_scale
 
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         try:
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.ONE, moderngl.ONE
@@ -243,7 +246,7 @@ class EnvironmentEffectsMixin:
             self._breakdown_inc("openxr_screen_glow_failed")
         finally:
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
 
@@ -272,9 +275,9 @@ class EnvironmentEffectsMixin:
             self._frosted_veil_vbo.write(self._build_flat_frost_verts(front_half_w, front_half_h).tobytes())
             self._frosted_glow_verts_params = params
 
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         try:
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
@@ -302,7 +305,7 @@ class EnvironmentEffectsMixin:
             self._breakdown_inc("openxr_frosted_glow_failed")
         finally:
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
 
@@ -338,9 +341,9 @@ class EnvironmentEffectsMixin:
             self._frosted_veil_vbo.write(self._build_flat_frost_verts(front_half_w, front_half_h).tobytes())
             self._frosted_veil_verts_params = params
 
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         try:
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
@@ -362,7 +365,7 @@ class EnvironmentEffectsMixin:
             self._breakdown_inc("openxr_frosted_veil_failed")
         finally:
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
 
@@ -388,9 +391,9 @@ class EnvironmentEffectsMixin:
         radius = max(float(getattr(self, '_glow_shell_radius_m', 18.0)), max(self.screen_width, self.screen_height, 1.0) * 0.85)
         height = max(float(getattr(self, '_glow_shell_height_m', 8.5)), self.screen_height * 1.8)
 
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         try:
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.enable(moderngl.BLEND)
             self.ctx.blend_func = moderngl.ONE, moderngl.ONE_MINUS_SRC_ALPHA
@@ -409,7 +412,7 @@ class EnvironmentEffectsMixin:
             self._breakdown_inc("openxr_glow_shell_failed")
         finally:
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
 

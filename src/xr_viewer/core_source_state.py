@@ -59,7 +59,7 @@ class ScreenFrameBridge:
             return ScreenFramePoll(None, self.latest_frame_id, dequeued=dequeued)
 
         self.latest_frame = latest
-        self.frame_id += 1
+        self.frame_id += max(1, dequeued)
         self.latest_frame_id = self.frame_id
         self.source_timestamp = self._source_timestamp(latest)
         return ScreenFramePoll(

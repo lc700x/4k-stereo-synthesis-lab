@@ -2,6 +2,7 @@ import ctypes
 import logging
 import time
 
+import moderngl
 import numpy as np
 from OpenGL.GL import (
     glBindBuffer,

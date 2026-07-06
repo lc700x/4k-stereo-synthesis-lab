@@ -1,6 +1,9 @@
 # Desktop2Stereo OpenXR viewer: environment shader and model rendering helpers.
 
+import moderngl
+
 from .implementation import *
+from .gl_state import get_depth_mask, set_depth_mask
 
 
 def _view_mat_inv(view_mat):
@@ -427,10 +430,10 @@ class EnvironmentRendererMixin:
             return False
 
         mgl_fbo.use()
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         try:
             self.ctx.disable(moderngl.DEPTH_TEST)
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
             self.ctx.disable(moderngl.BLEND)
             self.ctx.disable(moderngl.CULL_FACE)
             glFrontFace(GL_CCW)
@@ -463,7 +466,7 @@ class EnvironmentRendererMixin:
         finally:
             self.ctx.disable(moderngl.BLEND)
             self.ctx.disable(moderngl.CULL_FACE)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
             glFrontFace(GL_CCW)
 
@@ -553,7 +556,7 @@ class EnvironmentRendererMixin:
 
         self._apply_cinema_light_uniforms(mgl_fbo)
 
-        previous_depth_mask = self.ctx.depth_mask
+        previous_depth_mask = get_depth_mask()
         glFrontFace(GL_CCW)
 
         try:
@@ -612,10 +615,10 @@ class EnvironmentRendererMixin:
                 if rs['blend']:
                     self.ctx.enable(moderngl.BLEND)
                     self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
-                    self.ctx.depth_mask = False
+                    set_depth_mask(False)
                 else:
                     self.ctx.disable(moderngl.BLEND)
-                    self.ctx.depth_mask = True
+                    set_depth_mask(True)
 
                 self._env_prog['u_tex_offset'].value = rs['to']
                 self._env_prog['u_tex_scale'].value = rs['ts']
@@ -657,7 +660,7 @@ class EnvironmentRendererMixin:
         finally:
             self.ctx.disable(moderngl.CULL_FACE)
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = previous_depth_mask
+            set_depth_mask(previous_depth_mask)
             glFrontFace(GL_CCW)
             self._env_prog['u_use_texture'].value = 1
             self._env_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)

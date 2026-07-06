@@ -3,6 +3,7 @@
 import math
 
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -240,7 +241,7 @@ class CoreKeyboardMixin:
 
         mgl_fbo.use()
         # depth_mask = False  # do not write semi-transparent pixels to depth
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
 
@@ -300,7 +301,7 @@ class CoreKeyboardMixin:
                 _hl_quad(self._keyboard_keys[hover_idx].rect_local, (0.2, 0.7, 1.0, 0.35))
 
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
         # Draw keyboard cursor circle at smoothed position (both hands)
         for _sk in ('_kb_smooth_l', '_kb_smooth_r'):

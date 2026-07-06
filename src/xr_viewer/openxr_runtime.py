@@ -93,12 +93,9 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
     OpenXRViewer = load_openxr_viewer(config.environment_model)
     runtime_result = None
     capture_start_time = None
-    try:
-        runtime_result, capture_start_time = runtime_q.get_nowait()
-        callbacks.breakdown_inc("viewer_get")
-        width, height = frame_size_from_runtime_result(runtime_result)
-    except Empty:
-        width, height = config.frame_size
+    runtime_result, capture_start_time = runtime_q.get()
+    callbacks.breakdown_inc("viewer_get")
+    width, height = frame_size_from_runtime_result(runtime_result)
     try:
         viewer = OpenXRViewer(
             depth_strength=config.depth_strength,

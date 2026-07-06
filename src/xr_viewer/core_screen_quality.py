@@ -2,6 +2,7 @@ import os
 import math
 
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 import numpy as np
 
 
@@ -126,11 +127,11 @@ class CoreScreenQualityMixin:
         out_w, out_h = target_size
 
         prev_viewport = self.ctx.viewport
-        prev_depth_mask = self.ctx.depth_mask
+        prev_depth_mask = get_depth_mask()
         try:
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
 
             self._screen_ds_fbo.use()
             self.ctx.viewport = (0, 0, out_w, out_h)
@@ -151,7 +152,7 @@ class CoreScreenQualityMixin:
             return None
         finally:
             self.ctx.viewport = prev_viewport
-            self.ctx.depth_mask = prev_depth_mask
+            set_depth_mask(prev_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
             self.ctx.disable(moderngl.BLEND)
 
@@ -226,11 +227,11 @@ class CoreScreenQualityMixin:
         self._ensure_glow_downsample_resources((out_w, out_h))
 
         prev_viewport = self.ctx.viewport
-        prev_depth_mask = self.ctx.depth_mask
+        prev_depth_mask = get_depth_mask()
         try:
             self.ctx.disable(moderngl.DEPTH_TEST)
             self.ctx.disable(moderngl.BLEND)
-            self.ctx.depth_mask = False
+            set_depth_mask(False)
 
             self._glow_ds_fbo.use()
             self.ctx.viewport = (0, 0, out_w, out_h)
@@ -245,7 +246,7 @@ class CoreScreenQualityMixin:
             return None
         finally:
             self.ctx.viewport = prev_viewport
-            self.ctx.depth_mask = prev_depth_mask
+            set_depth_mask(prev_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
             self.ctx.disable(moderngl.BLEND)
         return self._glow_ds_tex

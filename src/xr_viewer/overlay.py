@@ -21,7 +21,7 @@ from OpenGL.GL import (
 )
 
 import moderngl
-
+from .gl_state import get_depth_mask, set_depth_mask
 from .constants import (
     _KB_UNITS_WIDE, _KB_ROWS, _KeyEntry, _KB_TEX_W, _KB_TEX_H,
 )
@@ -1237,7 +1237,7 @@ class OverlayMixin:
         mvp = vp_kb @ scale_kb
 
         mgl_fbo.use()
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
 
@@ -1302,5 +1302,5 @@ class OverlayMixin:
                     _hl_quad(self._keyboard_keys[hover_idx].rect_local, (0.15, 0.50, 0.80, 0.25))
 
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 

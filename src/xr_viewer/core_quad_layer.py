@@ -1,6 +1,7 @@
 import math
 
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 import numpy as np
 
 try:
@@ -22,6 +23,15 @@ from OpenGL.GL import (
     GL_NO_ERROR,
     GL_TEXTURE_2D,
 )
+
+
+def _fit_even_size(width, height, max_w, max_h):
+    width = max(16, int(width))
+    height = max(16, int(height))
+    max_w = max(16, int(max_w))
+    max_h = max(16, int(max_h))
+    scale = min(max_w / width, max_h / height, 1.0)
+    return max(16, int(width * scale)) & ~1, max(16, int(height * scale)) & ~1
 
 
 class CoreQuadLayerMixin:
@@ -73,6 +83,89 @@ class CoreQuadLayerMixin:
         mgl_fbo = self.ctx.detect_framebuffer(raw_fbo)
         self._quad_fbo_cache[key] = (mgl_fbo, raw_fbo, width, height)
         return mgl_fbo
+
+    def _release_quad_layer_swapchains(self):
+        raw_fbos = []
+        for mgl_fbo, raw_fbo, _width, _height in self._quad_fbo_cache.values():
+            try:
+                mgl_fbo.release()
+            except Exception:
+                pass
+            raw_fbos.append(raw_fbo)
+        if raw_fbos:
+            try:
+                glDeleteFramebuffers(len(raw_fbos), raw_fbos)
+            except Exception:
+                pass
+        self._quad_fbo_cache.clear()
+
+        seen = set()
+        for swapchain in self._quad_swapchains.values():
+            key = int(swapchain) if isinstance(swapchain, int) else id(swapchain)
+            if key in seen:
+                continue
+            seen.add(key)
+            try:
+                xr.destroy_swapchain(swapchain)
+            except Exception:
+                pass
+        self._quad_swapchains.clear()
+        self._quad_swapchain_images.clear()
+        self._quad_swapchain_sizes.clear()
+        self._quad_swapchain_array_size.clear()
+        self._quad_swapchain_presented_eyes = set()
+
+    def _ensure_quad_layer_swapchains_for_source(self, source_size):
+        if source_size is None:
+            return False
+        image_type = getattr(self, '_quad_swapchain_image_type', None)
+        fmt = getattr(self, '_quad_swapchain_format', None)
+        max_size = getattr(self, '_quad_swapchain_max_size', None)
+        if image_type is None or fmt is None or max_size is None:
+            return False
+        src_w, src_h = source_size
+        max_w, max_h = max_size
+        quad_w, quad_h = _fit_even_size(src_w, src_h, max_w, max_h)
+        if (
+            self._quad_swapchain_sizes.get(0) == (quad_w, quad_h)
+            and self._quad_swapchain_sizes.get(1) == (quad_w, quad_h)
+            and 0 in self._quad_swapchains
+            and 1 in self._quad_swapchains
+        ):
+            self._xr_quad_layer_active = True
+            return True
+
+        self._release_quad_layer_swapchains()
+        try:
+            for eye_index in range(2):
+                sc_info = xr.SwapchainCreateInfo(
+                    usage_flags=(
+                        xr.SwapchainUsageFlags.COLOR_ATTACHMENT_BIT |
+                        xr.SwapchainUsageFlags.SAMPLED_BIT
+                    ),
+                    format=fmt,
+                    sample_count=1,
+                    width=quad_w,
+                    height=quad_h,
+                    face_count=1,
+                    array_size=1,
+                    mip_count=1,
+                )
+                swapchain = xr.create_swapchain(self._xr_session, sc_info)
+                self._quad_swapchains[eye_index] = swapchain
+                self._quad_swapchain_images[eye_index] = xr.enumerate_swapchain_images(
+                    swapchain, image_type
+                )
+                self._quad_swapchain_sizes[eye_index] = (quad_w, quad_h)
+                self._quad_swapchain_array_size[eye_index] = 1
+            self._xr_quad_layer_active = True
+            backend = 'D3D11' if getattr(self, '_use_d3d11', False) else 'OpenGL'
+            print(f"[OpenXRViewer] Quad layer {backend} swapchains: {quad_w}x{quad_h}/eye active=True")
+            return True
+        except Exception as exc:
+            self._set_quad_layer_failed(f"swapchain_create_failed_{type(exc).__name__}")
+            print(f"[OpenXRViewer] Quad layer unavailable: {type(exc).__name__}: {exc}")
+            return False
 
     def _quad_layer_source_texture(self, eye_index=0):
         if not self._runtime_direct_source:
@@ -134,12 +227,12 @@ class CoreQuadLayerMixin:
             else:
                 mgl_fbo = self._get_or_create_quad_fbo(eye_index, img_index, sc_image.image, quad_w, quad_h)
                 prev_viewport = self.ctx.viewport
-                prev_depth_mask = self.ctx.depth_mask
+                prev_depth_mask = get_depth_mask()
                 mgl_fbo.use()
                 self.ctx.viewport = (0, 0, quad_w, quad_h)
                 self.ctx.disable(moderngl.DEPTH_TEST)
                 self.ctx.disable(moderngl.BLEND)
-                self.ctx.depth_mask = False
+                set_depth_mask(False)
                 source_tex.use(location=0)
                 self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
@@ -160,7 +253,7 @@ class CoreQuadLayerMixin:
             if prev_viewport is not None:
                 self.ctx.viewport = prev_viewport
             if prev_depth_mask is not None:
-                self.ctx.depth_mask = prev_depth_mask
+                set_depth_mask(prev_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
     def _quad_layer_has_presented_frame(self):
@@ -168,10 +261,19 @@ class CoreQuadLayerMixin:
         return 0 in presented and 1 in presented
 
     def _update_quad_layer_swapchains(self, *, force=False):
-        if not force and self._quad_layer_has_presented_frame():
+        source0, size0, _flip0 = self._quad_layer_source_texture(0)
+        source1, size1, _flip1 = self._quad_layer_source_texture(1)
+        if force:
+            source_size = size0 or size1
+            if not self._ensure_quad_layer_swapchains_for_source(source_size):
+                return []
+        has_presented = self._quad_layer_has_presented_frame()
+        if not force and has_presented:
             if self._quad_layer_screen_presentable():
                 self._breakdown_inc('openxr_quad_reused_screen_frame')
                 return [0, 1]
+            return []
+        if not force and not has_presented:
             return []
         if not self._quad_layer_screen_presentable():
             return []
@@ -225,14 +327,14 @@ class CoreQuadLayerMixin:
         try:
             sc_image = self._quad_swapchain_images[0][img_index]
             prev_viewport = self.ctx.viewport
-            prev_depth_mask = self.ctx.depth_mask
+            prev_depth_mask = get_depth_mask()
             for eye_index, source_tex, flip_y in ((0, source0, flip0), (1, source1, flip1)):
                 mgl_fbo = self._get_or_create_quad_fbo(eye_index, img_index, sc_image.image, quad_w, quad_h)
                 mgl_fbo.use()
                 self.ctx.viewport = (0, 0, quad_w, quad_h)
                 self.ctx.disable(moderngl.DEPTH_TEST)
                 self.ctx.disable(moderngl.BLEND)
-                self.ctx.depth_mask = False
+                set_depth_mask(False)
                 source_tex.use(location=0)
                 self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
@@ -253,7 +355,7 @@ class CoreQuadLayerMixin:
             if prev_viewport is not None:
                 self.ctx.viewport = prev_viewport
             if prev_depth_mask is not None:
-                self.ctx.depth_mask = prev_depth_mask
+                set_depth_mask(prev_depth_mask)
             self.ctx.enable(moderngl.DEPTH_TEST)
 
     def _screen_pose_quat_xyzw(self):

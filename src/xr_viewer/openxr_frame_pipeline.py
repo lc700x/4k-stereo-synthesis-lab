@@ -54,8 +54,6 @@ class OpenXRFramePipeline:
         bridge.frame_id += 1
         bridge.latest_frame_id = bridge.frame_id
         bridge.source_timestamp = first_frame_ts
-        if viewer._has_renderable_source_frame():
-            bridge.mark_presented(first_source_frame)
         viewer._mark_source_frame_received()
 
     def begin_loop_frame(self):

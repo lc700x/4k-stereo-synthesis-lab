@@ -209,9 +209,14 @@ def test_openxr_optional_extensions_filters_runtime_extensions(monkeypatch):
     ) == ["XR_KHR_composition_layer_equirect2"]
 
 
-def test_run_openxr_mode_bootstraps_without_waiting_for_first_runtime_frame(monkeypatch):
+def test_run_openxr_mode_bootstraps_from_first_runtime_frame(monkeypatch):
     calls = []
     callback_calls = []
+    runtime_result = SimpleNamespace(
+        left_eye=SimpleNamespace(shape=(1, 3, 2160, 1920)),
+        output_display_size=(3840, 2160),
+        debug_info={},
+    )
 
     class FakeViewer:
         def __init__(self, **kwargs):
@@ -233,13 +238,22 @@ def test_run_openxr_mode_bootstraps_without_waiting_for_first_runtime_frame(monk
         wait_idle_clear=lambda: callback_calls.append("wait_idle_clear"),
         bootstrap_done_set=lambda: callback_calls.append("bootstrap_done"),
     )
+    runtime_q = queue.Queue()
+    runtime_q.put((runtime_result, 123.0))
 
-    viewer = run_openxr_mode(queue.Queue(), _openxr_config(frame_size=(1920, 1080)), callbacks)
+    viewer = run_openxr_mode(runtime_q, _openxr_config(frame_size=(1920, 1080)), callbacks)
 
     assert isinstance(viewer, FakeViewer)
-    assert calls[0]["frame_size"] == (1920, 1080)
-    assert calls[1]["run"] == {"first_runtime_result": None, "first_frame_ts": None}
+    assert calls[0]["frame_size"] == (3840, 2160)
+    assert calls[1]["run"] == {"first_runtime_result": runtime_result, "first_frame_ts": 123.0}
     assert callback_calls == ["source_set", "render_clear", "wait_idle_clear", "bootstrap_done"]
+
+
+def test_quad_swapchain_size_preserves_source_aspect_when_clamped():
+    from xr_viewer.core_quad_layer import _fit_even_size
+
+    assert _fit_even_size(3840, 2160, 3648, 3648) == (3648, 2052)
+    assert _fit_even_size(1920, 1080, 3648, 3648) == (1920, 1080)
 
 
 def test_runtime_eye_tensor_hwc_u8_scales_near_normalized_float_range(monkeypatch):
@@ -459,7 +473,7 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert poll.dequeued == 2
     assert poll.dropped == 1
     assert poll.is_new
-    assert poll.frame_id == 1
+    assert poll.frame_id == 2
     assert poll.source_timestamp == 12.5
     assert bridge.latest_frame is latest_frame
     assert bridge.source_timestamp == 12.5
@@ -473,7 +487,7 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
     assert not presented.reused
     assert presented.source_timestamp == 12.5
     assert reuse.frame is latest_frame
-    assert reuse.frame_id == 1
+    assert reuse.frame_id == 2
     assert reuse.source_timestamp == 12.5
     assert reuse.reused
 
@@ -481,7 +495,7 @@ def test_screen_frame_bridge_drains_latest_and_tracks_reuse():
 
     assert empty_poll.frame is None
     assert empty_poll.dequeued == 0
-    assert empty_poll.frame_id == 1
+    assert empty_poll.frame_id == 2
 
     rgbd_q = queue.Queue()
     rgbd_q.put(("rgb", "depth", 23.5))
@@ -549,6 +563,58 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
     assert ("openxr_reused_screen_frame", 1) in inc_calls
     assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
     assert ("openxr_screen_frame_age_frames", 1.0) in value_calls
+
+
+def test_openxr_screen_upload_budget_drains_latest_and_keeps_pending_frame():
+    from xr_viewer.core_source_state import CoreSourceStateMixin, ScreenFrameBridge
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    old_frame = object()
+    stale_frame = object()
+    latest_frame = object()
+    source_q = queue.Queue()
+    source_q.put(stale_frame)
+    source_q.put(latest_frame)
+    viewer = Viewer()
+    viewer.depth_q = source_q
+    viewer._openxr_screen_upload_budget_ms = 1.0
+    viewer._openxr_screen_upload_budget_skip_armed = True
+    viewer._last_source_frame_time = 0.0
+    viewer._source_resume_grace_until = 0.0
+    viewer._source_stalled = False
+    viewer._source_stall_count = 0
+    viewer._session_running = False
+    viewer._session_ready_pending = False
+    bridge = ScreenFrameBridge(viewer.depth_q)
+    bridge.last_presented_frame = old_frame
+    bridge.last_presented_frame_id = 1
+    bridge.last_presented_source_timestamp = 9.0
+    bridge.frame_id = 1
+    bridge.latest_frame_id = 1
+    viewer._openxr_screen_frame_bridge = bridge
+    inc_calls = []
+    value_calls = []
+    viewer._fps_breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
+    viewer._fps_breakdown_add_value = lambda name, value: value_calls.append((name, value))
+    viewer._fps_breakdown_add_time = lambda name, seconds: None
+    viewer._update_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
+    viewer._update_runtime_frame = lambda *args, **kwargs: pytest.fail("upload should be skipped")
+
+    assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
+
+    assert bridge.latest_frame is latest_frame
+    assert bridge.latest_frame_id == 3
+    assert bridge.last_presented_frame is old_frame
+    assert bridge.has_unpresented_frame()
+    assert source_q.empty()
+    assert ("viewer_get", 2) in inc_calls
+    assert ("viewer_drop", 1) in inc_calls
+    assert ("openxr_reused_screen_frame", 1) in inc_calls
+    assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
+    assert ("openxr_screen_frame_age_frames", 2.0) in value_calls
 
 
 def test_openxr_upload_keeps_pending_until_frame_is_renderable():
@@ -2657,10 +2723,11 @@ def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
     d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
 
     assert "xr.SwapchainImageD3D11KHR" in d3d11
-    assert "self._quad_swapchains[eye_index] = swapchain" in d3d11
-    assert "Quad layer D3D11 swapchains" in d3d11
+    assert "self._quad_swapchain_image_type = xr.SwapchainImageD3D11KHR" in d3d11
+    assert "Quad layer D3D11 lazy swapchains armed" in d3d11
+    assert "self._quad_swapchains[eye_index] = swapchain" in core_quad
+    assert "Quad layer {backend} swapchains" in core_quad
     assert "and self._d3d11_native_renderer is not None" in d3d11
-    assert "native path feeds runtime eyes into Quad layer D3D11 swapchains" in d3d11
     assert "display body never returns" in d3d11
     assert "renderer.has_frame and renderer.runtime_eye_size is not None" in core_quad
     assert "source_tex.render_runtime_eye(sc_image.texture, quad_w, quad_h, eye_index" in core_quad

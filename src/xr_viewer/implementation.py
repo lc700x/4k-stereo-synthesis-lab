@@ -20,6 +20,7 @@ import collections
 
 import glfw
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 Image.MAX_IMAGE_PIXELS = None  # Allow loading large 16K atlas images.
@@ -227,6 +228,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._openxr_async_effects_enabled = _bool_env_option(
             'openxr_async_effects', 'D2S_OPENXR_ASYNC_EFFECTS', '1'
         )
+        print(f"[OpenXRViewer] Async effects enabled={self._openxr_async_effects_enabled}", flush=True)
         self._openxr_panorama_background_enabled = _bool_env_option(
             'openxr_panorama_background', 'D2S_OPENXR_PANORAMA_BACKGROUND', '1'
         )
@@ -582,6 +584,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._quad_swapchain_images = {}
         self._quad_swapchain_sizes = {}
         self._quad_swapchain_array_size = {}
+        self._quad_swapchain_format = None
+        self._quad_swapchain_image_type = None
+        self._quad_swapchain_max_size = None
         self._quad_fbo_cache = {}
         self._openxr_equirect_background_supported = False
         self._background_equirect_swapchain = None
@@ -2017,7 +2022,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         mgl_fbo.use()
         self.ctx.disable(moderngl.DEPTH_TEST)
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
 
@@ -2071,7 +2076,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 self._border_vao.render(moderngl.TRIANGLE_STRIP)
 
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
         self.ctx.enable(moderngl.DEPTH_TEST)
 
     def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):
@@ -2106,7 +2111,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         mgl_fbo.use()
         self.ctx.enable(moderngl.DEPTH_TEST)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
         self.ctx.disable(moderngl.BLEND)
         self.ctx.viewport = (0, 0, sc_w, sc_h)
         bg_a = 1.0

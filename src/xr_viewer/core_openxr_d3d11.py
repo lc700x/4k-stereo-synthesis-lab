@@ -183,39 +183,13 @@ class CoreOpenXRD3D11Mixin:
                 print(f"[OpenXRViewer] D3D11 native renderer unavailable: {e}")
 
         if view_configs and self._d3d11_native_renderer is not None:
-            try:
-                self._quad_swapchain_presented_eyes = set()
-                src_w, src_h = self.frame_size
-                max_w = max(int(getattr(v, 'max_image_rect_width', src_w) or src_w) for v in view_configs)
-                max_h = max(int(getattr(v, 'max_image_rect_height', src_h) or src_h) for v in view_configs)
-                quad_w = min(max_w, max(16, int(src_w))) & ~1
-                quad_h = min(max_h, max(16, int(src_h))) & ~1
-                for eye_index in range(2):
-                    sc_info = xr.SwapchainCreateInfo(
-                        usage_flags=(
-                            xr.SwapchainUsageFlags.COLOR_ATTACHMENT_BIT |
-                            xr.SwapchainUsageFlags.SAMPLED_BIT
-                        ),
-                        format=chosen_fmt,
-                        sample_count=1,
-                        width=quad_w,
-                        height=quad_h,
-                        face_count=1,
-                        array_size=1,
-                        mip_count=1,
-                    )
-                    swapchain = xr.create_swapchain(self._xr_session, sc_info)
-                    self._quad_swapchains[eye_index] = swapchain
-                    self._quad_swapchain_images[eye_index] = xr.enumerate_swapchain_images(
-                        swapchain, xr.SwapchainImageD3D11KHR
-                    )
-                    self._quad_swapchain_sizes[eye_index] = (quad_w, quad_h)
-                    self._quad_swapchain_array_size[eye_index] = 1
-                self._xr_quad_layer_active = True
-                print(f"[OpenXRViewer] Quad layer D3D11 swapchains: {quad_w}x{quad_h}/eye active=True")
-            except Exception as exc:
-                self._set_quad_layer_failed(f"d3d11_swapchain_create_failed_{type(exc).__name__}")
-                print(f"[OpenXRViewer] Quad layer D3D11 unavailable: {type(exc).__name__}: {exc}")
+            src_w, src_h = self.frame_size
+            max_w = max(int(getattr(v, 'max_image_rect_width', src_w) or src_w) for v in view_configs)
+            max_h = max(int(getattr(v, 'max_image_rect_height', src_h) or src_h) for v in view_configs)
+            self._quad_swapchain_format = chosen_fmt
+            self._quad_swapchain_image_type = xr.SwapchainImageD3D11KHR
+            self._quad_swapchain_max_size = (max_w, max_h)
+            print(f"[OpenXRViewer] Quad layer D3D11 lazy swapchains armed max={max_w}x{max_h}")
 
         # 10. Try NV_DX interop for projection overlays when native D3D11
         # rendering is not available.

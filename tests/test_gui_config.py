@@ -41,6 +41,22 @@ def test_gui_stereo_preset_uses_dropdown_value_for_load_and_save():
     assert '"Stereo Preset": DEFAULTS["Stereo Preset"],' not in text
 
 
+def test_gui_process_does_not_force_stereo_preset_after_launch():
+    text = _file_text("process.py")
+    assert 'self._config["Stereo Preset"] = "cinema"' not in text
+
+
+def test_gui_openxr_link_does_not_default_to_deep_cuda_pending_queue():
+    text = _file_text("process.py")
+    assert 'D2S_RUNTIME_PENDING_CUDA_DEPTH", "3"' not in text
+
+
+def test_gui_logs_fps_breakdown_as_debug():
+    text = _file_text("process.py")
+    assert 'if text.startswith("[FPSBreakdown]"):\n            child_logger.debug(text)' in text
+    assert 'if text.startswith("[FPSBreakdown]"):\n            child_logger.info(text)' not in text
+
+
 
 def test_gui_render_size_policy_is_fixed_to_scaled_for_load_and_save():
     config_text = _config_source().read_text(encoding="utf-8")
@@ -469,7 +485,7 @@ def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     assert "os.startfile(LOG_FILE)" in process_text
     open_log_block = process_text.split("def on_open_log_file", 1)[1].split("    # ── reset ──", 1)[0]
     assert '"-m", "gui.' + 'ri' + 'ch_log_viewer", LOG_FILE' not in open_log_block
-    assert "pywebview" not in (Path(__file__).resolve().parents[1] / "requirements.txt").read_text(encoding="utf-8")
+    assert "pywebview" not in (Path(__file__).resolve().parents[1] / "src" / "requirements.txt").read_text(encoding="utf-8")
     assert 'self._set_log_panel_visible(self._config.get("Show Log Panel", DEFAULTS["Show Log Panel"]))' in process_text
     assert "self._fit_window_to_content(update=update, resize_window=True)" in process_text
     assert 'stdout=asyncio.subprocess.PIPE' in process_text
@@ -478,7 +494,7 @@ def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     assert "async def _pump_child_output" in process_text
     assert "raw = await stream.read(4096)" in process_text
     assert "raw = await stream.readline()" not in process_text
-    assert "child_logger.info(text)" in process_text
+    assert 'if text.startswith("[FPSBreakdown]"):\n            child_logger.debug(text)' in process_text
     assert "sys.stdout.write(text)" not in process_text
     assert "print(text)" not in process_text
     assert "asyncio.create_task(self._pump_child_output(self.process))" in process_text

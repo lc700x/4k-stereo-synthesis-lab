@@ -114,10 +114,10 @@ class ScreenLayerPresenter:
         if mark_perf:
             mark_perf('border')
 
-    def projection_layer_needed(self, *, background_projection_fallback=None):
+    def projection_layer_reason(self, *, background_projection_fallback=None):
         viewer = self.viewer
         if background_projection_fallback is True:
-            return True
+            return "background_projection_fallback"
         if background_projection_fallback is None:
             background_renderer = getattr(viewer, '_background_layer_renderer', None)
             if background_renderer is None:
@@ -126,36 +126,39 @@ class ScreenLayerPresenter:
             try:
                 panorama_ready = background_renderer.panorama_ready()
                 if panorama_ready and not background_renderer.native_background_available(panorama_ready=panorama_ready):
-                    return True
+                    return "panorama_projection_fallback"
             except Exception as exc:
                 print(f"[OpenXRViewer] Background projection gate failed: {type(exc).__name__}: {exc}")
                 viewer._breakdown_inc('openxr_background_layer_failed')
-                return True
+                return "background_gate_failed"
         if viewer._keyboard_visible and viewer._keyboard_tex is not None:
-            return True
+            return "keyboard"
         if viewer._aim_mat_l is not None or viewer._aim_mat_r is not None:
-            return True
+            return "controller_aim"
         if viewer._grip_mat_l is not None or viewer._grip_mat_r is not None:
-            return True
+            return "controller_grip"
         if float(getattr(viewer, '_border_alpha', 0.0) or 0.0) > 0.0:
-            return True
+            return "screen_border"
         if any(getattr(viewer, name, None) is not None for name in (
             '_depth_osd_tex', '_screen_osd_tex', '_preset_osd_tex', '_seat_adjust_osd_tex'
         )):
-            return True
+            return "osd"
         if viewer._brand_osd_tex is not None and viewer._grip_mat_r is not None:
-            return True
+            return "brand_osd"
         if viewer._hand_fps_visible and viewer._overlay_tex is not None:
-            return True
+            return "hand_fps"
         if viewer._team_fps_visible and viewer._team_status_tex is not None:
-            return True
+            return "team_fps"
         if viewer._calibration_mode:
-            return True
+            return "calibration"
         if viewer._fps_overlay_visible and viewer._help_tex is not None:
-            return True
+            return "help"
         if viewer._team_status_visible and viewer._team_help_visible and viewer._team_help_tex is not None:
-            return True
-        return False
+            return "team_help"
+        return "scene"
+
+    def projection_layer_needed(self, *, background_projection_fallback=None):
+        return True
 
     def prepare_projection_frame_state(self):
         self.viewer._openxr_quad_screen_unavailable_reason = self.quad_screen_unavailable_reason()
@@ -182,11 +185,15 @@ class ScreenLayerPresenter:
             self._frame_background_layers = []
         self._frame_background_projection_fallback = bool(background_projection_fallback)
         self.prepare_projection_frame_state()
+        projection_reason = self.projection_layer_reason(
+            background_projection_fallback=background_projection_fallback
+        )
         render_projection_layer = self.projection_layer_needed(
             background_projection_fallback=background_projection_fallback
         )
-        if not render_projection_layer:
-            self.viewer._breakdown_inc('openxr_projection_layer_skipped')
+        if projection_reason != getattr(self.viewer, '_last_projection_layer_reason', None):
+            self.viewer._last_projection_layer_reason = projection_reason
+            print(f"[OpenXRViewer] Projection layer active: reason={projection_reason}")
         return quad_layers, quad_layer_headers, updated_quad_eyes, render_projection_layer, background_layer_headers
 
     def append_frame_layers(self, composition_layers, *, projection_views=(), projection_space=None, quad_layer_headers=(), background_layer_headers=()):

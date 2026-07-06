@@ -191,6 +191,7 @@ def test_openxr_optional_extensions_filters_runtime_extensions(monkeypatch):
     fake_xr = SimpleNamespace(
         enumerate_instance_extension_properties=lambda: [
             SimpleNamespace(extension_name=b"XR_KHR_composition_layer_equirect2"),
+            SimpleNamespace(extension_name=b"XR_FB_display_refresh_rate"),
             SimpleNamespace(extension_name="XR_UNUSED"),
         ]
     )
@@ -198,9 +199,361 @@ def test_openxr_optional_extensions_filters_runtime_extensions(monkeypatch):
 
     assert support._openxr_optional_extensions(
         "XR_KHR_composition_layer_equirect2",
+        "XR_FB_display_refresh_rate",
         "XR_MISSING",
         None,
-    ) == ["XR_KHR_composition_layer_equirect2"]
+    ) == ["XR_KHR_composition_layer_equirect2", "XR_FB_display_refresh_rate"]
+
+
+def test_openxr_display_refresh_rate_request_uses_env(monkeypatch, capsys):
+    import xr_viewer.implementation_support as support
+
+    calls = []
+    c_float = ctypes.c_float
+
+    fake_xr = SimpleNamespace(
+        enumerate_display_refresh_rates_fb=lambda session: [c_float(72.0), c_float(90.0)],
+        get_display_refresh_rate_fb=lambda session: c_float(72.0 if not calls else 90.0),
+        request_display_refresh_rate_fb=lambda session, rate: calls.append((session, rate)),
+    )
+    monkeypatch.setattr(support, "xr", fake_xr)
+    monkeypatch.setenv("D2S_OPENXR_DISPLAY_REFRESH_RATE", "90")
+
+    support._request_openxr_display_refresh_rate("session")
+
+    assert calls == [("session", 90.0)]
+    output = capsys.readouterr().out
+    assert "available=[72.0, 90.0]" in output
+    assert "requested=90.00" in output
+
+
+def test_openxr_display_refresh_rate_skips_unadvertised_rate(monkeypatch, capsys):
+    import xr_viewer.implementation_support as support
+
+    calls = []
+    fake_xr = SimpleNamespace(
+        enumerate_display_refresh_rates_fb=lambda session: [ctypes.c_float(72.0)],
+        get_display_refresh_rate_fb=lambda session: ctypes.c_float(72.0),
+        request_display_refresh_rate_fb=lambda session, rate: calls.append((session, rate)),
+    )
+    monkeypatch.setattr(support, "xr", fake_xr)
+    monkeypatch.setenv("D2S_OPENXR_DISPLAY_REFRESH_RATE", "90")
+
+    support._request_openxr_display_refresh_rate("session")
+
+    assert calls == []
+    assert "not advertised by runtime" in capsys.readouterr().out
+
+
+def test_openxr_backend_defaults_to_opengl():
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+
+    assert "os.environ.get('D2S_OPENXR_BACKEND', 'opengl')" in implementation
+    assert "using opengl" in implementation
+    assert "Primary OpenXR backend: opengl (D3D11 fallback enabled)" in implementation
+
+
+def test_opengl_primary_init_can_fallback_to_d3d11(monkeypatch):
+    from xr_viewer.core_openxr_lifecycle import CoreOpenXRLifecycleMixin
+
+    class FakeViewer(CoreOpenXRLifecycleMixin):
+        def __init__(self):
+            self.calls = []
+            self._xr_backend = None
+            self._forced_xr_backend = "opengl"
+            self._use_d3d11 = False
+
+        def _init_openxr_opengl_with_retry(self, **kwargs):
+            self.calls.append("opengl")
+            raise RuntimeError("gl fail")
+
+        def _cleanup_partial_openxr(self, *, destroy_instance):
+            self.calls.append(("cleanup", destroy_instance))
+
+        def _init_openxr_d3d11(self, **kwargs):
+            self.calls.append("d3d11")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    viewer = FakeViewer()
+
+    viewer._init_openxr(quiet=True)
+
+    assert viewer.calls == ["opengl", ("cleanup", True), "d3d11"]
+    assert viewer._use_d3d11 is True
+
+
+def test_forced_d3d11_init_skips_opengl():
+    from xr_viewer.core_openxr_lifecycle import CoreOpenXRLifecycleMixin
+
+    class FakeViewer(CoreOpenXRLifecycleMixin):
+        def __init__(self):
+            self.calls = []
+            self._xr_backend = "d3d11"
+            self._forced_xr_backend = "d3d11"
+            self._use_d3d11 = False
+
+        def _init_openxr_opengl_with_retry(self, **kwargs):
+            self.calls.append("opengl")
+
+        def _init_openxr_d3d11(self, **kwargs):
+            self.calls.append("d3d11")
+
+    viewer = FakeViewer()
+
+    viewer._init_openxr(quiet=True)
+
+    assert viewer.calls == ["d3d11"]
+    assert viewer._use_d3d11 is True
+
+
+def test_auto_openxr_backend_can_fallback_to_d3d11(monkeypatch):
+    from xr_viewer.core_openxr_lifecycle import CoreOpenXRLifecycleMixin
+
+    class FakeViewer(CoreOpenXRLifecycleMixin):
+        def __init__(self):
+            self.calls = []
+            self._xr_backend = None
+            self._forced_xr_backend = "auto"
+            self._use_d3d11 = False
+
+        def _init_openxr_opengl_with_retry(self, **kwargs):
+            self.calls.append("opengl")
+            raise RuntimeError("gl fail")
+
+        def _cleanup_partial_openxr(self, *, destroy_instance):
+            self.calls.append(("cleanup", destroy_instance))
+
+        def _init_openxr_d3d11(self, **kwargs):
+            self.calls.append("d3d11")
+
+    monkeypatch.setattr(sys, "platform", "win32")
+    viewer = FakeViewer()
+
+    viewer._init_openxr(quiet=True)
+
+    assert viewer.calls == ["opengl", ("cleanup", True), "d3d11"]
+    assert viewer._use_d3d11 is True
+
+
+def test_opengl_swapchain_format_candidates_try_runtime_fallbacks():
+    from xr_viewer.core_openxr_opengl import (
+        _opengl_quad_swapchain_format_candidates,
+        _opengl_swapchain_format_candidates,
+    )
+
+    runtime_formats = [34842, 35907, 32856, 36012]
+
+    assert _opengl_swapchain_format_candidates(runtime_formats) == (35907, 32856, 34842, 36012)
+    assert _opengl_swapchain_format_candidates(runtime_formats, 34842) == (34842, 35907, 32856, 36012)
+    assert _opengl_quad_swapchain_format_candidates(runtime_formats) == (32856, 35907, 34842, 36012)
+    assert _opengl_quad_swapchain_format_candidates([35907, 34842]) == (35907, 34842)
+
+
+def test_opengl_quad_layer_does_not_inherit_projection_fallback_format():
+    opengl = (SRC / "xr_viewer" / "core_openxr_opengl.py").read_text(encoding="utf-8")
+
+    assert "self._quad_swapchain_formats = _opengl_quad_swapchain_format_candidates(runtime_fmts)" in opengl
+    assert "Quad layer OpenGL format candidates from runtime" in opengl
+    assert "self._quad_swapchain_format = getattr(self, '_xr_opengl_swapchain_format'" not in opengl
+
+
+def test_opengl_projection_swapchains_are_lazy():
+    opengl = (SRC / "xr_viewer" / "core_openxr_opengl.py").read_text(encoding="utf-8")
+    presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
+    init_body = opengl.split("def _init_openxr_opengl", 1)[1]
+
+    assert "def _ensure_projection_swapchains" in opengl
+    assert "Projection eye {eye_index} swapchain" in opengl
+    assert "xr.create_swapchain" not in init_body
+    assert "_ensure_projection_swapchains" in presenter
+
+
+def test_opengl_init_prewarms_quad_after_formats_before_ready():
+    opengl = (SRC / "xr_viewer" / "core_openxr_opengl.py").read_text(encoding="utf-8")
+    ready = (SRC / "xr_viewer" / "core_openxr_input.py").read_text(encoding="utf-8")
+    init_body = opengl.split("def _init_openxr_opengl", 1)[1]
+    ready_block = ready.split("if state == xr.SessionState.READY:", 1)[1].split("elif state in", 1)[0]
+
+    assert init_body.index("runtime_fmts = list(xr.enumerate_swapchain_formats") < init_body.index(
+        'prewarm_quad(phase="init")'
+    )
+    assert ready_block.index("xr.begin_session(") < ready_block.index("self._prewarm_ready_quad_swapchains()")
+
+
+def test_quad_layer_uses_runtime_ordered_quad_format_candidates(monkeypatch):
+    from xr_viewer import core_quad_layer
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    created_formats = []
+
+    class FakeSwapchainCreateInfo:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    def create_swapchain(_session, sc_info):
+        created_formats.append(sc_info.format)
+        return f"swap-{len(created_formats)}"
+
+    fake_xr = SimpleNamespace(
+        SwapchainUsageFlags=SimpleNamespace(COLOR_ATTACHMENT_BIT=1, SAMPLED_BIT=2),
+        SwapchainCreateInfo=FakeSwapchainCreateInfo,
+        create_swapchain=create_swapchain,
+        enumerate_swapchain_images=lambda _swapchain, _image_type: [SimpleNamespace(image=1)],
+        destroy_swapchain=lambda _swapchain: None,
+    )
+    monkeypatch.setattr(core_quad_layer, "xr", fake_xr)
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._quad_fbo_cache = {}
+    viewer._quad_swapchains = {}
+    viewer._quad_swapchain_images = {}
+    viewer._quad_swapchain_sizes = {}
+    viewer._quad_swapchain_array_size = {}
+    viewer._quad_swapchain_presented_eyes = set()
+    viewer._quad_swapchain_format = 32856
+    viewer._quad_swapchain_formats = (32856, 35907)
+    viewer._quad_swapchain_image_type = object
+    viewer._quad_swapchain_max_size = (4000, 3000)
+    viewer._xr_session = object()
+    viewer._use_d3d11 = False
+    viewer._xr_quad_layer_active = False
+    viewer._xr_quad_layer_failed = False
+
+    assert viewer._ensure_quad_layer_swapchains_for_source((3840, 2160)) is True
+    assert created_formats == [32856, 32856]
+    assert viewer._quad_swapchain_format == 32856
+
+
+def test_quad_layer_retries_same_format_after_transient_create_failure(monkeypatch, capsys):
+    from xr_viewer import core_quad_layer
+    from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    created_formats = []
+
+    class FakeSwapchainCreateInfo:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    def create_swapchain(_session, sc_info):
+        created_formats.append(sc_info.format)
+        if len(created_formats) == 1:
+            raise RuntimeError("transient first create failure")
+        return f"swap-{len(created_formats)}"
+
+    fake_xr = SimpleNamespace(
+        SwapchainUsageFlags=SimpleNamespace(COLOR_ATTACHMENT_BIT=1, SAMPLED_BIT=2),
+        SwapchainCreateInfo=FakeSwapchainCreateInfo,
+        create_swapchain=create_swapchain,
+        enumerate_swapchain_images=lambda _swapchain, _image_type: [SimpleNamespace(image=1)],
+        destroy_swapchain=lambda _swapchain: None,
+    )
+    monkeypatch.setattr(core_quad_layer, "xr", fake_xr)
+    monkeypatch.setattr(
+        core_quad_layer,
+        "_latest_vdxr_swapchain_detail",
+        lambda: "ovrResult=[-7000] origin=ovr_CreateTextureSwapChainDX(...) source=swapchain.cpp:387",
+    )
+
+    class Viewer(CoreQuadLayerMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._quad_fbo_cache = {}
+    viewer._quad_swapchains = {}
+    viewer._quad_swapchain_images = {}
+    viewer._quad_swapchain_sizes = {}
+    viewer._quad_swapchain_array_size = {}
+    viewer._quad_swapchain_presented_eyes = set()
+    viewer._quad_swapchain_format = 32856
+    viewer._quad_swapchain_formats = (32856, 35907)
+    viewer._quad_swapchain_image_type = object
+    viewer._quad_swapchain_max_size = (4000, 3000)
+    viewer._xr_session = object()
+    viewer._use_d3d11 = False
+    viewer._xr_quad_layer_active = False
+    viewer._xr_quad_layer_failed = True
+    viewer._xr_quad_layer_failure_reason = "previous_failure"
+
+    assert viewer._ensure_quad_layer_swapchains_for_source((3840, 2160)) is True
+    assert created_formats == [32856, 32856, 32856]
+    assert viewer._quad_swapchain_format == 32856
+    assert viewer._xr_quad_layer_failed is False
+    assert viewer._xr_quad_layer_failure_reason is None
+    output = capsys.readouterr().out
+    assert "swapchain create retry" in output
+    assert "attempt failed" not in output
+    assert "ovrResult=[-7000]" in output
+    assert "origin=ovr_CreateTextureSwapChainDX(...)" in output
+    assert "source=swapchain.cpp:387" in output
+    assert "recovered_after_retry=1" in output
+
+
+def test_latest_vdxr_swapchain_detail_reads_runtime_log(monkeypatch):
+    from xr_viewer.core_quad_layer import _latest_vdxr_swapchain_detail
+
+    log_path = ROOT / ".vdxr_openxr_test.log"
+    try:
+        log_path.write_text(
+            "\n".join(
+                [
+                    "2026-07-06 23:34:05 +0800: xrCreateSwapchain: ovrResult failure [-7000]",
+                    "    Origin: ovr_CreateTextureSwapChainDX(m_ovrSession, m_ovrSubmissionDevice.Get(), &desc, &ovrSwapchain)",
+                    r"    Source: D:\a\VirtualDesktop-OpenXR\VirtualDesktop-OpenXR\virtualdesktop-openxr\swapchain.cpp:387",
+                    "2026-07-06 23:34:05 +0800: xrCreateSwapchain failed with XR_ERROR_RUNTIME_FAILURE",
+                ]
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setenv("D2S_VDXR_OPENXR_LOG", str(log_path))
+
+        detail = _latest_vdxr_swapchain_detail()
+
+        assert "ovrResult=[-7000]" in detail
+        assert "origin=ovr_CreateTextureSwapChainDX(" in detail
+        assert r"source=D:\a\VirtualDesktop-OpenXR" in detail
+        assert "swapchain.cpp:387" in detail
+    finally:
+        try:
+            log_path.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def test_quad_layer_rgba8_copy_linearizes_srgb_source():
+    glsl = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
+    quad = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+
+    assert "uniform int u_linearize_srgb;" in glsl
+    assert "vec3 srgb_to_linear(vec3 c)" in glsl
+    assert "color.rgb = srgb_to_linear(color.rgb);" in glsl
+    assert "_GL_RGBA8 = 0x8058" in quad
+    assert "self._quad_copy_prog['u_linearize_srgb'].value = (" in quad
+    assert "getattr(self, '_quad_swapchain_format', None) == _GL_RGBA8" in quad
+    assert "self._quad_copy_prog['u_linearize_srgb'].value = 0" in implementation
+
+
+def test_quad_layer_swapchain_logs_alignment_details():
+    quad = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
+
+    assert "source={int(src_w)}x{int(src_h)}" in quad
+    assert "max={int(max_w)}x{int(max_h)}" in quad
+    assert "aligned={quad_w}x{quad_h}" in quad
+    assert "scale={scale:.3f}" in quad
+
+
+def test_d3d11_fallback_prefers_srgb_color_path():
+    from xr_viewer.d3d_interop import _D3D11_PREFERRED_FORMATS
+
+    d3d11 = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+
+    assert _D3D11_PREFERRED_FORMATS[:4] == [29, 28, 91, 87]
+    assert "self.color_format = (" in d3d11
+    assert "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB" in d3d11
+    assert "self._create_texture_srv(width, height, self.color_format)" in d3d11
 
 
 def test_run_openxr_mode_bootstraps_from_first_runtime_frame(monkeypatch):
@@ -1731,7 +2084,7 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
     assert "def _submit_openxr_frame(layers):" not in implementation
 
 
-def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
+def test_quad_layer_keeps_projection_scene_layer(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.background_presenter import BackgroundPresenter
     from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
@@ -1767,46 +2120,53 @@ def test_quad_layer_can_skip_empty_projection_layer(monkeypatch):
     viewer._team_help_tex = None
     presenter = ScreenLayerPresenter(viewer)
 
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "scene"
 
     viewer._env_model_visible = True
     viewer._env_model_prims = [object()]
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "scene"
     viewer._env_model_visible = False
     viewer._env_model_prims = []
 
     viewer._preview_active = False
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
 
     viewer._aim_mat_l = object()
     assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "controller_aim"
     viewer._aim_mat_l = None
 
     viewer._panorama_background_path = "room.hdr"
     viewer._panorama_texture_ready = lambda: None
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
     viewer._panorama_texture_ready = lambda: object()
     assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "panorama_projection_fallback"
     inc_calls = []
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._background_layer_renderer.panorama_ready = lambda: (_ for _ in ()).throw(RuntimeError("background gate failed"))
     assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "background_gate_failed"
     assert ("openxr_background_layer_failed", 1) in inc_calls
     viewer._background_layer_renderer = None
     viewer._aim_mat_l = object()
     assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "panorama_projection_fallback"
     viewer._aim_mat_l = None
     viewer._panorama_background_path = None
     viewer._panorama_texture_ready = lambda: None
 
     viewer._quad_layer_screen_presentable = lambda: True
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
+    assert presenter.projection_layer_reason() == "scene"
 
     viewer._quad_layer_screen_presentable = lambda: False
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
 
     viewer._quad_layer_screen_presentable = lambda: False
-    assert presenter.projection_layer_needed() is False
+    assert presenter.projection_layer_needed() is True
 
 
 def test_active_openxr_presenter_drains_source_after_begin_frame():
@@ -2465,6 +2825,86 @@ def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
     assert "pause" in viewer.actions
 
 
+def test_empty_openxr_frame_prewarms_quad_swapchain_before_submit():
+    from xr_viewer.openxr_frame_gate import OpenXRFrameGate
+
+    calls = []
+
+    class Submitter:
+        def submit(self, layers, *, display_time, submit_start=0.0):
+            calls.append(("submit", layers, display_time, submit_start))
+
+    viewer = SimpleNamespace(
+        _xr_swapchains={},
+        _runtime_eye_texture_size=(3840, 2160),
+        _ensure_quad_layer_swapchains_for_source=lambda size: calls.append(("quad", size)) or True,
+        _ensure_projection_swapchains=lambda: calls.append(("projection",)) or True,
+    )
+
+    OpenXRFrameGate(viewer, Submitter()).submit_empty_frame(
+        composition_layers=[],
+        display_time=123,
+        submit_start=1.0,
+    )
+
+    assert calls == [("quad", (3840, 2160)), ("submit", [], 123, 1.0)]
+
+
+def test_empty_openxr_frame_uses_ready_quad_source_size_fallback():
+    from xr_viewer.openxr_frame_gate import OpenXRFrameGate
+
+    calls = []
+
+    class Submitter:
+        def submit(self, layers, *, display_time, submit_start=0.0):
+            calls.append(("submit", layers, display_time, submit_start))
+
+    viewer = SimpleNamespace(
+        _xr_swapchains={},
+        _runtime_eye_texture_size=None,
+        _ready_quad_source_size=lambda: (3840, 2160),
+        _ensure_quad_layer_swapchains_for_source=lambda size: calls.append(("quad", size)) or True,
+        _ensure_projection_swapchains=lambda: calls.append(("projection",)) or True,
+    )
+
+    OpenXRFrameGate(viewer, Submitter()).submit_empty_frame(
+        composition_layers=[],
+        display_time=123,
+        submit_start=1.0,
+    )
+
+    assert calls == [("quad", (3840, 2160)), ("submit", [], 123, 1.0)]
+
+
+def test_ready_event_prewarms_quad_swapchain_after_begin_session_before_render():
+    text = (SRC / "xr_viewer" / "core_openxr_input.py").read_text(encoding="utf-8")
+    ready_block = text.split("if state == xr.SessionState.READY:", 1)[1].split("elif state in", 1)[0]
+
+    assert ready_block.index("xr.begin_session(") < ready_block.index("self._prewarm_ready_quad_swapchains()")
+    assert ready_block.index("self._prewarm_ready_quad_swapchains()") < ready_block.index("Session READY")
+    assert "ensure_projection" not in ready_block
+
+
+def test_ready_quad_prewarm_uses_frame_size_when_runtime_eye_size_missing():
+    from xr_viewer.core_openxr_input import CoreOpenXRInputMixin
+
+    calls = []
+
+    class Viewer(CoreOpenXRInputMixin):
+        pass
+
+    viewer = Viewer()
+    viewer._runtime_eye_texture_size = None
+    viewer._d3d11_native_renderer = None
+    viewer._texture_size = None
+    viewer.frame_size = (3840, 2160)
+    viewer._quad_swapchains = {}
+    viewer._ensure_quad_layer_swapchains_for_source = lambda size: calls.append(size) or True
+
+    assert viewer._prewarm_ready_quad_swapchains() is True
+    assert calls == [(3840, 2160)]
+
+
 def test_stale_source_keeps_rendering_when_quad_layer_has_presented_frame():
     from xr_viewer.openxr_frame_gate import OpenXRFrameGate
 
@@ -2538,7 +2978,7 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "CompositionLayerProjection(" not in frame_renderer
     assert "ctypes.pointer(proj_layer)" not in frame_renderer
     screen_presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    assert "openxr_projection_layer_skipped" in screen_presenter_text
+    assert "Projection layer active" in screen_presenter_text
     assert "xr.CompositionLayerProjection(" in screen_presenter_text
     render_eye_block = implementation.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
     assert "draw_projection_screen" not in render_eye_block
@@ -2935,9 +3375,8 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
     assert presenter._frame_quad_layers == [left_layer, right_layer]
     assert len(quad_layer_headers) == 2
     assert updated == [0, 1]
-    assert render_projection_layer is False
+    assert render_projection_layer is True
     assert background_layer_headers == []
-    assert ("openxr_projection_layer_skipped", 1) in inc_calls
     assert viewer._xr_quad_layer_active is True
     assert viewer._xr_quad_layer_failed is False
 
@@ -3037,11 +3476,10 @@ def test_screen_layer_presenter_quad_failure_produces_no_screen_layer():
     assert quad_layers == []
     assert quad_layer_headers == []
     assert updated == []
-    assert render_projection_layer is False
+    assert render_projection_layer is True
     assert background_layer_headers == []
     assert presenter.quad_screen_unavailable_reason() == "layer_build_failed_RuntimeError"
     assert ("openxr_quad_layer_failed", 1) in inc_calls
-    assert ("openxr_projection_layer_skipped", 1) in inc_calls
 
 
 def test_quad_layer_failure_reason_does_not_enable_projection_screen():
@@ -3061,10 +3499,12 @@ def test_quad_layer_failure_reason_does_not_enable_projection_screen():
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)
     viewer._quad_swapchain_array_size = {0: 1, 1: 1}
+    viewer._quad_swapchain_presented_eyes = set()
+    viewer._ensure_quad_layer_swapchains_for_source = lambda _source_size: True
     viewer._update_quad_layer_swapchain = lambda _eye_index: (_ for _ in ()).throw(RuntimeError("boom"))
     viewer._breakdown_inc = lambda *args, **kwargs: None
 
-    assert viewer._update_quad_layer_swapchains() == []
+    assert viewer._update_quad_layer_swapchains(force=True) == []
     presenter = ScreenLayerPresenter(viewer)
 
     assert presenter.quad_screen_unavailable_reason() == "update_failed_RuntimeError"

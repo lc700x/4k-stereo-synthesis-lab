@@ -44,11 +44,33 @@ class OpenXRFrameGate:
         return False, session_idle_timeout
 
     def submit_empty_frame(self, *, composition_layers, display_time, submit_start):
+        if not composition_layers and not getattr(self.viewer, '_xr_swapchains', {}):
+            self._prewarm_empty_frame_swapchain()
         self.frame_submitter.submit(
             composition_layers,
             display_time=display_time,
             submit_start=submit_start,
         )
+
+    def _prewarm_empty_frame_swapchain(self):
+        viewer = self.viewer
+        ensure_quad = getattr(viewer, '_ensure_quad_layer_swapchains_for_source', None)
+        source_size_getter = getattr(viewer, '_ready_quad_source_size', None)
+        source_size = source_size_getter() if callable(source_size_getter) else getattr(viewer, '_runtime_eye_texture_size', None)
+        if callable(ensure_quad) and source_size is not None:
+            try:
+                if ensure_quad(source_size):
+                    return True
+            except Exception as exc:
+                print(f"[OpenXRViewer] Quad empty-frame prewarm failed: {type(exc).__name__}: {exc}")
+
+        ensure_projection = getattr(viewer, '_ensure_projection_swapchains', None)
+        if callable(ensure_projection):
+            try:
+                return bool(ensure_projection())
+            except Exception as exc:
+                print(f"[OpenXRViewer] Projection empty-frame prewarm failed: {type(exc).__name__}: {exc}")
+        return False
 
     def enter_idle_if_needed(self, session_idle_timeout):
         viewer = self.viewer

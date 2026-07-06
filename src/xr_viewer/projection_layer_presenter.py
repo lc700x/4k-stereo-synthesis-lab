@@ -31,6 +31,9 @@ class ProjectionLayerPresenter:
         if not enabled:
             return []
         if not viewer._use_d3d11:
+            ensure_swapchains = getattr(viewer, '_ensure_projection_swapchains', None)
+            if callable(ensure_swapchains) and not ensure_swapchains():
+                return []
             return self.render_opengl(
                 views,
                 default_fov,

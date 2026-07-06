@@ -9,6 +9,7 @@ from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_oper
 
 DXGI_FORMAT_R32G32_FLOAT = 16
 DXGI_FORMAT_R8G8B8A8_UNORM = 28
+DXGI_FORMAT_R8G8B8A8_UNORM_SRGB = 29
 DXGI_FORMAT_R32_FLOAT = 41
 
 D3D11_USAGE_DEFAULT = 0
@@ -423,6 +424,11 @@ class D3D11NativeRenderer:
         self.device = device
         self.context = context
         self.swapchain_format = int(swapchain_format or DXGI_FORMAT_R8G8B8A8_UNORM)
+        self.color_format = (
+            DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+            if self.swapchain_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+            else DXGI_FORMAT_R8G8B8A8_UNORM
+        )
         self.color_tex = ctypes.c_void_p()
         self.depth_tex = ctypes.c_void_p()
         self.color_srv = ctypes.c_void_p()
@@ -680,7 +686,7 @@ class D3D11NativeRenderer:
         if self.size == (width, height):
             return
         self._release_frame_textures()
-        self.color_tex, self.color_srv = self._create_texture_srv(width, height, DXGI_FORMAT_R8G8B8A8_UNORM)
+        self.color_tex, self.color_srv = self._create_texture_srv(width, height, self.color_format)
         self.depth_tex, self.depth_srv = self._create_texture_srv(width, height, DXGI_FORMAT_R32_FLOAT)
         self.size = (width, height)
         self.has_frame = False
@@ -718,7 +724,7 @@ class D3D11NativeRenderer:
         self._release_runtime_eye_textures()
         for idx in range(2):
             self.runtime_eye_tex[idx], self.runtime_eye_srv[idx] = self._create_texture_srv(
-                width, height, DXGI_FORMAT_R8G8B8A8_UNORM
+                width, height, self.color_format
             )
         self.runtime_eye_size = (width, height)
 

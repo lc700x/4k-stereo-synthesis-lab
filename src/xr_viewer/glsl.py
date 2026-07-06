@@ -150,9 +150,22 @@ in vec2 uv;
 out vec4 frag_color;
 uniform sampler2D tex_source;
 uniform int u_flip_y;
+uniform int u_linearize_srgb;
+
+vec3 srgb_to_linear(vec3 c) {
+    bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
+    vec3 low = c / 12.92;
+    vec3 high = pow((c + 0.055) / 1.055, vec3(2.4));
+    return mix(high, low, cutoff);
+}
+
 void main() {
     vec2 p = (u_flip_y == 1) ? vec2(uv.x, 1.0 - uv.y) : uv;
-    frag_color = texture(tex_source, p);
+    vec4 color = texture(tex_source, p);
+    if (u_linearize_srgb == 1) {
+        color.rgb = srgb_to_linear(color.rgb);
+    }
+    frag_color = color;
 }
 """
 

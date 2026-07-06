@@ -558,7 +558,7 @@ def test_quad_layer_screen_overlay_has_no_projection_screen_body():
     assert "_screen_pose_quat_xyzw()" not in make_quad
     for finally_block in (update_quad_finally, update_quads_finally):
         assert "self.ctx.viewport = prev_viewport" in finally_block
-        assert "self.ctx.depth_mask = prev_depth_mask" in finally_block
+        assert "set_depth_mask(prev_depth_mask)" in finally_block
         assert "self.ctx.enable(moderngl.DEPTH_TEST)" in finally_block
 
     presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")

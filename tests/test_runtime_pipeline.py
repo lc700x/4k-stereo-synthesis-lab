@@ -688,6 +688,80 @@ def test_runtime_pipeline_drops_raw_when_pending_cuda_depth_is_full():
     assert breakdown["runtime_drop_cuda_inflight"] == 1
 
 
+def test_runtime_pipeline_waits_briefly_for_pending_cuda_before_dropping(monkeypatch):
+    monkeypatch.setenv("D2S_RUNTIME_PENDING_CUDA_WAIT_MS", "5")
+    raw_q = queue.Queue(maxsize=1)
+    runtime_q = queue.Queue(maxsize=1)
+    raw_q.put(("raw", (2, 2), 10.0))
+    stats = {}
+    breakdown = {}
+
+    class Event:
+        def __init__(self):
+            self.calls = 0
+
+        def query(self):
+            self.calls += 1
+            return self.calls >= 2
+
+    def source_stat_inc(name, amount=1, **values):
+        stats[name] = stats.get(name, 0) + amount
+        stats.update(values)
+
+    def breakdown_inc(name, amount=1):
+        breakdown[name] = breakdown.get(name, 0) + amount
+
+    def fail_gpu_work(*args, **kwargs):
+        raise AssertionError("ready pending CUDA item should publish before new GPU work")
+
+    event = Event()
+    context = RuntimePipelineContext(
+        shutdown_event=OneShotShutdown(),
+        raw_q=raw_q,
+        runtime_q=runtime_q,
+        time_sleep=0.01,
+        run_mode="OpenXR",
+        openxr_runtime_direct=True,
+        stereo_active_preset=None,
+        device="cpu",
+        use_cudart=False,
+        thread_latencies={},
+        stereo_runtime=FakeRuntime(),
+        capture_frame_to_rgb=fail_gpu_work,
+        prepare_rgb_for_stereo_runtime=fail_gpu_work,
+        current_openxr_render_config=fail_gpu_work,
+        is_hard_idle=lambda: False,
+        is_source_paused=lambda: False,
+        log_source_health=lambda: None,
+        source_stat_inc=source_stat_inc,
+        breakdown_inc=breakdown_inc,
+        breakdown_add_time=lambda *args, **kwargs: None,
+        breakdown_add_runtime_timing=lambda *args, **kwargs: None,
+        set_preprocess_backend=lambda *args, **kwargs: None,
+        queue_clear=lambda q: None,
+        queue_drain_latest=lambda q, first_item: first_item,
+        queue_put_latest=lambda q, item: q.put_nowait(item),
+        log_stereo_runtime_mode_once=lambda: None,
+        apply_stereo_hot_reload_if_needed=lambda: None,
+        warmup_stereo_once_for_frame=lambda frame: None,
+        log_fast_plus_fused_runtime_state=lambda result: None,
+    )
+    loop = RuntimePipelineLoop(context)
+    loop._pending_runtime_items = [
+        (SimpleNamespace(name="ready-after-retry", cuda_ready_event=event), 9.0, 0.0, 0.0, 1.0),
+    ]
+
+    loop.run()
+
+    runtime_result, capture_start_time = runtime_q.get_nowait()
+    assert runtime_result.name == "ready-after-retry"
+    assert capture_start_time == 9.0
+    assert not raw_q.empty()
+    assert "runtime_drop_cuda_inflight" not in stats
+    assert stats["runtime_pending_cuda_wait"] == 1
+    assert breakdown["runtime_pending_cuda_wait"] == 1
+
+
 def test_runtime_pipeline_publishes_newest_ready_pending_cuda_result():
     runtime_q = queue.Queue(maxsize=2)
     stats = {}

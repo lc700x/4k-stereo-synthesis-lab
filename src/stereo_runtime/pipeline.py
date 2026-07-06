@@ -378,6 +378,16 @@ def _runtime_pending_depth_limit() -> int:
         return 1
 
 
+def _runtime_pending_cuda_wait_s(ctx) -> float:
+    raw = os.environ.get("D2S_RUNTIME_PENDING_CUDA_WAIT_MS")
+    if raw is None:
+        raw = "3" if getattr(ctx, "run_mode", None) == "OpenXR" else "0"
+    try:
+        return max(0.0, float(str(raw).strip()) / 1000.0)
+    except ValueError:
+        return 0.0
+
+
 def _is_fatal_runtime_preparation_error(exc: Exception) -> bool:
     if isinstance(exc, FileNotFoundError):
         return True
@@ -493,6 +503,33 @@ class RuntimePipelineLoop:
         self._publish_runtime_item(item)
         return 1
 
+    def _publish_ready_pending_items_until(self, timeout_s: float) -> int:
+        published = self._publish_ready_pending_items()
+        if published:
+            ctx = self.context
+            ctx.source_stat_inc("runtime_pending_cuda_wait")
+            ctx.breakdown_inc("runtime_pending_cuda_wait")
+            ctx.breakdown_add_time("rt_pending_wait", 0.0)
+            return published
+        if timeout_s <= 0.0 or not self._pending_runtime_items:
+            return published
+        ctx = self.context
+        wait_start = time.perf_counter()
+        deadline = wait_start + timeout_s
+        while self._pending_runtime_items and not ctx.shutdown_event.is_set():
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.0:
+                break
+            time.sleep(min(max(remaining, 0.0), max(float(ctx.time_sleep), 0.0005), 0.0005))
+            published = self._publish_ready_pending_items()
+            if published:
+                ctx.source_stat_inc("runtime_pending_cuda_wait")
+                ctx.breakdown_inc("runtime_pending_cuda_wait")
+                ctx.breakdown_add_time("rt_pending_wait", time.perf_counter() - wait_start)
+                return published
+        ctx.breakdown_add_time("rt_pending_wait", time.perf_counter() - wait_start)
+        return 0
+
     def run(self) -> None:
         ctx = self.context
         while not ctx.shutdown_event.is_set():
@@ -518,6 +555,8 @@ class RuntimePipelineLoop:
                     continue
                 self._publish_ready_pending_items()
                 if len(self._pending_runtime_items) >= _runtime_pending_depth_limit():
+                    if self._publish_ready_pending_items_until(_runtime_pending_cuda_wait_s(ctx)):
+                        continue
                     try:
                         ctx.queue_drain_latest(ctx.raw_q, ctx.raw_q.get_nowait())
                         ctx.source_stat_inc("raw_get", last_raw_get_ts=time.perf_counter())

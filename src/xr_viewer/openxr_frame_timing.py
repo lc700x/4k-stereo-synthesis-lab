@@ -13,7 +13,11 @@ class OpenXRFrameTiming:
     def begin_frame(self, *, breakdown_enabled=False):
         viewer = self.viewer
         wait_start = time.perf_counter() if breakdown_enabled else 0.0
-        frame_state = xr.wait_frame(viewer._xr_session, viewer._xr_frame_wait_info)
+        try:
+            frame_state = xr.wait_frame(viewer._xr_session, viewer._xr_frame_wait_info)
+        except Exception as exc:
+            print(f"[OpenXRViewer] xr.wait_frame failed: {type(exc).__name__}: {exc}")
+            raise
         if breakdown_enabled:
             viewer._breakdown_add_time('openxr_wait_frame', time.perf_counter() - wait_start)
             predicted_time = getattr(frame_state, 'predicted_display_time', None)
@@ -24,5 +28,9 @@ class OpenXRFrameTiming:
                 if 0.0 < predicted_delta_s < 1.0:
                     viewer._breakdown_add_time('openxr_predicted_period', predicted_delta_s)
         submit_start = time.perf_counter() if breakdown_enabled else 0.0
-        xr.begin_frame(viewer._xr_session, viewer._xr_frame_begin_info)
+        try:
+            xr.begin_frame(viewer._xr_session, viewer._xr_frame_begin_info)
+        except Exception as exc:
+            print(f"[OpenXRViewer] xr.begin_frame failed: {type(exc).__name__}: {exc}")
+            raise
         return frame_state, submit_start

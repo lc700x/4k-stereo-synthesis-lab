@@ -580,11 +580,14 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._xr_swapchains = {}        # {eye_index: xr.Swapchain}
         self._swapchain_images = {}     # {eye_index: [XrSwapchainImageOpenGLKHR, ...]}
         self._swapchain_sizes = {}      # {eye_index: (w, h)}
+        self._projection_view_configs = ()
+        self._projection_runtime_formats = ()
         self._quad_swapchains = {}
         self._quad_swapchain_images = {}
         self._quad_swapchain_sizes = {}
         self._quad_swapchain_array_size = {}
         self._quad_swapchain_format = None
+        self._quad_swapchain_formats = ()
         self._quad_swapchain_image_type = None
         self._quad_swapchain_max_size = None
         self._quad_fbo_cache = {}
@@ -1026,16 +1029,18 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         # D3D11 backend state (populated by _init_d3d11_device when D3D11 path is active)
         forced_backend = str(
-            kwargs.get('openxr_backend', os.environ.get('D2S_OPENXR_BACKEND', 'auto')) or 'auto'
+            kwargs.get('openxr_backend', os.environ.get('D2S_OPENXR_BACKEND', 'opengl')) or 'opengl'
         ).strip().lower()
         if forced_backend not in ('auto', 'opengl', 'd3d11'):
-            print(f"[OpenXRViewer] Invalid D2S_OPENXR_BACKEND={forced_backend!r}; using auto")
-            forced_backend = 'auto'
+            print(f"[OpenXRViewer] Invalid D2S_OPENXR_BACKEND={forced_backend!r}; using opengl")
+            forced_backend = 'opengl'
         self._forced_xr_backend     = forced_backend
-        self._xr_backend            = None if forced_backend == 'auto' else forced_backend
+        self._xr_backend            = 'd3d11' if forced_backend == 'd3d11' else None
         self._use_d3d11             = False   # True = D3D11 OpenXR session
-        if forced_backend != 'auto':
+        if forced_backend == 'd3d11':
             print(f"[OpenXRViewer] Forced OpenXR backend: {forced_backend}")
+        else:
+            print(f"[OpenXRViewer] Primary OpenXR backend: opengl (D3D11 fallback enabled)")
         self._d3d11_device          = None    # c_void_p ID3D11Device*
         self._d3d11_context         = None    # c_void_p ID3D11DeviceContext*
         self._d3d11_swapchain_fmt   = _DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
@@ -1136,6 +1141,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             fragment_shader=_QUAD_COPY_FRAG,
         )
         self._quad_copy_prog['tex_source'].value = 0
+        self._quad_copy_prog['u_linearize_srgb'].value = 0
         self._screen_ds_vao = self.ctx.vertex_array(
             self._screen_ds_prog, [(vbo, '2f 2f', 'in_position', 'in_uv')]
         )

@@ -15,7 +15,11 @@ from .d3d_interop import (
     _DXGI_FORMAT_B8G8R8A8_UNORM_SRGB,
     _create_d3d11_device,
 )
-from .implementation_support import _openxr_app_api_version, _openxr_optional_extensions
+from .implementation_support import (
+    _openxr_app_api_version,
+    _openxr_optional_extensions,
+    _request_openxr_display_refresh_rate,
+)
 
 
 class CoreOpenXRD3D11Mixin:
@@ -41,6 +45,7 @@ class CoreOpenXRD3D11Mixin:
             enabled_extensions = [xr.KHR_D3D11_ENABLE_EXTENSION_NAME]
             enabled_extensions += _openxr_optional_extensions(
                 getattr(xr, 'KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME', None),
+                getattr(xr, 'FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME', None),
             )
             self._openxr_equirect_background_supported = (
                 getattr(xr, 'KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME', None) in enabled_extensions
@@ -98,6 +103,7 @@ class CoreOpenXRD3D11Mixin:
         self._xr_session = xr.create_session(self._xr_instance, session_info)
         if not quiet:
             print("[OpenXRViewer] XrSession created (D3D11)")
+        _request_openxr_display_refresh_rate(self._xr_session, quiet=quiet)
 
         # 7. Reference space
         available_spaces = xr.enumerate_reference_spaces(self._xr_session)
@@ -123,7 +129,8 @@ class CoreOpenXRD3D11Mixin:
             xr.ViewConfigurationType.PRIMARY_STEREO,
         )
         # Pick the best supported DXGI format
-        runtime_fmts = xr.enumerate_swapchain_formats(self._xr_session)
+        runtime_fmts = list(xr.enumerate_swapchain_formats(self._xr_session))
+        print(f"[OpenXRViewer] D3D11 runtime swapchain formats: {runtime_fmts}")
         chosen_fmt = None
         for preferred in _D3D11_PREFERRED_FORMATS:
             if preferred in runtime_fmts:
@@ -187,8 +194,10 @@ class CoreOpenXRD3D11Mixin:
             max_w = max(int(getattr(v, 'max_image_rect_width', src_w) or src_w) for v in view_configs)
             max_h = max(int(getattr(v, 'max_image_rect_height', src_h) or src_h) for v in view_configs)
             self._quad_swapchain_format = chosen_fmt
+            self._quad_swapchain_formats = (chosen_fmt,)
             self._quad_swapchain_image_type = xr.SwapchainImageD3D11KHR
             self._quad_swapchain_max_size = (max_w, max_h)
+            self._quad_swapchain_presented_eyes = set()
             print(f"[OpenXRViewer] Quad layer D3D11 lazy swapchains armed max={max_w}x{max_h}")
 
         # 10. Try NV_DX interop for projection overlays when native D3D11

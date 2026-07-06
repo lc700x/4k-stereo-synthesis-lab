@@ -412,7 +412,6 @@ class GUIProcessMixin:
                 child_env.setdefault("D2S_FPS_BREAKDOWN", "1")
                 child_env.setdefault("D2S_OPENXR_DEBUG", "1")
                 child_env.setdefault("D2S_OPENXR_ASYNC_EFFECTS", "0")
-                child_env.setdefault("D2S_RUNTIME_PENDING_CUDA_DEPTH", "3")
             if OS_NAME == "Windows":
                 self.process = await asyncio.create_subprocess_exec(
                     *child_args,
@@ -444,7 +443,6 @@ class GUIProcessMixin:
             self._config["Recompile MIGraphX"] = False
             self._config["Recompile CoreML"] = False
             self._config["Recompile OpenVINO"] = False
-            self._config["Stereo Preset"] = "cinema"
             save_yaml(os.path.join(BASE_DIR, "settings.yaml"), self._config)
         except Exception as e:
             self._diag(f"_countdown_and_run failed:\n{traceback.format_exc()}", error=True)
@@ -487,7 +485,7 @@ class GUIProcessMixin:
             return
         lower = text.lower()
         if text.startswith("[FPSBreakdown]"):
-            child_logger.info(text)
+            child_logger.debug(text)
         elif any(token in lower for token in ("traceback", "exception", "error", "failed", "exited with code")):
             child_logger.error(text)
         elif any(token in lower for token in ("warning", "warn")):

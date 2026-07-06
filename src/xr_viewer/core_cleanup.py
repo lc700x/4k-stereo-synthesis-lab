@@ -172,9 +172,12 @@ class CoreCleanupMixin:
         self._quad_swapchain_images.clear()
         self._quad_swapchain_sizes.clear()
         self._quad_swapchain_array_size.clear()
+        self._quad_swapchain_formats = ()
         self._quad_swapchain_presented_eyes = set()
         self._swapchain_images.clear()
         self._swapchain_sizes.clear()
+        self._projection_view_configs = ()
+        self._projection_runtime_formats = ()
 
         for attr in ("_xr_space", "_aim_space_l", "_aim_space_r", "_grip_space_l", "_grip_space_r"):
             sp = getattr(self, attr, None)

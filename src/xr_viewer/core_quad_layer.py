@@ -1,4 +1,6 @@
 import math
+import os
+from pathlib import Path
 
 import moderngl
 from .gl_state import get_depth_mask, set_depth_mask
@@ -25,6 +27,9 @@ from OpenGL.GL import (
 )
 
 
+_GL_RGBA8 = 0x8058
+
+
 def _fit_even_size(width, height, max_w, max_h):
     width = max(16, int(width))
     height = max(16, int(height))
@@ -32,6 +37,34 @@ def _fit_even_size(width, height, max_w, max_h):
     max_h = max(16, int(max_h))
     scale = min(max_w / width, max_h / height, 1.0)
     return max(16, int(width * scale)) & ~1, max(16, int(height * scale)) & ~1
+
+
+def _latest_vdxr_swapchain_detail():
+    log_path = os.environ.get("D2S_VDXR_OPENXR_LOG")
+    if not log_path:
+        program_data = os.environ.get("ProgramData")
+        if not program_data:
+            return ""
+        log_path = str(Path(program_data) / "Virtual Desktop" / "OpenXR.log")
+    try:
+        lines = Path(log_path).read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ""
+    for idx in range(len(lines) - 1, -1, -1):
+        line = lines[idx]
+        if "xrCreateSwapchain:" not in line:
+            continue
+        detail = []
+        if "ovrResult failure" in line:
+            detail.append("ovrResult=" + line.rsplit("ovrResult failure", 1)[1].strip())
+        for next_line in lines[idx + 1:idx + 4]:
+            stripped = next_line.strip()
+            if stripped.startswith("Origin:"):
+                detail.append("origin=" + stripped.split(":", 1)[1].strip())
+            elif stripped.startswith("Source:"):
+                detail.append("source=" + stripped.split(":", 1)[1].strip())
+        return " ".join(detail)
+    return ""
 
 
 class CoreQuadLayerMixin:
@@ -120,12 +153,22 @@ class CoreQuadLayerMixin:
             return False
         image_type = getattr(self, '_quad_swapchain_image_type', None)
         fmt = getattr(self, '_quad_swapchain_format', None)
+        formats = getattr(self, '_quad_swapchain_formats', None)
+        if formats is None:
+            formats = (fmt,) if fmt is not None else ()
+        else:
+            formats = tuple(formats)
         max_size = getattr(self, '_quad_swapchain_max_size', None)
-        if image_type is None or fmt is None or max_size is None:
+        if image_type is None or not formats or max_size is None:
             return False
         src_w, src_h = source_size
         max_w, max_h = max_size
         quad_w, quad_h = _fit_even_size(src_w, src_h, max_w, max_h)
+        scale = min(max_w / max(1, int(src_w)), max_h / max(1, int(src_h)), 1.0)
+        size_note = (
+            f"source={int(src_w)}x{int(src_h)} max={int(max_w)}x{int(max_h)} "
+            f"aligned={quad_w}x{quad_h} scale={scale:.3f}"
+        )
         if (
             self._quad_swapchain_sizes.get(0) == (quad_w, quad_h)
             and self._quad_swapchain_sizes.get(1) == (quad_w, quad_h)
@@ -133,39 +176,64 @@ class CoreQuadLayerMixin:
             and 1 in self._quad_swapchains
         ):
             self._xr_quad_layer_active = True
+            self._xr_quad_layer_failed = False
+            self._xr_quad_layer_failure_reason = None
             return True
 
+        backend = 'D3D11' if getattr(self, '_use_d3d11', False) else 'OpenGL'
+        last_exc = None
+        for fmt in formats:
+            for attempt in range(1, 3):
+                self._release_quad_layer_swapchains()
+                failed_eye = None
+                try:
+                    for eye_index in range(2):
+                        failed_eye = eye_index
+                        sc_info = xr.SwapchainCreateInfo(
+                            usage_flags=(
+                                xr.SwapchainUsageFlags.COLOR_ATTACHMENT_BIT |
+                                xr.SwapchainUsageFlags.SAMPLED_BIT
+                            ),
+                            format=fmt,
+                            sample_count=1,
+                            width=quad_w,
+                            height=quad_h,
+                            face_count=1,
+                            array_size=1,
+                            mip_count=1,
+                        )
+                        swapchain = xr.create_swapchain(self._xr_session, sc_info)
+                        self._quad_swapchains[eye_index] = swapchain
+                        self._quad_swapchain_images[eye_index] = xr.enumerate_swapchain_images(
+                            swapchain, image_type
+                        )
+                        self._quad_swapchain_sizes[eye_index] = (quad_w, quad_h)
+                        self._quad_swapchain_array_size[eye_index] = 1
+                    self._quad_swapchain_format = fmt
+                    self._xr_quad_layer_active = True
+                    self._xr_quad_layer_failed = False
+                    self._xr_quad_layer_failure_reason = None
+                    retry_note = f" recovered_after_retry={attempt - 1}" if attempt > 1 else ""
+                    print(
+                        f"[OpenXRViewer] Quad layer {backend} swapchains: "
+                        f"{quad_w}x{quad_h}/eye format={fmt} active=True {size_note}{retry_note}"
+                    )
+                    return True
+                except Exception as exc:
+                    last_exc = exc
+                    runtime_detail = _latest_vdxr_swapchain_detail()
+                    detail_note = f" {runtime_detail}" if runtime_detail else ""
+                    print(
+                        f"[OpenXRViewer] Quad layer {backend} swapchain create retry: "
+                        f"format={fmt} attempt={attempt}/2 eye={failed_eye} {size_note} "
+                        f"runtime_result={type(exc).__name__.removesuffix('Error')}{detail_note}"
+                    )
+            print(f"[OpenXRViewer] Quad layer {backend} swapchain format rejected after retries: format={fmt} {size_note}")
+
         self._release_quad_layer_swapchains()
-        try:
-            for eye_index in range(2):
-                sc_info = xr.SwapchainCreateInfo(
-                    usage_flags=(
-                        xr.SwapchainUsageFlags.COLOR_ATTACHMENT_BIT |
-                        xr.SwapchainUsageFlags.SAMPLED_BIT
-                    ),
-                    format=fmt,
-                    sample_count=1,
-                    width=quad_w,
-                    height=quad_h,
-                    face_count=1,
-                    array_size=1,
-                    mip_count=1,
-                )
-                swapchain = xr.create_swapchain(self._xr_session, sc_info)
-                self._quad_swapchains[eye_index] = swapchain
-                self._quad_swapchain_images[eye_index] = xr.enumerate_swapchain_images(
-                    swapchain, image_type
-                )
-                self._quad_swapchain_sizes[eye_index] = (quad_w, quad_h)
-                self._quad_swapchain_array_size[eye_index] = 1
-            self._xr_quad_layer_active = True
-            backend = 'D3D11' if getattr(self, '_use_d3d11', False) else 'OpenGL'
-            print(f"[OpenXRViewer] Quad layer {backend} swapchains: {quad_w}x{quad_h}/eye active=True")
-            return True
-        except Exception as exc:
-            self._set_quad_layer_failed(f"swapchain_create_failed_{type(exc).__name__}")
-            print(f"[OpenXRViewer] Quad layer unavailable: {type(exc).__name__}: {exc}")
-            return False
+        self._set_quad_layer_failed(f"swapchain_create_failed_{type(last_exc).__name__}")
+        print(f"[OpenXRViewer] Quad layer unavailable for formats {formats}: {type(last_exc).__name__}: {last_exc}")
+        return False
 
     def _quad_layer_source_texture(self, eye_index=0):
         if not self._runtime_direct_source:
@@ -235,6 +303,9 @@ class CoreQuadLayerMixin:
                 set_depth_mask(False)
                 source_tex.use(location=0)
                 self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
+                self._quad_copy_prog['u_linearize_srgb'].value = (
+                    1 if getattr(self, '_quad_swapchain_format', None) == _GL_RGBA8 else 0
+                )
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True
@@ -337,6 +408,9 @@ class CoreQuadLayerMixin:
                 set_depth_mask(False)
                 source_tex.use(location=0)
                 self._quad_copy_prog['u_flip_y'].value = 1 if flip_y else 0
+                self._quad_copy_prog['u_linearize_srgb'].value = (
+                    1 if getattr(self, '_quad_swapchain_format', None) == _GL_RGBA8 else 0
+                )
                 self._quad_copy_vao.render(moderngl.TRIANGLE_STRIP)
             xr.release_swapchain_image(swapchain, self._xr_sc_release_info)
             released = True

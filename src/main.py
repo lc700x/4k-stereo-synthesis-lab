@@ -59,7 +59,7 @@ def capture_loop():
     CaptureSessionLoop(context.capture_config, callbacks).run(shutdown_event)
 
 # Combined capture-to-runtime processing thread (replaces process_loop and runtime_loop)
-def process_runtime_loop():
+def process_runtime_loop(prepared_event=None):
     pipeline_context = build_runtime_pipeline_context(
         shutdown_event=shutdown_event,
         app_context=context,
@@ -84,7 +84,19 @@ def process_runtime_loop():
         warmup_stereo_once_for_frame=runtime_callbacks.warmup_stereo_once_for_frame,
         log_fast_plus_fused_runtime_state=runtime_callbacks.log_fast_plus_fused_runtime_state,
     )
-    RuntimePipelineLoop(pipeline_context).run()
+    pipeline = RuntimePipelineLoop(pipeline_context)
+    if RUN_MODE == "OpenXR":
+        try:
+            pipeline.prepare()
+        except Exception as exc:
+            print(f"[process_runtime_loop] Fatal: {type(exc).__name__}: {exc}", flush=True)
+            shutdown_event.set()
+            if prepared_event is not None:
+                prepared_event.set()
+            return
+    if prepared_event is not None:
+        prepared_event.set()
+    pipeline.run()
 
 cleanup_all_resources = build_cleanup_handler(
     global_processes=global_processes,
@@ -125,6 +137,10 @@ def main(mode="Viewer"):
     stats = None
 
     try:
+        if mode == "OpenXR":
+            os.environ["D2S_DEFER_CAPTURE_GAP_UNTIL_OPENXR_PROJECTION"] = "1"
+        else:
+            os.environ.pop("D2S_DEFER_CAPTURE_GAP_UNTIL_OPENXR_PROJECTION", None)
         threading.Thread(target=_watch_stop_request_file, name="StopRequestWatcher", daemon=True).start()
 
         app_settings = build_current_app_mode_settings(
@@ -153,10 +169,26 @@ def main(mode="Viewer"):
             bootstrap_done_set=context.openxr_state.bootstrap_done.set,
         )
 
-        threading.Thread(target=capture_loop, name="CaptureLoop", daemon=True).start()
+        if mode == "OpenXR":
+            runtime_prepared = threading.Event()
+            threading.Thread(
+                target=process_runtime_loop,
+                args=(runtime_prepared,),
+                name="RuntimePipeline",
+                daemon=True,
+            ).start()
+            while not runtime_prepared.wait(0.1):
+                if shutdown_event.is_set():
+                    break
+            if not shutdown_event.is_set():
+                threading.Thread(target=capture_loop, name="CaptureLoop", daemon=True).start()
+        else:
+            threading.Thread(target=capture_loop, name="CaptureLoop", daemon=True).start()
+            # Replace separate process_loop and depth_loop with combined thread.
+            threading.Thread(target=process_runtime_loop, name="RuntimePipeline", daemon=True).start()
 
-        # Replace separate process_loop and depth_loop with combined thread.
-        threading.Thread(target=process_runtime_loop, name="RuntimePipeline", daemon=True).start()
+        if shutdown_event.is_set():
+            return
 
         result = run_app_mode(
             mode,

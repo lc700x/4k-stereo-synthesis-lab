@@ -1114,7 +1114,7 @@ def test_gui_render_size_controls_expose_only_fixed_4k_scale_tiers():
     assert '"Render Align": self._parse_int(self.render_align_dd.value, DEFAULTS["Render Align"])' in config_mgr_text
 
     assert '"Render Scale:": "4K Render Scale:"' in localization_text
-    assert '"Render Scale:": "4K缩放档位:"' in localization_text
+    assert '"Render Scale:": "4K缩放档:"' in localization_text
     assert '"tooltip_render_scale"' in localization_text
     assert '(self.render_scale_dd, "tooltip_render_scale")' in handlers_text
     assert '(self.render_align_dd, "tooltip_render_align")' in handlers_text

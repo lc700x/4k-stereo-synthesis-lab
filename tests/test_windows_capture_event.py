@@ -207,7 +207,13 @@ def test_windows_capture_cuda_logs_source_fps_when_enabled(monkeypatch, capsys):
     ) in capsys.readouterr().out
 
 
+def _reset_capture_gap_defer_state():
+    windows_capture_event._PENDING_CAPTURE_GAP_LOGS.clear()
+    windows_capture_event._CAPTURE_GAP_DEFER_RELEASED = False
+
+
 def test_windows_capture_cuda_logs_callback_gap(capsys):
+    _reset_capture_gap_defer_state()
     runner = windows_capture_event.WindowsCaptureEventRunner(
         CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
     )
@@ -218,6 +224,21 @@ def test_windows_capture_cuda_logs_callback_gap(capsys):
 
     runner._log_capture_gap(10.8, {"monitor_index": 1, "minimum_update_interval": 8})
     assert "[CaptureGap] tool=WindowsCaptureCUDA mode=Monitor monitor=1 gap=0.60s" in capsys.readouterr().out
+
+
+def test_windows_capture_cuda_defers_gap_until_openxr_projection(monkeypatch, capsys):
+    _reset_capture_gap_defer_state()
+    monkeypatch.setenv("D2S_DEFER_CAPTURE_GAP_UNTIL_OPENXR_PROJECTION", "1")
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_gap(10.0, {"monitor_index": 1, "minimum_update_interval": 8})
+    runner._log_capture_gap(10.8, {"monitor_index": 1, "minimum_update_interval": 8})
+
+    assert capsys.readouterr().out == ""
+    windows_capture_event.flush_pending_capture_gap_logs()
+    assert "[CaptureGap] tool=WindowsCaptureCUDA mode=Monitor monitor=1 gap=0.80s" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("capture_tool", ["WindowsCapture", "WindowsCaptureROCm"])

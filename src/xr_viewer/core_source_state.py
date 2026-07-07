@@ -288,9 +288,10 @@ class CoreSourceStateMixin:
                 queued = self.depth_q.qsize()
             except Exception:
                 queued = -1
-            if getattr(self, "_openxr_debug", False):
+            if getattr(self, "_openxr_debug", False) and getattr(self, "_source_stale_debug_log_count", 0) < 1:
+                self._source_stale_debug_log_count = getattr(self, "_source_stale_debug_log_count", 0) + 1
                 print(
-                    "[OpenXRViewer][debug] Source stale: "
+                    "[DEBUG] [OpenXRViewer][debug] Source stale: "
                     f"age={age:.2f}s timeout={self._source_frame_timeout:.2f}s "
                     f"q={queued} count={self._source_stall_count}; keeping previous frame"
                 )
@@ -428,8 +429,6 @@ class CoreSourceStateMixin:
             payload = {"screen_roll": self.screen_roll}
             if include_stereo:
                 depth_strength = float(self.depth_strength)
-                if self._quad_layer_screen_presentable():
-                    depth_strength *= float(getattr(self, '_xr_quad_layer_stereo_boost', 1.0))
                 payload.update(
                     depth_strength=depth_strength,
                     convergence=self.convergence,

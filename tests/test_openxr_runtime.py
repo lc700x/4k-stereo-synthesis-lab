@@ -52,11 +52,14 @@ def test_use_environment_viewer_requires_real_environment_name():
     assert use_environment_viewer("studio")
 
 
-def test_controller_render_debug_logs_at_most_five_times():
+def test_controller_render_debug_logs_once_as_debug():
     text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
     render_func = text.split("def _render_controllers", 1)[1].split("    def _sort_primitives", 1)[0]
 
-    assert "log_count < 5" in render_func
+    assert "log_count < 1" in render_func
+    assert "logger.debug(" in render_func
+    assert '"[OpenXRViewer] controller render: "' in render_func
+    assert "[OpenXRViewer][debug] controller render:" not in render_func
     assert "_controller_render_debug_count = log_count + 1" in render_func
 
 
@@ -372,6 +375,7 @@ def test_opengl_projection_swapchains_are_lazy():
 
     assert "def _ensure_projection_swapchains" in opengl
     assert "Projection eye {eye_index} swapchain" in opengl
+    assert "flush_pending_capture_gap_logs()" in opengl
     assert "xr.create_swapchain" not in init_body
     assert "_ensure_projection_swapchains" in presenter
 
@@ -987,6 +991,35 @@ def test_runtime_direct_renderable_source_does_not_require_depth_texture():
 
     viewer._d3d11_native_renderer.has_frame = False
     assert not viewer._has_renderable_source_frame()
+
+
+def test_source_stale_debug_log_emits_once_as_debug(monkeypatch, capsys):
+    import xr_viewer.core_source_state as source_state
+    from xr_viewer.core_source_state import CoreSourceStateMixin
+
+    class Viewer(CoreSourceStateMixin):
+        pass
+
+    times = iter([10.0, 16.0])
+    monkeypatch.setattr(source_state.time, "perf_counter", lambda: next(times))
+    depth_q = queue.Queue()
+    depth_q.put(object())
+    depth_q.put(object())
+    viewer = Viewer()
+    viewer._last_source_stall_notice_time = 0.0
+    viewer._source_stall_count = 0
+    viewer._source_stalled = False
+    viewer._last_source_frame_time = 1.0
+    viewer._source_frame_timeout = 0.5
+    viewer._openxr_debug = True
+    viewer.depth_q = depth_q
+
+    viewer._pause_xr_output_for_source_stall()
+    viewer._pause_xr_output_for_source_stall()
+
+    output = capsys.readouterr().out
+    assert output.count("[DEBUG] [OpenXRViewer][debug] Source stale:") == 1
+    assert viewer._source_stall_count == 2
 
 
 def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pending():
@@ -2032,7 +2065,7 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_source_latency",
         "openxr_screen_quality_failed",
         "openxr_screen_upload_budget_skip",
-        "openxr_quad_screen_overlay",
+        "openxr_projection_screen_render",
         "openxr_background_panorama",
         "openxr_background_panorama_failed",
         "openxr_background_env_model",
@@ -2123,7 +2156,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "def make_quad_layers" in screen_presenter
     assert "bridge = viewer._screen_frame_bridge()" in screen_presenter
     assert "effect_source_rgb = viewer._update_runtime_frame(source_frame)" in screen_presenter
-    assert "self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)" in screen_presenter
+    assert "self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)" not in screen_presenter
+    assert "def update_or_reuse" in screen_presenter and "return []" in screen_presenter
     assert "quad_layer = viewer._make_quad_layer(quad_eye_index)" in screen_presenter
     assert "raise RuntimeError(f\"missing quad layer for eye {quad_eye_index}\")" in screen_presenter
     assert "openxr_quad_layer_failed" in screen_presenter
@@ -3096,11 +3130,11 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     prepare_frame_layers = screen_presenter_text.split("def prepare_frame_layers", 1)[1].split("def append_frame_layers", 1)[0]
     assert prepare_frame_layers.index("self.update_or_reuse(") < prepare_frame_layers.index("background_renderer.make_background_layers()")
     assert "def prepare_projection_frame_state" in screen_presenter_text
-    assert "def render_projection_screen" not in screen_presenter_text
+    assert "def render_projection_screen" in screen_presenter_text
     assert "_render_screen_background_effects" not in screen_presenter_text
     assert "_render_screen_foreground_effects" not in screen_presenter_text
-    assert "screen_presenter.render_projection_screen(" not in render_eye_block
-    assert "render_quad_screen_overlay(" in render_eye_block
+    assert "self._screen_layer_presenter.render_projection_screen(" in render_eye_block
+    assert "render_quad_screen_overlay(" not in render_eye_block
     assert "openxr_projection_screen_skipped" not in screen_presenter_text
     assert "runtime_rgb_depth_max_disparity_px = (" not in render_eye_block
     background_gate = render_eye_block.split("background_presenter.render_projection_background(", 1)[1].split(

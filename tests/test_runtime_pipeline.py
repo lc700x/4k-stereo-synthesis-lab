@@ -15,6 +15,9 @@ from stereo_runtime.pipeline import (
     _attach_pipeline_debug,
     _add_cuda_event_timings,
     _is_fatal_runtime_preparation_error,
+    _motion_sample,
+    _motion_score,
+    _runtime_motion_gate_enabled,
     _runtime_pending_cuda_wait_s,
     _runtime_sync_after_frame_enabled,
 )
@@ -24,6 +27,27 @@ from stereo_runtime.settings_snapshot import (
     SnapshotChangeClass,
     RuntimeSettingsSnapshot,
 )
+
+
+def test_motion_sample_normalizes_uint8_rgb_frames():
+    np = pytest.importorskip("numpy")
+    first = np.zeros((36, 64, 3), dtype=np.uint8)
+    second = first.copy()
+    second[:, :, :] = 3
+
+    score = _motion_score(_motion_sample(first), _motion_sample(second))
+
+    assert score == pytest.approx(3.0 / 255.0)
+
+
+def test_runtime_motion_gate_defaults_off_for_openxr(monkeypatch):
+    monkeypatch.delenv("D2S_RUNTIME_MOTION_GATE", raising=False)
+    ctx = SimpleNamespace(run_mode="OpenXR")
+
+    assert _runtime_motion_gate_enabled(ctx) is False
+
+    monkeypatch.setenv("D2S_RUNTIME_MOTION_GATE", "1")
+    assert _runtime_motion_gate_enabled(ctx) is True
 
 
 class OneShotShutdown:
@@ -126,6 +150,16 @@ class FakeRuntime:
 class PipelineRebuildRuntime(FakeRuntime):
     def apply_settings_snapshot(self, snapshot, *, active_preset=None):
         raise RuntimeSettingsPipelineRebuildRequired(snapshot, ("render_size_policy",))
+
+
+def test_runtime_pipeline_prepare_loads_runtime_once():
+    runtime = FakeRuntime()
+    loop = RuntimePipelineLoop(SimpleNamespace(stereo_runtime=runtime))
+
+    loop.prepare()
+    loop.prepare()
+
+    assert runtime.load_calls == 1
 
 
 def test_attach_cuda_ready_event_records_on_cuda_result(monkeypatch):

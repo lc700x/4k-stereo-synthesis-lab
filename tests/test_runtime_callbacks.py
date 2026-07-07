@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import queue
+import threading
 from types import SimpleNamespace
 
 from app_runtime.runtime_callbacks import RuntimeCallbacks
@@ -20,7 +21,7 @@ class FakeCounter:
     def add_runtime_timing(self, result):
         self.calls.append(("timing", result))
 
-    def log(self, now=None):
+    def log(self, now=None, *args):
         self.calls.append(("log", now))
 
     def set_latest(self, key, value):
@@ -104,6 +105,23 @@ def test_stop_active_capture_session_prefers_control():
 
     assert callbacks.stop_active_capture_session() is True
     assert calls == ["control"]
+
+
+def test_fps_breakdown_waits_for_openxr_render_active():
+    ctx = _context()
+    ctx.openxr_state.render_active = threading.Event()
+    callbacks = RuntimeCallbacks(ctx)
+
+    callbacks.log_fps_breakdown(now=1.0)
+    callbacks.log_source_health(now=1.0)
+
+    assert ("log", 1.0) not in ctx.fps_breakdown.calls
+    assert ("log", 1.0) in ctx.source_health.calls
+
+    ctx.openxr_state.render_active.set()
+    callbacks.log_fps_breakdown(now=2.0)
+
+    assert ("log", 2.0) in ctx.fps_breakdown.calls
 
 
 def test_runtime_callbacks_hot_reload_enqueues_settings_snapshot():

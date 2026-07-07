@@ -529,7 +529,7 @@ def test_curved_screen_grip_drag_uses_curved_uv_hit_point_not_flat_plane():
 
 
 
-def test_quad_layer_screen_overlay_has_no_projection_screen_body():
+def test_screen_presenter_draws_projection_screen_body():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     quad_text = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
 
@@ -558,17 +558,17 @@ def test_quad_layer_screen_overlay_has_no_projection_screen_body():
     assert "_screen_pose_quat_xyzw()" not in make_quad
     for finally_block in (update_quad_finally, update_quads_finally):
         assert "self.ctx.viewport = prev_viewport" in finally_block
-        assert "set_depth_mask(prev_depth_mask)" in finally_block
         assert "self.ctx.enable(moderngl.DEPTH_TEST)" in finally_block
 
     presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
-    assert "def render_projection_screen" not in presenter_text
-    render_overlay = presenter_text.split("def render_quad_screen_overlay", 1)[1].split(
+    assert "def render_projection_screen" in presenter_text
+    render_overlay = presenter_text.split("def render_projection_screen", 1)[1].split(
         "def projection_layer_needed", 1
     )[0]
-    assert "openxr_quad_screen_overlay" in render_overlay
-    assert "viewer.quad_vao.render(moderngl.TRIANGLE_STRIP)" not in render_overlay
-    assert "screen_depth_tex = viewer._runtime_depth_texture" not in render_overlay
+    assert "openxr_projection_screen_render" in render_overlay
+    assert "vertex_array.render(moderngl.TRIANGLE_STRIP" in render_overlay
+    assert "screen_depth_tex = viewer._runtime_depth_texture" in render_overlay
+    assert "viewer._render_border(mgl_fbo, vp_mat)" in render_overlay
     assert "openxr_projection_screen_skipped" not in presenter_text
 
 

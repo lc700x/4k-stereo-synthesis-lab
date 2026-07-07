@@ -10,6 +10,9 @@ from capture.types import FrameCopyMode, capture_frame_from_raw
 
 
 CAPTURE_CURSOR_DELAY_S = 0.2
+_PENDING_CAPTURE_GAP_LOGS = []
+_PENDING_CAPTURE_GAP_LOCK = threading.Lock()
+_CAPTURE_GAP_DEFER_RELEASED = False
 
 
 def _env_bool(name):
@@ -24,6 +27,30 @@ def _env_int(name):
     if value is None or str(value).strip() == "":
         return None
     return int(value)
+
+
+def _emit_capture_gap_log(line: str) -> None:
+    print(line, flush=True)
+
+
+def flush_pending_capture_gap_logs() -> None:
+    global _CAPTURE_GAP_DEFER_RELEASED
+    with _PENDING_CAPTURE_GAP_LOCK:
+        pending = list(_PENDING_CAPTURE_GAP_LOGS)
+        _PENDING_CAPTURE_GAP_LOGS.clear()
+        _CAPTURE_GAP_DEFER_RELEASED = True
+    for line in pending:
+        _emit_capture_gap_log(line)
+
+
+def _defer_capture_gap_log(line: str) -> bool:
+    if not _env_bool("D2S_DEFER_CAPTURE_GAP_UNTIL_OPENXR_PROJECTION"):
+        return False
+    with _PENDING_CAPTURE_GAP_LOCK:
+        if _CAPTURE_GAP_DEFER_RELEASED:
+            return False
+        _PENDING_CAPTURE_GAP_LOGS.append(line)
+    return True
 
 
 def _fps_to_minimum_update_interval_ms(fps):
@@ -164,11 +191,12 @@ class WindowsCaptureEventRunner:
         self._last_frame_ts = now
         if gap < 0.5:
             return
-        print(
+        line = (
             f"[CaptureGap] tool={self.capture_tool} mode={self.config.capture_mode} "
-            f"monitor={self.config.monitor_index} gap={gap:.2f}s kwargs={capture_kwargs}",
-            flush=True,
+            f"monitor={self.config.monitor_index} gap={gap:.2f}s kwargs={capture_kwargs}"
         )
+        if not _defer_capture_gap_log(line):
+            _emit_capture_gap_log(line)
 
     def _start_keyboard_worker(self, shutdown_event):
         user32 = ctypes.windll.user32

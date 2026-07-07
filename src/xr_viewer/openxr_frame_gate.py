@@ -32,8 +32,7 @@ class OpenXRFrameGate:
         if not viewer._has_fresh_source_frame(now):
             viewer._breakdown_inc('openxr_no_fresh')
             viewer._pause_xr_output_for_source_stall()
-            quad_presentable = getattr(viewer, '_quad_layer_screen_presentable', lambda: False)()
-            if not viewer._has_renderable_source_frame() and not quad_presentable:
+            if not viewer._has_renderable_source_frame():
                 viewer._breakdown_inc('openxr_no_renderable')
                 self.submit_empty_frame(
                     composition_layers=composition_layers,
@@ -54,16 +53,6 @@ class OpenXRFrameGate:
 
     def _prewarm_empty_frame_swapchain(self):
         viewer = self.viewer
-        ensure_quad = getattr(viewer, '_ensure_quad_layer_swapchains_for_source', None)
-        source_size_getter = getattr(viewer, '_ready_quad_source_size', None)
-        source_size = source_size_getter() if callable(source_size_getter) else getattr(viewer, '_runtime_eye_texture_size', None)
-        if callable(ensure_quad) and source_size is not None:
-            try:
-                if ensure_quad(source_size):
-                    return True
-            except Exception as exc:
-                print(f"[OpenXRViewer] Quad empty-frame prewarm failed: {type(exc).__name__}: {exc}")
-
         ensure_projection = getattr(viewer, '_ensure_projection_swapchains', None)
         if callable(ensure_projection):
             try:

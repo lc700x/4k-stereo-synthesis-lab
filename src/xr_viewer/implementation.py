@@ -2169,7 +2169,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if perf_enabled:
             _mark_perf('env')
 
-        self._screen_layer_presenter.render_quad_screen_overlay(
+        self._screen_layer_presenter.render_projection_screen(
             mgl_fbo=mgl_fbo,
             vp_mat=vp_mat,
             mark_perf=_mark_perf if perf_enabled else None,

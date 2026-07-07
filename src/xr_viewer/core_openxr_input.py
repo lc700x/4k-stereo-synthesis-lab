@@ -31,7 +31,6 @@ class CoreOpenXRInputMixin:
                 state = xr.SessionState(event.state)
                 if state == xr.SessionState.READY:
                     now = time.perf_counter()
-                    self._debug_openxr_trace("event READY", now)
                     if (
                         now < self._openxr_retry_cooldown_until
                         or self._xr_session is None
@@ -45,7 +44,6 @@ class CoreOpenXRInputMixin:
                                 xr.ViewConfigurationType.PRIMARY_STEREO
                         ),
                     )
-                    self._debug_openxr_trace("event READY begin_session", now)
                     self._prewarm_ready_quad_swapchains()
                     self._source_resume_grace_until = (
                         time.perf_counter() + self._source_resume_grace

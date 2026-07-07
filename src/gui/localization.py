@@ -350,7 +350,7 @@ MESSAGE_CATALOGS = {
         "VSync": "垂直同步",
         "Capture FPS:": "捕获帧率:",
         "Render Policy:": "渲染策略:",
-        "Render Scale:": "4K缩放档位:",
+        "Render Scale:": "4K缩放档:",
         "Render Fixed Size:": "固定尺寸:",
         "Render Pixel Cap:": "像素上限:",
         "Render Min Side:": "最短边:",

@@ -1,5 +1,8 @@
+import logging
 import math
 import time
+
+logger = logging.getLogger(__name__)
 
 import moderngl
 import numpy as np
@@ -376,11 +379,11 @@ class CoreLaserRenderMixin:
             now_log = time.perf_counter()
             last_log = float(getattr(self, '_controller_render_debug_last', 0.0) or 0.0)
             log_count = int(getattr(self, '_controller_render_debug_count', 0) or 0)
-            if log_count < 5 and now_log - last_log >= 2.0:
+            if log_count < 1 and now_log - last_log >= 2.0:
                 self._controller_render_debug_last = now_log
                 self._controller_render_debug_count = log_count + 1
-                print(
-                    "[OpenXRViewer][debug] controller render: "
+                logger.debug(
+                    "[OpenXRViewer] controller render: "
                     f"l_grip={self._grip_mat_l is not None} r_grip={self._grip_mat_r is not None} "
                     f"l_aim={self._aim_mat_l is not None} r_aim={self._aim_mat_r is not None} "
                     f"l_prims={len(self._ctrl_prims_l or [])} r_prims={len(self._ctrl_prims_r or [])} "
@@ -388,8 +391,7 @@ class CoreLaserRenderMixin:
                     f"r_idle={self._frame_now - self._laser_last_move_r:.2f} "
                     f"draw={len(controllers)} env={getattr(self, '_environment_model', None)} "
                     f"active_env={getattr(self, '_active_environment', None)} "
-                    f"pano={bool(getattr(self, '_panorama_background_path', None))}",
-                    flush=True,
+                    f"pano={bool(getattr(self, '_panorama_background_path', None))}"
                 )
         if not controllers:
             return

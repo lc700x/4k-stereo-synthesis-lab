@@ -75,6 +75,43 @@ Current task queue:
 
 ## Current Status
 
+### 2026-07-07 OpenXR Runtime Preparation Before Capture
+
+Implemented locally in the current worktree:
+
+- Fixed the OpenXR startup order that allowed `WindowsCaptureCUDA` capture to run while TensorRT / CUDA runtime preparation was still building the engine.
+- Added `RuntimePipelineLoop.prepare()`, an idempotent wrapper around the existing `stereo_runtime.load()` path. This reuses the provider/artifact preparation flow instead of adding a second model-build path.
+- `src/main.py` now starts the OpenXR runtime pipeline first, waits for runtime preparation / TensorRT build to finish, and only then starts `CaptureLoop`.
+- If OpenXR runtime preparation fails, the runtime thread sets `shutdown_event`, unblocks the main thread, and capture is not started.
+- Non-OpenXR modes keep the previous startup order.
+
+Reason:
+
+```text
+Starting capture during TensorRT build let WindowsCaptureCUDA and TensorRT/PyTorch CUDA initialization/build work touch CUDA concurrently, which produced errors such as:
+CUDA error: operation would make the legacy stream depend on a capturing blocking stream
+```
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\main.py src\stereo_runtime\pipeline.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_runtime_pipeline.py -q
+git diff --check
+```
+
+Result:
+
+```text
+py_compile passed
+37 runtime pipeline tests passed
+git diff --check reported only existing LF/CRLF warnings, no whitespace errors
+```
+
+Next validation target:
+
+- Re-run OpenXR with a missing/outdated TensorRT engine and confirm the log order is `Building TensorRT engine...` -> `native engine ready` -> `CaptureGap` / capture startup, with no `capture_loop` CUDA stream error during build.
+
 ### 2026-07-07 OpenXR Quad/Projection Real-Device Finding
 
 Implemented and pushed:

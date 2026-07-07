@@ -1,8 +1,12 @@
 import ctypes
 import time
 
+import moderngl
+from OpenGL.GL import GL_CCW, glFrontFace
+
 from .background_layer_renderer import BackgroundLayerRenderer
 from .background_presenter import BackgroundPresenter
+from .gl_state import set_depth_mask
 
 try:
     import xr
@@ -98,17 +102,139 @@ class ScreenLayerPresenter:
         return True
 
     def update_or_reuse(self, *, screen_frame_uploaded=False):
-        return self.viewer._update_quad_layer_swapchains(force=screen_frame_uploaded)
+        return []
 
     def quad_screen_unavailable_reason(self):
         reason = getattr(self.viewer, '_quad_layer_unavailable_reason', None)
         return reason() if callable(reason) else None
 
-    def render_quad_screen_overlay(self, *, mgl_fbo, vp_mat, mark_perf=None):
+    def render_projection_screen(self, *, mgl_fbo, vp_mat, mark_perf=None):
         viewer = self.viewer
-        viewer._breakdown_inc("openxr_quad_screen_overlay")
+        viewer._breakdown_inc("openxr_projection_screen_render")
+        sc_w, sc_h = viewer._swapchain_sizes[viewer._current_eye_index]
+
+        if viewer._runtime_direct_source:
+            source_tex = viewer._runtime_eye_textures[viewer._current_eye_index]
+            if source_tex is None:
+                return
+            source_size = viewer._runtime_eye_texture_size or viewer._texture_size
+            screen_depth_tex = viewer._runtime_depth_texture
+            source_label = f'runtime_eye_{viewer._current_eye_index}'
+        else:
+            source_tex = viewer.color_tex
+            source_size = viewer._texture_size
+            screen_depth_tex = viewer.depth_tex
+            source_label = 'color'
+        if source_tex is None or screen_depth_tex is None:
+            return
+
+        eye_index = viewer._current_eye_index
+        eye_sign = -1.0 if eye_index == 0 else 1.0
+        model = viewer._build_model_mat4()
+        mvp = vp_mat @ model
+        if viewer._runtime_direct_source:
+            viewer._log_screen_footprint_once(eye_index, mvp, (sc_w, sc_h))
+
+        screen_tex = viewer._prepare_screen_quality_texture(
+            source_tex,
+            source_size,
+            mvp,
+            (sc_w, sc_h),
+            source_label,
+        ) or source_tex
         if mark_perf:
-            mark_perf('screen_quad_layer')
+            mark_perf('quality')
+
+        runtime_rgb_depth = not viewer._runtime_direct_source
+        render_width = 0 if viewer._runtime_direct_source else int(
+            getattr(viewer, '_runtime_rgb_depth_render_width', 0) or 0
+        )
+        if render_width <= 0:
+            render_width = int((viewer._texture_size or (0, 0))[0] or 0)
+        max_disparity = 0.0 if viewer._runtime_direct_source else float(
+            getattr(viewer, '_runtime_rgb_depth_max_disparity_px', 0.0) or 0.0
+        )
+        disparity_uv = max(0.0, max_disparity) / float(render_width) if render_width > 0 else 0.0
+        eye_offset = 0.0 if viewer._runtime_direct_source else eye_sign * disparity_uv / 2.0
+        depth_strength = 0.0 if viewer._runtime_direct_source else max(
+            0.0,
+            float(getattr(viewer, '_runtime_rgb_depth_depth_strength', viewer.depth_strength) or 0.0),
+        )
+
+        screen_source_size = source_size or (sc_w, sc_h)
+        shader_resolution_mode = str(
+            getattr(viewer, '_openxr_rgb_depth_shader_resolution', 'source') or 'source'
+        )
+        if viewer._runtime_direct_source or shader_resolution_mode == 'source':
+            shader_resolution = (float(screen_source_size[0]), float(screen_source_size[1]))
+        elif shader_resolution_mode == 'swapchain':
+            shader_resolution = (float(sc_w), float(sc_h))
+        else:
+            shader_resolution = None
+        if runtime_rgb_depth and not getattr(viewer, '_openxr_rgb_depth_shader_resolution_logged', False):
+            print(
+                "[OpenXRViewer] rgb_depth shader:"
+                f" resolution_mode={shader_resolution_mode}"
+                f" resolution={shader_resolution if shader_resolution is not None else 'unset'}"
+                f" feather={int(bool(getattr(viewer, '_openxr_rgb_depth_feather', False)))}",
+                f" max_disparity_px={max_disparity:.3f}"
+                f" render_width={render_width}"
+                f" disparity_uv={disparity_uv:.6f}"
+                f" eye_offset_abs={abs(eye_offset):.6f}"
+                f" depth_strength={depth_strength:.6f}"
+                f" convergence={float(viewer.convergence):.6f}",
+                flush=True,
+            )
+            viewer._openxr_rgb_depth_shader_resolution_logged = True
+
+        mgl_fbo.use()
+        viewer.ctx.viewport = (0, 0, sc_w, sc_h)
+        viewer.ctx.enable(moderngl.DEPTH_TEST)
+        set_depth_mask(True)
+        viewer.ctx.disable(moderngl.BLEND)
+        viewer.ctx.disable(moderngl.CULL_FACE)
+        glFrontFace(GL_CCW)
+
+        screen_tex.use(location=0)
+        screen_depth_tex.use(location=1)
+        feather_enabled = bool(runtime_rgb_depth and viewer._openxr_rgb_depth_feather)
+        if viewer._screen_curved and viewer._curved_prog is not None:
+            params = (
+                viewer.screen_width,
+                viewer.screen_height,
+                viewer.screen_distance,
+                viewer.screen_pan_x,
+                viewer.screen_pan_y,
+                viewer.screen_yaw,
+                viewer.screen_pitch,
+                viewer.screen_roll,
+            )
+            if viewer._curved_verts_params != params:
+                arc_verts = viewer._build_curved_screen_verts()
+                viewer._curved_vbo.write(arc_verts.tobytes())
+                viewer._curved_verts_params = params
+            prog = viewer._curved_prog
+            prog['u_mvp'].write(vp_mat.T.tobytes())
+            vertex_array = viewer._curved_vao
+            render_kwargs = {'vertices': (48 + 1) * 2}
+        else:
+            prog = viewer.prog
+            prog['u_mvp'].write(mvp.T.tobytes())
+            vertex_array = viewer.quad_vao
+            render_kwargs = {}
+        if shader_resolution is not None:
+            prog['u_resolution'].value = shader_resolution
+        prog['u_feather_enabled'].value = 1 if feather_enabled else 0
+        prog['u_feather_width'].value = 0.02 if feather_enabled else 0.0
+        prog['u_viewport'].value = (0.0, 0.0, float(sc_w), float(sc_h))
+        prog['u_roll'].value = 0.0 if viewer._runtime_direct_source else viewer.screen_roll
+        prog['u_eye_offset'].value = eye_offset
+        prog['u_depth_strength'].value = depth_strength
+        prog['u_convergence'].value = float(viewer.convergence)
+        prog['u_corner_radius'].value = viewer._corner_radius
+        vertex_array.render(moderngl.TRIANGLE_STRIP, **render_kwargs)
+        if mark_perf:
+            mark_perf('screen')
         if not viewer._screen_curved:
             viewer._render_border(mgl_fbo, vp_mat)
         if mark_perf:
@@ -245,6 +371,8 @@ class ScreenLayerPresenter:
         return composition_layers
 
     def make_quad_layers(self, updated_quad_eyes):
+        if not updated_quad_eyes:
+            return [], [], []
         viewer = self.viewer
         quad_layers = []
         quad_layer_headers = []

@@ -535,8 +535,8 @@ def test_openxr_no_fresh_but_renderable_source_continues_to_screen_present():
 
     assert "viewer._poll_source_frame(upload=False)" in stale_block
     assert "_pause_xr_output_for_source_stall" in source_state
-    assert "quad_presentable = getattr(viewer, '_quad_layer_screen_presentable', lambda: False)()" in gate_text
-    assert "if not viewer._has_renderable_source_frame() and not quad_presentable:" in gate_text
+    assert "quad_presentable = getattr(viewer, '_quad_layer_screen_presentable', lambda: False)()" not in gate_text
+    assert "if not viewer._has_renderable_source_frame():" in gate_text
     assert "self.frame_submitter.submit(" in gate_text
 
     stale_idx = pipeline_text.index("if viewer._session_ready_pending or not viewer._has_fresh_source_frame(now):")
@@ -667,7 +667,7 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert background_presenter.count("if eye_index == 0:") == 1
 
 
-def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
+def test_projection_screen_path_skips_glb_environment_mesh_hot_path():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_eye = impl_text.split("def _render_eye", 1)[1].split("# 3. Keyboard", 1)[0]
     background_presenter = (SRC / "xr_viewer" / "background_presenter.py").read_text(encoding="utf-8")
@@ -678,8 +678,8 @@ def test_quad_screen_path_skips_glb_environment_mesh_hot_path():
     assert "draw_projection_screen" not in render_eye
     assert "_openxr_draw_projection_screen" not in render_eye
     assert "projection_screen_enabled=" not in render_eye
-    assert "screen_presenter.render_projection_screen(" not in render_eye
-    assert "def render_projection_screen" not in screen_presenter
+    assert "self._screen_layer_presenter.render_projection_screen(" in render_eye
+    assert "def render_projection_screen" in screen_presenter
     assert "background_presenter.projection_fallback_needed()" not in render_eye
     assert "and not panorama_configured" not in background_presenter
     assert "viewer._render_env_model(mgl_fbo, vp_mat, view_mat)" not in background_presenter

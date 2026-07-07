@@ -115,6 +115,13 @@ class CoreOpenXROpenGLMixin:
             self._xr_opengl_swapchain_format = sc_info.format
             if eye_index == 0:
                 print(f"[OpenXRViewer] OpenGL projection swapchain format selected: {sc_info.format}")
+            elif eye_index == 1:
+                try:
+                    from capture.backends.windows_capture_event import flush_pending_capture_gap_logs
+
+                    flush_pending_capture_gap_logs()
+                except Exception:
+                    pass
         return True
 
     def _init_openxr_opengl(self, quiet=False):

@@ -468,8 +468,8 @@ _STEREO_PRESETS: dict[StereoModePreset, StereoConfig] = {
 
 _OPENXR_PRESETS: dict[StereoModePreset, OpenXRRenderConfig] = {
     "auto": OpenXRRenderConfig(),
-    "traditional_fastest": OpenXRRenderConfig(depth_strength=2.5, convergence=0.0, parallax_preset="standard"),
-    "cinema": OpenXRRenderConfig(depth_strength=1.8, convergence=0.0, parallax_preset="standard"),
+    "traditional_fastest": OpenXRRenderConfig(depth_strength=2.5, convergence=0.0, parallax_preset="standard", output_mode="rgb_depth"),
+    "cinema": OpenXRRenderConfig(depth_strength=1.8, convergence=0.0, parallax_preset="standard", output_mode="full_synthesis_eyes"),
     "game_low_latency": OpenXRRenderConfig(depth_strength=1.5, convergence=0.0, parallax_preset="comfort"),
     "still_image_hq": OpenXRRenderConfig(depth_strength=2.1, convergence=0.0, parallax_preset="strong"),
     "debug_export": OpenXRRenderConfig(depth_strength=2.0, convergence=0.0, parallax_preset="standard"),

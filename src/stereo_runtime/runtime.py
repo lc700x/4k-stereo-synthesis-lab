@@ -1141,7 +1141,13 @@ class StereoRuntime:
         profile = self._predict_depth_profile(rgb_frame)
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
-        prewarp_eyes = _openxr_prewarp_eyes_enabled()
+        output_mode = str(getattr(openxr_config, "output_mode", "auto") or "auto")
+        if output_mode == "rgb_depth":
+            prewarp_eyes = False
+        elif output_mode == "full_synthesis_eyes":
+            prewarp_eyes = True
+        else:
+            prewarp_eyes = _openxr_prewarp_eyes_enabled()
         stereo_config, convergence_debug = _dynamic_convergence_config_for_depth(
             self,
             depth,
@@ -1183,6 +1189,8 @@ class StereoRuntime:
             pack_start = time.perf_counter()
             left_eye = openxr.left_eye
             right_eye = openxr.right_eye
+            if bool(getattr(stereo_config, "cross_eyed", False)):
+                left_eye, right_eye = right_eye, left_eye
             _record_cuda_event(cuda_events, "openxr_pack_start", left_eye)
             if _openxr_runtime_output_uint8_enabled():
                 packed_left, left_pack_backend = _pack_openxr_eye_rgba_u8_with_backend(left_eye)
@@ -1228,6 +1236,7 @@ class StereoRuntime:
         debug["packing_format"] = "none"
         debug["active_settings_version"] = int(self.active_settings_version)
         debug["runtime_output_dtype"] = _runtime_eye_dtype(left_eye, right_eye)
+        debug["cross_eyed"] = int(bool(getattr(stereo_config, "cross_eyed", False)))
         debug["hot_reload_class"] = self.last_settings_change_class
         debug["hot_reload_changed_fields"] = list(self.last_settings_changed_fields)
         _consume_pending_temporal_reset_reasons(self, debug)

@@ -35,7 +35,7 @@ class RenderSizeConfig:
     fixed_height: int = 1080
     max_pixels: int = 3840 * 2160
     min_dimension: int = 480
-    align: int = 8
+    align: int = 1
 
 
 def render_size_config_from_settings(settings: dict | None) -> RenderSizeConfig:
@@ -47,7 +47,7 @@ def render_size_config_from_settings(settings: dict | None) -> RenderSizeConfig:
         fixed_height=_int_setting(settings, "Render Fixed Height", 1080),
         max_pixels=_int_setting(settings, "Render Max Pixels", 3840 * 2160),
         min_dimension=_int_setting(settings, "Render Min Dimension", 480),
-        align=_int_setting(settings, "Render Align", 8),
+        align=_int_setting(settings, "Render Align", 1),
     )
 
 

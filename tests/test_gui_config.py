@@ -57,6 +57,13 @@ def test_gui_logs_fps_breakdown_as_debug():
     assert 'if text.startswith("[FPSBreakdown]"):\n            child_logger.info(text)' not in text
 
 
+def test_gui_log_poll_survives_bad_log_item():
+    text = _file_text("process.py")
+    poll_block = text[text.index("async def _poll_log_queue"):text.index("    def _set_log_problem_state", text.index("async def _poll_log_queue"))]
+    assert 'logger.exception("GUI log queue item skipped")' in poll_block
+    assert "changed = True" in poll_block
+
+
 
 def test_gui_render_size_policy_is_fixed_to_scaled_for_load_and_save():
     config_text = _config_source().read_text(encoding="utf-8")
@@ -1073,7 +1080,7 @@ def test_gui_render_size_controls_expose_only_fixed_4k_scale_tiers():
         "Render Fixed Width": 1920,
         "Render Fixed Height": 1080,
         "Render Min Dimension": 480,
-        "Render Align": 8,
+        "Render Align": 1,
     }.items():
         expected = f'"{key}": "{value}"' if isinstance(value, str) else f'"{key}": {value}'
         assert expected in config_text

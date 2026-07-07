@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import operator
 import sys
 import threading
 import time
@@ -13,6 +14,10 @@ def progress_write(message: str, *, leading_newline: bool = False) -> None:
         text = "\n" + text
     sys.stdout.write(text + "\n")
     sys.stdout.flush()
+
+
+def status_write(message: str) -> None:
+    progress_write("[D2S_STATUS] " + str(message))
 
 
 def _format_bytes(value: int | float | None) -> str:
@@ -116,9 +121,24 @@ class _StageLogProgress(_NullProgress):
 
 
 class DownloadProgress(_NullProgress):
+    _lock = threading.RLock()
+
+    @classmethod
+    def get_lock(cls):
+        return cls._lock
+
+    @classmethod
+    def set_lock(cls, lock):
+        cls._lock = lock
+
     def __init__(self, *args, **kwargs):
-        total = kwargs.get("total", args[0] if args else None)
+        iterable = args[0] if args and not isinstance(args[0], (int, float)) else None
+        total = kwargs.get("total")
+        if total is None:
+            total = operator.length_hint(iterable, 0) if iterable is not None else (args[0] if args else None)
         super().__init__(str(kwargs.get("desc") or "download"), total=total)
+        self.iterable = iterable
+        self._progress_unit = "steps" if iterable is not None else "bytes"
         self.n = int(kwargs.get("initial") or 0)
         self._mininterval = float(kwargs.get("mininterval") or 0.25)
         self.leave = bool(kwargs.get("leave", True))
@@ -134,10 +154,36 @@ class DownloadProgress(_NullProgress):
     def fp(self):
         return sys.stdout
 
+    def __iter__(self):
+        if self.iterable is None:
+            return iter(())
+        try:
+            for item in self.iterable:
+                yield item
+                self.update(1)
+        finally:
+            self.close()
+
     def update(self, amount=1):
         self.n += amount
         self._emit(interval_s=self._mininterval)
         return None
+
+    def _emit(self, *, force: bool = False, interval_s: float = 0.25) -> None:
+        if not self.total:
+            return
+        now = time.perf_counter()
+        complete = self.n >= self.total
+        if not force and not complete and now - self._last_emit_at < interval_s:
+            return
+        self._last_emit_at = now
+        emit_progress_event(
+            self.desc,
+            min(self.n, self.total),
+            self.total,
+            started_at=self._started_at,
+            unit=self._progress_unit,
+        )
 
     def set_description(self, desc, refresh=True):
         self.desc = str(desc or "")

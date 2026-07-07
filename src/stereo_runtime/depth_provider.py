@@ -13,7 +13,7 @@ import torch.nn.functional as F
 
 from .depth_upsample import DepthUpsampleMode, upsample_depth
 from .output import ensure_bchw, ensure_b1hw, match_depth
-from .progress import DownloadProgress, progress_write
+from .progress import DownloadProgress, progress_write, status_write
 from utils.network import huggingface_endpoint_candidates
 
 DISTILL_ANY_DEPTH_BASE_NAME = "Distill-Any-Depth-Base"
@@ -194,15 +194,19 @@ def _progress_print(message):
 def _hf_download_progress_patch():
     originals = []
     try:
-        for module_name in ("huggingface_hub.utils.tqdm", "huggingface_hub.file_download"):
+        for module_name, attr in (
+            ("huggingface_hub.utils.tqdm", "tqdm"),
+            ("huggingface_hub.file_download", "tqdm"),
+            ("huggingface_hub._snapshot_download", "hf_tqdm"),
+        ):
             module = importlib.import_module(module_name)
-            originals.append((module, getattr(module, "tqdm", None)))
-            setattr(module, "tqdm", DownloadProgress)
+            originals.append((module, attr, getattr(module, attr, None)))
+            setattr(module, attr, DownloadProgress)
         yield
     finally:
-        for module, original in reversed(originals):
+        for module, attr, original in reversed(originals):
             if original is not None:
-                setattr(module, "tqdm", original)
+                setattr(module, attr, original)
 
 
 @contextmanager
@@ -360,6 +364,9 @@ def _resolve_hf_model_file(
                         f"[Main] Preparing depth model download: {model_id}/{filename} "
                         f"to {cache_dir_text}. First download may take several minutes."
                     )
+                    status_write(
+                        f"正在下载深度模型权重：{model_id}/{filename}。首次下载可能需要几分钟，进度请看上方进度条。"
+                    )
                     download_url = _hf_resolve_url(endpoint, model_id, filename)
                     _progress_print(f"[Main] Model download URL: {download_url}")
                     _probe_download_url(download_url)
@@ -371,6 +378,7 @@ def _resolve_hf_model_file(
                         force_download=force_download,
                         tqdm_class=DownloadProgress,
                     )
+                    status_write("深度模型权重下载完成，正在准备下一步。")
                     _RESOLVED_HF_MODEL_FILES[cache_key] = path
                     return path
                 except Exception as exc:

@@ -767,9 +767,9 @@ def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch)
         screen_frame_uploaded=True
     )
 
-    assert len(quad_layers) == 1
-    assert len(quad_headers) == 1
-    assert updated == [0]
+    assert quad_layers == []
+    assert quad_headers == []
+    assert updated == []
     assert render_projection is True
     assert background_headers == []
     assert presenter._frame_background_projection_fallback is False
@@ -794,9 +794,9 @@ def test_screen_layer_presenter_keeps_quad_when_background_layer_build_fails(mon
         screen_frame_uploaded=True
     )
 
-    assert len(quad_layers) == 1
-    assert len(quad_headers) == 1
-    assert updated == [0]
+    assert quad_layers == []
+    assert quad_headers == []
+    assert updated == []
     assert render_projection is True
     assert background_headers == []
     assert presenter._frame_background_projection_fallback is True

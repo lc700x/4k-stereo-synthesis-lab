@@ -17,7 +17,7 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Current focus:
 
 ```text
-OpenXR projection-main stereo presentation, validation logging, GPU glow constraints, and real-device presentation/runtime handoff follow-ups
+OpenXR projection-main stereo presentation, Traditional/Cinema runtime output contracts, GUI/runtime progress visibility, render-size defaults, and real-device presentation/runtime handoff follow-ups
 ```
 
 Latest pushed task commit:
@@ -31,7 +31,7 @@ Canonical specs for current work:
 - `docs/01-Realtime-2d-to-3d-specification.md` - official final runtime process spec; `docs/25` is obsolete.
 - `docs/02-desktop2stereo-engineering-design-specification.md` - engineering implementation, migration, compatibility cleanup, and compliance status.
 - `docs/35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md` - target OpenXR asynchronous decoupled rendering architecture.
-- `docs/36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md` - implementation plan for the OpenXR asynchronous refactor; use it as the current plan for Quad-layer screen presentation, panorama background, GPU Glow, and wall reflection work.
+- `docs/36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md` - implementation plan for the OpenXR asynchronous refactor; use it as the current plan for projection-layer main-screen presentation, optional Quad diagnostics/overlays, panorama background, GPU Glow, and wall reflection work.
 - `prompts/codex-refactor-prompt.md`
 - This file: `docs/00-api-handoff-progress.md`
 
@@ -41,7 +41,7 @@ Canonical specs for current work:
 - Keep `stereo_runtime` responsible for depth inference, stereo synthesis, OpenXR render-core config, output tensors, timings, and provider/debug contracts.
 - Keep capture/session/window lifecycle, GUI settings persistence, OpenXR session/swapchain timing, and final display/submit outside `stereo_runtime`.
 - For OpenXR rendering, treat the virtual screen as the hard-realtime path. Background, Glow, and wall reflection are soft-realtime paths that must consume already-safe GPU results and must not block `xrEndFrame`.
-- Real-device VDXR validation showed Quad layer submission can carry distinct left/right runtime textures but still appear mono in the headset. Do not rely on Quad layer as the main stereo presentation path under VDXR; use projection-layer rendering for the main 3D screen and keep Quad as an experimental/diagnostic or overlay path.
+- Real-device VDXR validation showed Quad layer submission can carry distinct left/right runtime textures but still appear mono in the headset. Do not rely on Quad layer as the main stereo presentation path under VDXR; the main virtual screen now belongs on projection-layer rendering, with Quad kept only as an experimental/diagnostic or overlay path.
 - Keep compatibility paths where recent tasks introduced new contracts: `RuntimeSettingsSnapshot`, normalized parallax budgets, and `CapturedFrame` metadata.
 - Do not commit or upload runtime artifacts: `models/`, `outputs/`, `python3/`, `python-cu13/`, `downloads/`, `.codegraph/`, or `4K.jpg`.
 
@@ -52,7 +52,7 @@ Canonical specs for current work:
 - The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
 - TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
 - CUDA/GL image texture upload must remain image-texture-first. PBO is an acceptable GPU fallback, but it must be logged as fallback and must not hide the original image texture failure. Any CPU upload fallback in OpenXR, local viewer, stream/debug realtime display, or depth provider hot path must print a red console warning and record the reason.
-- OpenXR Quad layer is not a reliable VDXR main stereo display path. The latest logs prove runtime left/right eye tensors differ, OpenGL shared-array Quad swapchains are created, and Quad headers submit `eye0 array=0` / `eye1 array=1`; however the headset still shows no useful 3D. Projection layer remains the known-good OpenXR stereo path because it uses standard per-eye projection views.
+- OpenXR Quad layer is not a reliable VDXR main stereo display path. The latest logs prove runtime left/right eye tensors differ, OpenGL shared-array Quad swapchains are created, and Quad headers submit `eye0 array=0` / `eye1 array=1`; however the headset still shows no useful 3D. Projection layer remains the known-good OpenXR stereo path because it uses standard per-eye projection views. Current code should keep the main screen off the Quad path.
 - OpenXR Glow / screen-light sampling must follow `docs/20-openxr-gpu-glow-guide.md`: use GPU source texture, low-resolution glow texture, shader/compute sampling, or future D3D/Vulkan GPU passes. Do not reintroduce realtime `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` as screen-light sampling sources.
 
 ## Future Work
@@ -71,9 +71,42 @@ Current task queue:
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
 10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
-11. Rebase OpenXR main-screen presentation on the projection layer for VDXR. Keep Quad layer diagnostics and optional shared-array experimentation available, but do not use Quad as the default proof path for headset 3D.
+11. Validate the landed projection-layer main-screen path on VDXR with real headset logs. Quad layer diagnostics and optional shared-array experimentation may remain available, but Quad must not return as the default proof path for headset 3D.
 
 ## Current Status
+
+### 2026-07-08 Projection Main Path, Output Modes, Progress Logs, and Render Align Default
+
+Implemented locally in the current worktree:
+
+- Switched the OpenXR main virtual screen path off Quad layer. `ScreenLayerPresenter.prepare_frame_layers()` now leaves Quad updates/headers empty for the main screen, while projection layer remains the required presentation path.
+- Removed READY/init-time Quad prewarm calls from OpenXR input/OpenGL startup. Low-level Quad support remains for explicit diagnostics/overlay/legacy experiments.
+- Added an explicit OpenXR runtime output-mode contract: Traditional uses `rgb_depth`, Cinema uses `full_synthesis_eyes`, and `auto` remains the compatibility fallback. Traditional therefore keeps the RGB+depth shader path while sharing the normalized parallax/disparity parameter system with Cinema.
+- Fixed prewarped full-synthesis eye-order handling so Cross Eyed swaps generated left/right eye tensors on that path.
+- Reduced noisy runtime logs: `[FPSBreakdown]` is capped to the requested limited debug count and OpenXR controller-render debug is capped separately.
+- Improved GUI/status progress reporting for weight download, ONNX export, and TensorRT build. Long TensorRT builds should emit `[INFO] [status]` user-facing state instead of leaving the GUI looking stuck behind verbose builder output.
+- Changed reset/default `Render Align` from `8` to `1`. `1` means no implicit output-size cropping; `8`, `16`, and `32` remain manual compatibility choices.
+
+Verification run during this pass:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\stereo_runtime\openxr_render.py src\stereo_runtime\presets.py src\stereo_runtime\runtime.py src\xr_viewer\core_openxr_input.py src\xr_viewer\core_openxr_opengl.py src\xr_viewer\screen_layer_presenter.py tests\test_runtime_openxr.py tests\test_presets.py tests\test_openxr_runtime.py tests\test_environment_fast_path.py src\gui\config.py src\stereo_runtime\render_size.py tests\test_render_size.py tests\test_gui_config.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py -q -p no:cacheprovider
+.\src\python3\python.exe -m pytest tests\test_runtime_openxr.py tests\test_render_size.py tests\test_presets.py::test_openxr_presets_map_shared_stereo_params tests\test_gui_config.py::test_gui_render_size_controls_expose_only_fixed_4k_scale_tiers -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+OpenXR runtime tests passed: 111 passed, 2 warnings
+Runtime OpenXR / render-size / preset / GUI targeted tests passed
+```
+
+Next validation target:
+
+- Re-run OpenXR on VDXR and confirm the headset uses the projection-layer main screen path, not Quad layer headers, while Traditional mode still follows RGB+depth shader output and Cinema follows full-synthesis eyes.
+- Confirm reset/default render alignment shows `1` and does not silently crop common sizes such as 1920x1080 to a 16-aligned height.
 
 ### 2026-07-07 OpenXR Runtime Preparation Before Capture
 

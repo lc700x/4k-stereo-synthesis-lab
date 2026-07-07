@@ -21,7 +21,7 @@ from ...depth_provider import (
 )
 from ...depth_upsample import DepthUpsampleMode, upsample_depth
 from ...output import ensure_b1hw, ensure_bchw, match_depth
-from ...progress import activity_progress, emit_progress_event, write_bytes_with_progress
+from ...progress import activity_progress, emit_progress_event, status_write, write_bytes_with_progress
 from .tensorrt_ort import ensure_tensorrt_dll_path
 
 
@@ -225,7 +225,8 @@ class _TensorRtProgressState:
         self.started_at = time.perf_counter()
         self.lock = threading.Lock()
         self.phase_totals: dict[str, int] = {}
-        self.last_emit_at = 0.0
+        self.last_emit_at = self.started_at
+        self.emitted = False
 
     def phase_start(self, phase_name: str, parent_phase: str | None, num_steps: int) -> None:
         del parent_phase
@@ -233,7 +234,6 @@ class _TensorRtProgressState:
         total = max(1, int(num_steps or 1))
         with self.lock:
             self.phase_totals[phase] = total
-            self._emit_locked(phase, 0, total, force=True)
 
     def step_complete(self, phase_name: str, step: int) -> bool:
         phase = str(phase_name or "TensorRT build")
@@ -249,13 +249,14 @@ class _TensorRtProgressState:
         phase = str(phase_name or "TensorRT build")
         with self.lock:
             total = self.phase_totals.pop(phase, 1)
-            self._emit_locked(phase, total, total, force=True)
+            self._emit_locked(phase, total, total, force=not self.emitted)
 
     def _emit_locked(self, phase: str, completed: int, total: int, *, force: bool = False) -> None:
         now = time.perf_counter()
-        if not force and completed < total and now - self.last_emit_at < 0.25:
+        if not force and now - self.last_emit_at < 1.0:
             return
         self.last_emit_at = now
+        self.emitted = True
         try:
             emit_progress_event(f"{self.desc}: {phase}", completed, total, started_at=self.started_at, unit="steps")
         except Exception:
@@ -348,6 +349,9 @@ def build_native_tensorrt_engine(
     build_desc = f"Building TensorRT engine: {engine_path.name}"
     monitor = _attach_tensorrt_progress_monitor(trt, config, build_desc)
     print(f"[Main] {build_desc}...", flush=True)
+    status_write(
+        f"正在编译 TensorRT 引擎：{engine_path.name}。这个步骤耗时较长，请耐心等待，进度请看上方进度条。"
+    )
     if monitor is None:
         with activity_progress(build_desc):
             serialized = builder.build_serialized_network(network, config)
@@ -359,6 +363,7 @@ def build_native_tensorrt_engine(
     engine_path.parent.mkdir(parents=True, exist_ok=True)
     write_bytes_with_progress(engine_path, serialized, f"Saving TensorRT engine: {engine_path.name}")
     print(f"[TensorRT] native engine ready: engine={engine_path}", flush=True)
+    status_write(f"TensorRT 引擎编译完成：{engine_path.name}。")
     return engine_path
 
 

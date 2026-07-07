@@ -269,9 +269,6 @@ class CoreOpenXROpenGLMixin:
                 f"{self._quad_swapchain_formats}"
             )
             print(f"[OpenXRViewer] Quad layer OpenGL lazy swapchains armed max={max_w}x{max_h}")
-            prewarm_quad = getattr(self, '_prewarm_ready_quad_swapchains', None)
-            if callable(prewarm_quad):
-                prewarm_quad(phase="init")
 
         # 8. Controller actions (optional -silently disabled if action set creation fails)
         try:

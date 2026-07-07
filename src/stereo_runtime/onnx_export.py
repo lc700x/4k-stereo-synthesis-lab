@@ -13,7 +13,7 @@ from utils.cpu_warnings import describe_tensor, warn_cpu_operation
 OnnxDtypeMode = Literal["auto", "fp16", "fp32"]
 
 from .model_capabilities import FORCE_FP32_KEYWORDS
-from .progress import activity_progress
+from .progress import activity_progress, status_write
 
 
 @dataclass(frozen=True)
@@ -239,6 +239,7 @@ def export_depth_model_onnx(
 
     dummy_input = torch.randn(1, 3, height, width, device=device_obj, dtype=dtype_obj)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    status_write(f"正在导出 ONNX：{output_path.name}。这个步骤可能需要一段时间，进度请看上方进度条。")
     with activity_progress(f"Exporting ONNX: {output_path.name}"):
         with torch.no_grad(), _quiet_onnx_export_warnings():
             torch.onnx.export(
@@ -253,6 +254,7 @@ def export_depth_model_onnx(
                 training=torch.onnx.TrainingMode.EVAL,
                 dynamo=False,
             )
+    status_write(f"ONNX 导出完成：{output_path.name}。")
 
     return OnnxExportResult(
         output_path=output_path,

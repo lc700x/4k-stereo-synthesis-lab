@@ -36,10 +36,13 @@ _DEBUG_CONSOLE_PREFIXES = (
 _FLET_LOGGER_NAMES = ("flet", "flet_desktop", "flet_controls", "flet_transport")
 _FLET_MESSAGE_PREFIXES = ("[flet]", "[flet_desktop]", "[flet_controls]", "[flet_transport]")
 _PROGRESS_PERCENT_RE = re.compile(r"(?P<percent>\d{1,3}(?:\.\d+)?)%")
+_TQDM_AMOUNT_RE = re.compile(r"\|\s*(?P<completed>[^/\[\]|]+)\s*/\s*(?P<total>[^\[\]|]+)")
+_TQDM_TIMING_RE = re.compile(r"\[(?P<elapsed>[^<,\]]+)(?:<(?P<eta>[^,\]]+))?(?:,\s*(?P<speed>[^\]]+))?\]")
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
 _LOG_FILE_LINE_RE = re.compile(r"^\[(?P<asctime>\d\d:\d\d:\d\d)\] \[(?P<level>[A-Z]+)\] \[(?P<name>[^\]]+)\] (?P<message>.*)$")
 _LEGACY_LOG_FILE_LINE_RE = re.compile(r"^\[(?P<asctime>\d\d:\d\d:\d\d)\] \[(?P<name>[^\]]+)\] (?P<message>.*)$")
 _PROGRESS_PREFIX = "[D2S_PROGRESS] "
+_STATUS_PREFIX = "[D2S_STATUS] "
 _ASYNCIO_SHUTDOWN_UNRAISABLE_MODULES = (
     "asyncio.base_subprocess",
     "asyncio.proactor_events",
@@ -484,7 +487,9 @@ class GUIProcessMixin:
         if not text:
             return
         lower = text.lower()
-        if text.startswith("[FPSBreakdown]"):
+        if text.startswith(_STATUS_PREFIX):
+            status_logger.info(text[len(_STATUS_PREFIX):].strip())
+        elif text.startswith("[FPSBreakdown]"):
             child_logger.debug(text)
         elif any(token in lower for token in ("traceback", "exception", "error", "failed", "exited with code")):
             child_logger.error(text)
@@ -752,18 +757,34 @@ class GUIProcessMixin:
 
     def _progress_event(self, item):
         levelno, name, _, formatted = item
-        if levelno >= logging.WARNING or name not in ("child", "stdout"):
+        if levelno >= logging.ERROR or name not in ("child", "stdout"):
             return None
-        marker = "] "
-        message = formatted.split(marker, 2)[-1] if marker in formatted else formatted
+        parsed = _LOG_FILE_LINE_RE.match(formatted)
+        message = parsed.group("message") if parsed else formatted
         text = _ANSI_RE.sub("", message).replace("\r", "").strip()
         if _PROGRESS_PREFIX not in text:
-            return None
+            return self._tqdm_progress_event(text)
         text = text[text.index(_PROGRESS_PREFIX):]
         try:
             return json.loads(text[len(_PROGRESS_PREFIX):])
         except Exception:
             return None
+
+    def _tqdm_progress_event(self, text):
+        match = _PROGRESS_PERCENT_RE.search(text)
+        if not match or "|" not in text or "/" not in text:
+            return None
+        desc = text[:match.start()].strip(" :-|") or "Progress"
+        amount = _TQDM_AMOUNT_RE.search(text)
+        timing = _TQDM_TIMING_RE.search(text)
+        return {
+            "desc": desc,
+            "percent": max(0.0, min(100.0, float(match.group("percent")))),
+            "downloaded": amount.group("completed").strip() if amount else "",
+            "size": amount.group("total").strip() if amount else "",
+            "speed": (timing.group("speed") or "").strip() if timing else "",
+            "eta": (timing.group("eta") or "00:00").strip() if timing else "",
+        }
 
     def _update_download_progress(self, data):
         panel = getattr(self, "download_progress_panel", None)
@@ -838,9 +859,12 @@ class GUIProcessMixin:
             try:
                 for _ in range(100):
                     item = handler.queue.get_nowait()
-                    self._append_log_item(item)
-                    if item[0] >= logging.ERROR:
-                        self._set_log_problem_state()
+                    try:
+                        self._append_log_item(item)
+                        if item[0] >= logging.ERROR:
+                            self._set_log_problem_state()
+                    except Exception:
+                        logger.exception("GUI log queue item skipped")
                     changed = True
             except queue.Empty:
                 pass

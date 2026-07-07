@@ -11,6 +11,7 @@ from .baseline_shift import ShiftParams, compute_shift_px, shift_debug_info, war
 from .output import ensure_bchw, match_depth
 
 PaddingMode = Literal["zeros", "border", "reflection"]
+OpenXROutputMode = Literal["auto", "rgb_depth", "full_synthesis_eyes"]
 
 
 @dataclass(frozen=True)
@@ -19,6 +20,7 @@ class OpenXRRenderConfig:
     convergence: float | torch.Tensor = 0.0
     max_disparity_px: float | None = None
     parallax_preset: str = "standard"
+    output_mode: OpenXROutputMode = "auto"
     foreground_shift_scale: float = 1.0
     midground_shift_scale: float = 1.0
     background_shift_scale: float = 1.0

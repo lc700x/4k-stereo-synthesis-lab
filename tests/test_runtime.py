@@ -304,16 +304,20 @@ def test_hf_download_progress_patch_is_scoped_to_context():
 
     file_download = importlib.import_module("huggingface_hub.file_download")
     hf_tqdm = importlib.import_module("huggingface_hub.utils.tqdm")
+    snapshot_download = importlib.import_module("huggingface_hub._snapshot_download")
 
     original_file_download_tqdm = file_download.tqdm
     original_hf_tqdm = hf_tqdm.tqdm
+    original_snapshot_tqdm = snapshot_download.hf_tqdm
 
     with _hf_download_progress_patch():
         assert file_download.tqdm is DownloadProgress
         assert hf_tqdm.tqdm is DownloadProgress
+        assert snapshot_download.hf_tqdm is DownloadProgress
 
     assert file_download.tqdm is original_file_download_tqdm
     assert hf_tqdm.tqdm is original_hf_tqdm
+    assert snapshot_download.hf_tqdm is original_snapshot_tqdm
 
 
 def test_download_preparing_progress_prints_waiting_status_without_fake_bar(capsys):

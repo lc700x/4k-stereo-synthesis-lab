@@ -27,14 +27,14 @@ ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 
 
-def test_openxr_runtime_import_does_not_load_xr_implementation(tmp_path):
+def test_openxr_runtime_import_does_not_load_xr_implementation():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(SRC)
     code = "from xr_viewer.openxr_runtime import use_environment_viewer; print(use_environment_viewer('none'))"
 
     result = subprocess.run(
         [sys.executable, "-c", code],
-        cwd=tmp_path,
+        cwd=ROOT,
         env=env,
         text=True,
         capture_output=True,
@@ -380,16 +380,15 @@ def test_opengl_projection_swapchains_are_lazy():
     assert "_ensure_projection_swapchains" in presenter
 
 
-def test_opengl_init_prewarms_quad_after_formats_before_ready():
+def test_opengl_init_does_not_prewarm_quad_main_screen():
     opengl = (SRC / "xr_viewer" / "core_openxr_opengl.py").read_text(encoding="utf-8")
     ready = (SRC / "xr_viewer" / "core_openxr_input.py").read_text(encoding="utf-8")
     init_body = opengl.split("def _init_openxr_opengl", 1)[1]
     ready_block = ready.split("if state == xr.SessionState.READY:", 1)[1].split("elif state in", 1)[0]
 
-    assert init_body.index("runtime_fmts = list(xr.enumerate_swapchain_formats") < init_body.index(
-        'prewarm_quad(phase="init")'
-    )
-    assert ready_block.index("xr.begin_session(") < ready_block.index("self._prewarm_ready_quad_swapchains()")
+    assert "runtime_fmts = list(xr.enumerate_swapchain_formats" in init_body
+    assert "prewarm_quad" not in init_body
+    assert "_prewarm_ready_quad_swapchains" not in ready_block
 
 
 def test_quad_layer_uses_runtime_ordered_quad_format_candidates(monkeypatch):
@@ -435,7 +434,7 @@ def test_quad_layer_uses_runtime_ordered_quad_format_candidates(monkeypatch):
     viewer._xr_quad_layer_failed = False
 
     assert viewer._ensure_quad_layer_swapchains_for_source((3840, 2160)) is True
-    assert created_formats == [32856, 32856]
+    assert created_formats == [32856]
     assert viewer._quad_swapchain_format == 32856
 
 
@@ -584,7 +583,7 @@ def test_quad_layer_retries_same_format_after_transient_create_failure(monkeypat
     viewer._xr_quad_layer_failure_reason = "previous_failure"
 
     assert viewer._ensure_quad_layer_swapchains_for_source((3840, 2160)) is True
-    assert created_formats == [32856, 32856, 32856]
+    assert created_formats == [32856, 32856]
     assert viewer._quad_swapchain_format == 32856
     assert viewer._xr_quad_layer_failed is False
     assert viewer._xr_quad_layer_failure_reason is None
@@ -2406,7 +2405,7 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
     assert len(viewer._frame_ts_ring) == 1
 
 
-def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch):
+def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch, capsys):
     import xr_viewer.openxr_frame_timing as frame_timing_module
     from xr_viewer.openxr_frame_timing import OpenXRFrameTiming
 
@@ -2443,6 +2442,25 @@ def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch):
         name == "openxr_predicted_period" and seconds == pytest.approx(1 / 72, rel=0.01)
         for name, seconds in metrics
     )
+    output = capsys.readouterr().out
+    assert "App frame pacing from xr.wait_frame" in output
+    assert "app_hz=72." in output
+
+
+def test_openxr_frame_timing_pacing_log_ignores_jitter(monkeypatch, capsys):
+    import xr_viewer.openxr_frame_timing as frame_timing_module
+    from xr_viewer.openxr_frame_timing import OpenXRFrameTiming
+
+    now = [10.0]
+    monkeypatch.setattr(frame_timing_module.time, "perf_counter", lambda: now[0])
+    viewer = SimpleNamespace()
+    timing = OpenXRFrameTiming(viewer)
+
+    timing._log_predicted_pacing(1 / 76.39)
+    timing._log_predicted_pacing(1 / 73.36)
+
+    output = capsys.readouterr().out
+    assert output.count("App frame pacing from xr.wait_frame") == 1
 
 
 def test_openxr_frame_input_syncs_actions_and_updates_controllers(monkeypatch):
@@ -2961,7 +2979,7 @@ def test_empty_openxr_frames_do_not_flush_soft_effect_submit():
     assert "pause" in viewer.actions
 
 
-def test_empty_openxr_frame_prewarms_quad_swapchain_before_submit():
+def test_empty_openxr_frame_prewarms_projection_swapchain_before_submit():
     from xr_viewer.openxr_frame_gate import OpenXRFrameGate
 
     calls = []
@@ -2983,10 +3001,10 @@ def test_empty_openxr_frame_prewarms_quad_swapchain_before_submit():
         submit_start=1.0,
     )
 
-    assert calls == [("quad", (3840, 2160)), ("submit", [], 123, 1.0)]
+    assert calls == [("projection",), ("submit", [], 123, 1.0)]
 
 
-def test_empty_openxr_frame_uses_ready_quad_source_size_fallback():
+def test_empty_openxr_frame_does_not_use_quad_source_size_fallback():
     from xr_viewer.openxr_frame_gate import OpenXRFrameGate
 
     calls = []
@@ -3009,44 +3027,33 @@ def test_empty_openxr_frame_uses_ready_quad_source_size_fallback():
         submit_start=1.0,
     )
 
-    assert calls == [("quad", (3840, 2160)), ("submit", [], 123, 1.0)]
+    assert calls == [("projection",), ("submit", [], 123, 1.0)]
 
 
-def test_ready_event_prewarms_quad_swapchain_after_begin_session_before_render():
+def test_ready_event_does_not_prewarm_quad_main_screen():
     text = (SRC / "xr_viewer" / "core_openxr_input.py").read_text(encoding="utf-8")
     ready_block = text.split("if state == xr.SessionState.READY:", 1)[1].split("elif state in", 1)[0]
 
-    assert ready_block.index("xr.begin_session(") < ready_block.index("self._prewarm_ready_quad_swapchains()")
-    assert ready_block.index("self._prewarm_ready_quad_swapchains()") < ready_block.index("Session READY")
-    assert "ensure_projection" not in ready_block
+    assert "xr.begin_session(" in ready_block
+    assert "_prewarm_ready_quad_swapchains" not in ready_block
+    assert "ensure_quad" not in ready_block
 
 
-def test_ready_quad_prewarm_uses_frame_size_when_runtime_eye_size_missing():
+def test_ready_quad_prewarm_helper_removed_from_main_path():
     from xr_viewer.core_openxr_input import CoreOpenXRInputMixin
 
-    calls = []
-
-    class Viewer(CoreOpenXRInputMixin):
-        pass
-
-    viewer = Viewer()
-    viewer._runtime_eye_texture_size = None
-    viewer._d3d11_native_renderer = None
-    viewer._texture_size = None
-    viewer.frame_size = (3840, 2160)
-    viewer._quad_swapchains = {}
-    viewer._ensure_quad_layer_swapchains_for_source = lambda size: calls.append(size) or True
-
-    assert viewer._prewarm_ready_quad_swapchains() is True
-    assert calls == [(3840, 2160)]
+    assert not hasattr(CoreOpenXRInputMixin, "_prewarm_ready_quad_swapchains")
 
 
-def test_stale_source_keeps_rendering_when_quad_layer_has_presented_frame():
+def test_stale_source_submits_empty_frame_without_quad_main_screen():
     from xr_viewer.openxr_frame_gate import OpenXRFrameGate
 
     class Submitter:
-        def submit(self, *_args, **_kwargs):
-            pytest.fail("stale reusable quad frame should not submit an empty frame")
+        def __init__(self):
+            self.calls = []
+
+        def submit(self, layers, *, display_time, submit_start=0.0):
+            self.calls.append((layers, display_time, submit_start))
 
     class Viewer:
         _session_ready_pending = False
@@ -3075,17 +3082,19 @@ def test_stale_source_keeps_rendering_when_quad_layer_has_presented_frame():
             return True
 
     viewer = Viewer()
-    skip, idle_timeout = OpenXRFrameGate(viewer, Submitter()).handle_ready_or_stall(
+    submitter = Submitter()
+    skip, idle_timeout = OpenXRFrameGate(viewer, submitter).handle_ready_or_stall(
         frame_state=SimpleNamespace(should_render=True, predicted_display_time=123),
         now=10.0,
         composition_layers=[],
         submit_start=1.0,
     )
 
-    assert skip is False
+    assert skip is True
     assert idle_timeout is False
     assert ("openxr_no_fresh", 1) in viewer.inc_calls
-    assert ("openxr_no_renderable", 1) not in viewer.inc_calls
+    assert ("openxr_no_renderable", 1) in viewer.inc_calls
+    assert submitter.calls == [([], 123, 1.0)]
     assert viewer.actions == ["pause"]
 
 
@@ -3128,7 +3137,9 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "_openxr_projection_screen_source_ready" not in screen_presenter_text
     assert "_openxr_projection_screen_effects_enabled" not in screen_presenter_text
     prepare_frame_layers = screen_presenter_text.split("def prepare_frame_layers", 1)[1].split("def append_frame_layers", 1)[0]
-    assert prepare_frame_layers.index("self.update_or_reuse(") < prepare_frame_layers.index("background_renderer.make_background_layers()")
+    assert "self.update_or_reuse(" not in prepare_frame_layers
+    assert "self.make_quad_layers(" not in prepare_frame_layers
+    assert "quad_layers = []" in prepare_frame_layers
     assert "def prepare_projection_frame_state" in screen_presenter_text
     assert "def render_projection_screen" in screen_presenter_text
     assert "_render_screen_background_effects" not in screen_presenter_text
@@ -3250,6 +3261,12 @@ def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():
     viewer._runtime_direct_source = True
     viewer._runtime_eye_has_frame = True
     viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._quad_swapchain_sizes = {0: (1920, 1080), 1: (1920, 1080)}
+    viewer._quad_swapchain_array_size = {0: 1, 1: 1}
+    viewer._quad_swapchain_format = 32856
+    viewer._quad_swapchain_formats = (32856,)
+    viewer._quad_swapchain_image_type = object
+    viewer._quad_swapchain_max_size = (4000, 3000)
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)
 
@@ -3336,8 +3353,10 @@ def test_quad_layer_presented_state_resets_when_swapchains_reset():
     )
 
 
-def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused():
+def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused(monkeypatch):
     from xr_viewer.core_quad_layer import CoreQuadLayerMixin
+
+    monkeypatch.setenv("D2S_OPENXR_QUAD_SHARED_ARRAY", "0")
 
     class Viewer(CoreQuadLayerMixin):
         pass
@@ -3349,6 +3368,12 @@ def test_quad_layer_reuses_existing_swapchain_when_screen_frame_is_reused():
     viewer._runtime_direct_source = True
     viewer._runtime_eye_has_frame = True
     viewer._quad_swapchains = {0: object(), 1: object()}
+    viewer._quad_swapchain_sizes = {0: (1920, 1080), 1: (1920, 1080)}
+    viewer._quad_swapchain_array_size = {0: 1, 1: 1}
+    viewer._quad_swapchain_format = 32856
+    viewer._quad_swapchain_formats = (32856,)
+    viewer._quad_swapchain_image_type = object
+    viewer._quad_swapchain_max_size = (4000, 3000)
     viewer._runtime_eye_textures = [object(), object()]
     viewer._runtime_eye_texture_size = (1920, 1080)
     viewer._quad_swapchain_presented_eyes = {0, 1}
@@ -3453,7 +3478,7 @@ def test_quad_layer_shared_swapchain_reuses_presented_frame_when_source_missing(
     assert ("openxr_quad_missing_source_reuse", 1) in inc_calls
 
 
-def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeypatch):
+def test_screen_layer_presenter_does_not_build_quad_layers_for_main_screen(monkeypatch):
     monkeypatch.chdir(SRC)
     from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
 
@@ -3510,11 +3535,11 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
         screen_frame_uploaded=True
     )
 
-    assert update_calls == [True]
-    assert quad_layers == [left_layer, right_layer]
-    assert presenter._frame_quad_layers == [left_layer, right_layer]
-    assert len(quad_layer_headers) == 2
-    assert updated == [0, 1]
+    assert update_calls == []
+    assert quad_layers == []
+    assert presenter._frame_quad_layers == []
+    assert quad_layer_headers == []
+    assert updated == []
     assert render_projection_layer is True
     assert background_layer_headers == []
     assert viewer._xr_quad_layer_active is True
@@ -3531,8 +3556,7 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
         quad_layer_headers=quad_layer_headers,
         background_layer_headers=[],
     )
-    assert len(composition_layers) == 3
-    assert composition_layers[1:] == quad_layer_headers
+    assert len(composition_layers) == 1
     assert presenter._frame_projection_layer is not None
 
     monkeypatch.setattr(
@@ -3548,10 +3572,12 @@ def test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers(monkeyp
         quad_layer_headers=quad_layer_headers,
         background_layer_headers=[],
     )
-    assert composition_layers == quad_layer_headers
+    assert composition_layers == []
     assert presenter._frame_projection_layer is None
     assert ("openxr_projection_render_failed", 1) in inc_calls
 
+    # Low-level Quad layer construction still exists for explicit overlay paths,
+    # but the main screen presenter no longer calls it.
     viewer._make_quad_layer = lambda _eye_index: None
     quad_layers, quad_layer_headers, updated = presenter.make_quad_layers([0])
 
@@ -3618,8 +3644,8 @@ def test_screen_layer_presenter_quad_failure_produces_no_screen_layer():
     assert updated == []
     assert render_projection_layer is True
     assert background_layer_headers == []
-    assert presenter.quad_screen_unavailable_reason() == "layer_build_failed_RuntimeError"
-    assert ("openxr_quad_layer_failed", 1) in inc_calls
+    assert presenter.quad_screen_unavailable_reason() == "not_runtime_direct"
+    assert ("openxr_quad_layer_failed", 1) not in inc_calls
 
 
 def test_quad_layer_failure_reason_does_not_enable_projection_screen():

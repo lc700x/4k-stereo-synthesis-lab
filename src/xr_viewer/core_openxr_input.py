@@ -44,7 +44,6 @@ class CoreOpenXRInputMixin:
                                 xr.ViewConfigurationType.PRIMARY_STEREO
                         ),
                     )
-                    self._prewarm_ready_quad_swapchains()
                     self._source_resume_grace_until = (
                         time.perf_counter() + self._source_resume_grace
                     )
@@ -123,51 +122,6 @@ class CoreOpenXRInputMixin:
                 self._defer_openxr_retry(self._openxr_standby_retry_interval)
                 self._enter_preview_only_wait()
                 break
-
-    def _ready_quad_source_size(self):
-        for value in (
-            getattr(self, '_runtime_eye_texture_size', None),
-            getattr(getattr(self, '_d3d11_native_renderer', None), 'runtime_eye_size', None),
-            getattr(self, '_texture_size', None),
-            getattr(self, 'frame_size', None),
-        ):
-            if value is None:
-                continue
-            try:
-                width, height = value
-                width = int(width)
-                height = int(height)
-            except (TypeError, ValueError):
-                continue
-            if width > 0 and height > 0:
-                return width, height
-        return None
-
-    def _prewarm_ready_quad_swapchains(self, *, phase="READY"):
-        source_size = self._ready_quad_source_size()
-        if source_size is None:
-            print(f"[OpenXRViewer] Quad {phase} prewarm skipped: source_size unavailable")
-            return False
-        if getattr(self, '_quad_swapchains', None):
-            return False
-        ensure_quad = getattr(self, '_ensure_quad_layer_swapchains_for_source', None)
-        if not callable(ensure_quad):
-            print(f"[OpenXRViewer] Quad {phase} prewarm skipped: ensure_quad unavailable")
-            return False
-        try:
-            ready = bool(ensure_quad(source_size))
-        except Exception as exc:
-            print(f"[OpenXRViewer] Quad {phase} prewarm failed: {type(exc).__name__}: {exc}")
-            return False
-        if not ready:
-            print(
-                f"[OpenXRViewer] Quad {phase} prewarm skipped: "
-                f"source_size={source_size} "
-                f"image_type={getattr(self, '_quad_swapchain_image_type', None) is not None} "
-                f"formats={getattr(self, '_quad_swapchain_formats', None)} "
-                f"max_size={getattr(self, '_quad_swapchain_max_size', None)}"
-            )
-        return ready
 
     def _read_bool_action_raw(self, action, hand_path_str="/user/hand/left"):
         """Return the raw OpenXR boolean action state without trackpad emulation."""

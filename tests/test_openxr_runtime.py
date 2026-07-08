@@ -2516,6 +2516,33 @@ def test_openxr_frame_gate_keeps_rendering_last_good_frame_when_source_stale():
     assert ("inc", "openxr_no_renderable", 1) not in calls
 
 
+def test_openxr_session_render_resume_exits_hard_idle_and_reopens_source_gate():
+    from xr_viewer.core_openxr_lifecycle import CoreOpenXRLifecycleMixin
+
+    class Viewer(CoreOpenXRLifecycleMixin):
+        def __init__(self):
+            self._session_idle_since = 1.0
+            self._session_idle_notice_emitted = True
+            self._hard_idle_active = True
+            self._headset_wait_inference_paused = True
+            self._source_resume_grace = 0.5
+            self._source_resume_grace_until = 0.0
+            self.actions = []
+
+        def _resume_source_inference(self):
+            self.actions.append("resume")
+            self._hard_idle_active = False
+            self._headset_wait_inference_paused = False
+
+    viewer = Viewer()
+
+    assert viewer._track_session_idle_render(True, now=10.0) is False
+
+    assert viewer.actions == ["resume"]
+    assert viewer._session_idle_since == 0.0
+    assert viewer._source_resume_grace_until == 10.5
+
+
 def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch, capsys):
     import xr_viewer.openxr_frame_timing as frame_timing_module
     from xr_viewer.openxr_frame_timing import OpenXRFrameTiming

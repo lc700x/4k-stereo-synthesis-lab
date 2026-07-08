@@ -114,6 +114,9 @@ class CoreOpenXRLifecycleMixin:
         if should_render:
             if self._session_idle_since > 0.0 and self._session_idle_notice_emitted:
                 print("[OpenXRViewer] Headset online : render resumed")
+                if self._hard_idle_active or self._headset_wait_inference_paused:
+                    self._resume_source_inference()
+                    self._source_resume_grace_until = now + self._source_resume_grace
             self._session_idle_since = 0.0
             self._session_idle_notice_emitted = False
             return False

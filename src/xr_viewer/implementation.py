@@ -769,6 +769,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._cuda_res_color  = None   # registered resource handle
         self._cuda_res_depth  = None
         self._pbo_texture_size = None  # (w, h) at which PBOs were created
+        self._gl_tensor_pbo_uploader = None
 
         # Font for in-VR overlay
         self.font = None
@@ -1029,18 +1030,20 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         # D3D11 backend state (populated by _init_d3d11_device when D3D11 path is active)
         forced_backend = str(
-            kwargs.get('openxr_backend', os.environ.get('D2S_OPENXR_BACKEND', 'opengl')) or 'opengl'
+            kwargs.get('openxr_backend', os.environ.get('D2S_OPENXR_BACKEND', 'd3d11')) or 'd3d11'
         ).strip().lower()
         if forced_backend not in ('auto', 'opengl', 'd3d11'):
-            print(f"[OpenXRViewer] Invalid D2S_OPENXR_BACKEND={forced_backend!r}; using opengl")
-            forced_backend = 'opengl'
+            print(f"[OpenXRViewer] Invalid D2S_OPENXR_BACKEND={forced_backend!r}; using d3d11")
+            forced_backend = 'd3d11'
         self._forced_xr_backend     = forced_backend
         self._xr_backend            = 'd3d11' if forced_backend == 'd3d11' else None
         self._use_d3d11             = False   # True = D3D11 OpenXR session
         if forced_backend == 'd3d11':
-            print(f"[OpenXRViewer] Forced OpenXR backend: {forced_backend}")
+            print("[OpenXRViewer] Primary OpenXR backend: d3d11")
+        elif forced_backend == 'auto':
+            print("[OpenXRViewer] Primary OpenXR backend: opengl (D3D11 fallback enabled)")
         else:
-            print(f"[OpenXRViewer] Primary OpenXR backend: opengl (D3D11 fallback enabled)")
+            print("[OpenXRViewer] Forced OpenXR backend: opengl")
         self._d3d11_device          = None    # c_void_p ID3D11Device*
         self._d3d11_context         = None    # c_void_p ID3D11DeviceContext*
         self._d3d11_swapchain_fmt   = _DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
@@ -1545,46 +1548,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         Build the model matrix for the screen in world space.
         Caller must transpose before writing to OpenGL.
         """
-        self._ensure_screen_dimensions()
-
-        sx  = self.screen_width  / 2.0
-        sy  = self.screen_height / 2.0
-
-        cy  = math.cos(self.screen_yaw)
-        sy_ = math.sin(self.screen_yaw)
-        rot_y = np.array([
-            [ cy,  0, sy_, 0],
-            [  0,  1,   0, 0],
-            [-sy_, 0,  cy, 0],
-            [  0,  0,   0, 1],
-        ], dtype=np.float32)
-
-        cp  = math.cos(self.screen_pitch)
-        sp  = math.sin(self.screen_pitch)
-        rot_x = np.array([
-            [1,  0,   0, 0],
-            [0,  cp, -sp, 0],
-            [0,  sp,  cp, 0],
-            [0,  0,   0,  1],
-        ], dtype=np.float32)
-
-        cr  = math.cos(self.screen_roll)
-        sr  = math.sin(self.screen_roll)
-        rot_z = np.array([
-            [cr, -sr, 0, 0],
-            [sr,  cr, 0, 0],
-            [ 0,   0, 1, 0],
-            [ 0,   0, 0, 1],
-        ], dtype=np.float32)
-
-        S = np.diag([sx, sy, 1.0, 1.0]).astype(np.float32)
-        R = rot_y @ rot_x @ rot_z
-        T = np.eye(4, dtype=np.float32)
-        T[0, 3] = self.screen_pan_x
-        T[1, 3] = self.screen_pan_y
-        T[2, 3] = -self.screen_distance
-
-        return T @ R @ S
+        return self._screen_model_mat4()
 
     def _build_curved_screen_verts(self, N=48, width_override=None, height_override=None, dist_offset=0.0):
         """Return a TRIANGLE_STRIP curved screen arc in world space.
@@ -4052,6 +4016,12 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._d3d11_context = None
 
         # Release GPU interop PBOs
+        if self._gl_tensor_pbo_uploader is not None:
+            try:
+                self._gl_tensor_pbo_uploader.release()
+            except Exception:
+                pass
+            self._gl_tensor_pbo_uploader = None
         if self._pbo_color is not None and self._cuda_gl:
             try:
                 self._cuda_gl.unregister_resource(self._cuda_res_color)

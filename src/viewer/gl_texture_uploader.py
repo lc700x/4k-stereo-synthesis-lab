@@ -11,11 +11,122 @@ from OpenGL.GL import (
     glGenerateMipmap,
     glTexSubImage2D,
     GL_DYNAMIC_DRAW,
+    GL_FLOAT,
     GL_PIXEL_UNPACK_BUFFER,
+    GL_RED,
+    GL_RGB,
     GL_RGBA,
     GL_TEXTURE_2D,
     GL_UNSIGNED_BYTE,
 )
+
+
+class GlTensorPboUploader:
+    """Upload GPU tensors into existing GL textures through registered PBOs."""
+
+    def __init__(self, cuda_gl, *, debug=False, log_prefix="GLTensorPboUploader"):
+        self.cuda_gl = cuda_gl
+        self.debug = bool(debug)
+        self.log_prefix = str(log_prefix)
+        self._pbos = []
+        self._resources = []
+        self._key = None
+
+    def release(self):
+        if self.cuda_gl:
+            for resource in self._resources:
+                try:
+                    self.cuda_gl.unregister_resource(resource)
+                except Exception:
+                    pass
+        if self._pbos:
+            try:
+                glDeleteBuffers(len(self._pbos), [int(pbo) for pbo in self._pbos])
+            except Exception:
+                pass
+        self._pbos = []
+        self._resources = []
+        self._key = None
+
+    def upload_rgb_u8(self, texture, tensor, width: int, height: int, *, build_mipmaps=True):
+        self.upload(
+            [texture],
+            [tensor],
+            width,
+            height,
+            [((int(height), int(width), 3), "torch.uint8", GL_RGB, GL_UNSIGNED_BYTE, 3, bool(build_mipmaps))],
+        )
+
+    def upload_depth_f32(self, texture, tensor, width: int, height: int):
+        self.upload(
+            [texture],
+            [tensor],
+            width,
+            height,
+            [((int(height), int(width)), "torch.float32", GL_RED, GL_FLOAT, 4, False)],
+        )
+
+    def upload(self, textures, tensors, width: int, height: int, specs):
+        self._ensure_pbos(textures, width, height, specs)
+        for texture, tensor, spec, pbo, resource in zip(textures, tensors, specs, self._pbos, self._resources):
+            shape, dtype_name, gl_format, gl_type, _bytes_per_pixel, build_mipmaps = spec
+            tensor = self._validate_tensor(tensor, shape, dtype_name)
+            ptr = self.cuda_gl.map_resource(resource)
+            try:
+                self.cuda_gl.memcpy_d2d(ptr, tensor.data_ptr(), tensor.nbytes)
+            finally:
+                self.cuda_gl.unmap_resource(resource)
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo)
+            glBindTexture(GL_TEXTURE_2D, texture.glo)
+            glTexSubImage2D(
+                GL_TEXTURE_2D,
+                0,
+                0,
+                0,
+                int(width),
+                int(height),
+                gl_format,
+                gl_type,
+                ctypes.c_void_p(0),
+            )
+            if build_mipmaps:
+                glGenerateMipmap(GL_TEXTURE_2D)
+        glBindTexture(GL_TEXTURE_2D, 0)
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+
+    def _validate_tensor(self, tensor, shape, dtype_name: str):
+        if not (hasattr(tensor, "data_ptr") and hasattr(tensor, "is_cuda") and tensor.is_cuda):
+            raise RuntimeError("upload tensor is not a CUDA/HIP GPU tensor")
+        if tuple(tensor.shape) != tuple(shape):
+            raise RuntimeError(f"expected tensor shape {tuple(shape)}, got {tuple(tensor.shape)}")
+        if str(getattr(tensor, "dtype", "")) != dtype_name:
+            raise RuntimeError(f"expected {dtype_name} tensor, got {getattr(tensor, 'dtype', None)}")
+        return tensor.contiguous()
+
+    def _ensure_pbos(self, textures, width: int, height: int, specs):
+        key = (
+            int(width),
+            int(height),
+            tuple(int(texture.glo) for texture in textures),
+            tuple((spec[0], spec[1], int(spec[2]), int(spec[3]), int(spec[4])) for spec in specs),
+        )
+        if self._key == key and len(self._pbos) == len(textures):
+            return
+        self.release()
+        ids = glGenBuffers(len(textures))
+        if len(textures) == 1:
+            ids = [ids]
+        self._pbos = [int(pbo) for pbo in ids]
+        for pbo, spec in zip(self._pbos, specs):
+            _shape, _dtype_name, _gl_format, _gl_type, bytes_per_pixel, _build_mipmaps = spec
+            nbytes = int(width) * int(height) * int(bytes_per_pixel)
+            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo)
+            glBufferData(GL_PIXEL_UNPACK_BUFFER, nbytes, None, GL_DYNAMIC_DRAW)
+        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+        self._resources = [self.cuda_gl.register_buffer(pbo) for pbo in self._pbos]
+        self._key = key
+        if self.debug:
+            print(f"[{self.log_prefix}] CUDA/HIP-GL PBOs created {width}x{height}", flush=True)
 
 
 class CudaGlTextureUploader:

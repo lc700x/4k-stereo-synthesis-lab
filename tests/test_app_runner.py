@@ -41,6 +41,7 @@ def _callbacks():
         breakdown_inc=lambda *args, **kwargs: None,
         breakdown_add_time=lambda *args, **kwargs: None,
         breakdown_add_value=lambda *args, **kwargs: None,
+        breakdown_set_latest=lambda *args, **kwargs: None,
         log_fps_breakdown=lambda *args, **kwargs: None,
         is_window_visible_on_screen=lambda *args, **kwargs: True,
         set_rtmp_thread=lambda thread: None,
@@ -103,7 +104,8 @@ def test_run_app_mode_dispatches_openxr_without_event_constructor_args(monkeypat
     assert calls[0][1].screen_width == 7.8
     assert calls[0][1].screen_distance == 9.5
     assert calls[0][2].update_runtime_config is not None
-    assert not hasattr(calls[0][2], "render_active_event")
+    assert calls[0][2].render_active_event is not None
+    assert calls[0][2].breakdown_set_latest is not None
 
 def test_build_app_mode_settings_maps_core_fields():
     settings = build_app_mode_settings(
@@ -152,6 +154,7 @@ def test_build_app_mode_callbacks_maps_callables():
         breakdown_inc=lambda *args, **kwargs: None,
         breakdown_add_time=lambda *args, **kwargs: None,
         breakdown_add_value=lambda *args, **kwargs: None,
+        breakdown_set_latest=lambda *args, **kwargs: None,
         log_fps_breakdown=lambda *args, **kwargs: None,
         is_window_visible_on_screen=lambda *args, **kwargs: True,
         set_rtmp_thread=lambda thread: None,

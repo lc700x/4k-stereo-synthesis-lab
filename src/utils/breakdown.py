@@ -32,6 +32,7 @@ LATEST_KEYS = {
     "rt_depth_model_ms",
     "rt_synthesis_ms",
     "rt_total_ms",
+    "openxr_async_effects_enabled",
 }
 
 
@@ -93,7 +94,11 @@ class FPSBreakdown:
     def _validate_openxr_async_stats(self, stats) -> OpenXRAsyncValidation:
         missing = []
         failed = []
-        screen_present = stats.get("openxr_new_screen_frame", 0) + stats.get("openxr_reused_screen_frame", 0)
+        screen_present = (
+            stats.get("openxr_new_screen_frame", 0)
+            + stats.get("openxr_reused_screen_frame", 0)
+            + stats.get("openxr_projection_screen_present", 0)
+        )
         if screen_present <= 0:
             missing.append("screen_present")
         if stats.get("openxr_quad_layer_failed", 0) > 0:
@@ -102,7 +107,8 @@ class FPSBreakdown:
             failed.append("d3d11_pbo_readback")
         if stats.get("openxr_no_renderable", 0) > 0 and screen_present <= 0:
             failed.append("no_renderable_without_quad_reuse")
-        if stats.get("openxr_effect_submit_count", 0) <= 0 and stats.get("openxr_effect_source_reused_safe", 0) <= 0:
+        effects_enabled = bool(stats.get("openxr_async_effects_enabled", True))
+        if effects_enabled and stats.get("openxr_effect_submit_count", 0) <= 0 and stats.get("openxr_effect_source_reused_safe", 0) <= 0:
             missing.append("effect_submit_or_safe_reuse")
         if stats.get("openxr_background_layer_failed", 0) > 0 and screen_present <= 0:
             failed.append("background_failure_blocked_screen")
@@ -212,6 +218,7 @@ class FPSBreakdown:
             f"viewer_drop={rate('viewer_drop'):.1f} "
             f"screen_new={rate('openxr_new_screen_frame'):.1f} "
             f"screen_reuse={rate('openxr_reused_screen_frame'):.1f} "
+            f"screen_proj={rate('openxr_projection_screen_present'):.1f} "
             f"screen_age={avg_value('openxr_screen_frame_age_frames'):.2f}f "
             f"screen_quality_failed={rate('openxr_screen_quality_failed'):.1f} "
             f"source_lat={avg_ms('openxr_source_latency'):.2f}ms "
@@ -234,6 +241,7 @@ class FPSBreakdown:
             f"eye_d3d11={avg_ms('runtime_eye_d3d11'):.2f}ms "
             f"eye_mipmap={avg_ms('runtime_eye_mipmap'):.2f}ms "
             f"fx_total={avg_ms('runtime_effect_source_total'):.2f}ms "
+            f"fx_enabled={int(bool(stats.get('openxr_async_effects_enabled', True)))} "
             f"fx_tensor={avg_ms('runtime_effect_source_tensor'):.2f}ms "
             f"fx_upload={avg_ms('runtime_effect_source_upload'):.2f}ms "
             f"fx_submit={avg_ms('openxr_effect_submit'):.2f}ms "

@@ -55,6 +55,22 @@ def test_fps_breakdown_validates_openxr_async_contract():
     assert validation.missing == ()
     assert validation.failed == ()
 
+    projection_breakdown = FPSBreakdown(enabled=True, target_fps=72)
+    projection_breakdown.inc("openxr_projection_screen_present", 2)
+    projection_breakdown.add_time("openxr_effect_submit", 0.002)
+    assert projection_breakdown.validate_openxr_async().passed
+
+    effects_disabled_breakdown = FPSBreakdown(enabled=True, target_fps=72)
+    effects_disabled_breakdown.set_latest("openxr_async_effects_enabled", False)
+    effects_disabled_breakdown.inc("openxr_projection_screen_present", 2)
+    assert effects_disabled_breakdown.validate_openxr_async().passed
+
+    stale_reuse_breakdown = FPSBreakdown(enabled=True, target_fps=72)
+    stale_reuse_breakdown.inc("openxr_no_fresh", 5)
+    stale_reuse_breakdown.inc("openxr_projection_screen_present", 5)
+    stale_reuse_breakdown.inc("openxr_effect_source_reused_safe", 5)
+    assert stale_reuse_breakdown.validate_openxr_async().passed
+
     breakdown.inc("openxr_quad_layer_failed", 1)
     breakdown.inc("openxr_d3d11_pbo_readback", 1)
     validation = breakdown.validate_openxr_async()
@@ -195,6 +211,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "rt_overwrite=" in output
     assert "screen_new=2.0" in output
     assert "screen_reuse=1.0" in output
+    assert "screen_proj=0.0" in output
     assert "screen_age=2.00f" in output
     assert "screen_quality_failed=1.0" in output
     assert "source_lat=15.00ms" in output

@@ -129,6 +129,12 @@ class CoreSourceStateMixin:
 
     def _release_idle_gpu_resources(self):
         self._release_runtime_eye_pbos()
+        if getattr(self, '_gl_tensor_pbo_uploader', None) is not None:
+            try:
+                self._gl_tensor_pbo_uploader.release()
+            except Exception:
+                pass
+            self._gl_tensor_pbo_uploader = None
         if self._pbo_color is not None and self._cuda_gl:
             try:
                 self._cuda_gl.unregister_resource(self._cuda_res_color)

@@ -276,6 +276,40 @@ def test_resolve_hf_model_file_reuses_cached_path(monkeypatch, tmp_path, capsys)
         _RESOLVED_HF_MODEL_FILES.clear()
 
 
+def test_resolve_hf_model_file_falls_back_when_hf_returns_empty_file(monkeypatch, tmp_path):
+    import sys
+    import types
+
+    _RESOLVED_HF_MODEL_FILES.clear()
+    empty_file = tmp_path / "empty.safetensors"
+    empty_file.write_bytes(b"")
+    direct_file = tmp_path / "models--test--model" / "model.safetensors"
+    calls = []
+
+    def fake_hf_hub_download(**kwargs):
+        calls.append(kwargs)
+        empty_file.write_bytes(b"")
+        return str(empty_file)
+
+    def fake_direct(model_id, filename, cache_dir, endpoint):
+        direct_file.parent.mkdir(parents=True, exist_ok=True)
+        direct_file.write_bytes(b"weights")
+        return str(direct_file)
+
+    fake_module = types.SimpleNamespace(hf_hub_download=fake_hf_hub_download)
+    monkeypatch.setitem(sys.modules, "huggingface_hub", fake_module)
+    monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com",))
+    monkeypatch.setattr("stereo_runtime.depth_provider._probe_download_url", lambda url: True)
+    monkeypatch.setattr("stereo_runtime.depth_provider._download_hf_file_direct", fake_direct)
+
+    try:
+        assert _resolve_hf_model_file("test/model", tmp_path) == str(direct_file)
+        assert len(calls) >= 2
+        assert calls[-1]["force_download"] is True
+    finally:
+        _RESOLVED_HF_MODEL_FILES.clear()
+
+
 def test_hf_endpoint_fallback_restores_environment(monkeypatch, capsys):
     monkeypatch.delenv("HF_ENDPOINT", raising=False)
     monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com", "https://huggingface.co"))

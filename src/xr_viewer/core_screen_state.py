@@ -28,6 +28,17 @@ class CoreScreenStateMixin:
         trans[2, 3] = -self.screen_distance
         return trans @ rot_y @ rot_x @ rot_z
 
+    def _screen_model_mat4(self):
+        """Screen transform used by projection rendering."""
+        self._ensure_screen_dimensions()
+        scale = np.diag([
+            self.screen_width / 2.0,
+            self.screen_height / 2.0,
+            1.0,
+            1.0,
+        ]).astype('f4')
+        return self._screen_pose_mat4() @ scale
+
     def _decompose_env_model_mat4(self, mat):
         """Store an environment model matrix back into position, rotation, and scale."""
         mat = np.asarray(mat, dtype=np.float64)

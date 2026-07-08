@@ -67,6 +67,7 @@ Stereo Warp → Mask and Hole Fill → Temporal Stabilization → Output Pack / 
 6. **坐标系规则**：所有图像坐标系采用**左上角为原点**（0,0），x轴向右，y轴向下。
 7. **输出分层约束**：运行目标、质量模式、合成方式、render size、transport、packing format 必须分层表达，不能互相替代。
 8. **实时调度约束**：实时 runtime 必须以 latest-frame / low-latency 为优先目标；当 GPU runtime 工作慢于捕获节奏时，必须丢弃旧帧或覆盖旧 raw frame，不得让后段 CUDA 工作无限异步排队并反压捕获链路。
+9. **GPU resident 边界约束**：capture、depth、synthesis、hole fill、temporal、pack 等算法内部阶段应尽量保持 CUDA / ROCm / MPS / XPU tensor 驻留；只有当结果离开算法管线进入本地窗口、OpenXR、Metal、D3D、Vulkan 或编码输出边界时，才允许转换为对应图形/编码资源。显示系统不得被设计为直接消费普通 CUDA tensor。
 
 ### 3.3 工程分层定义
 
@@ -739,18 +740,20 @@ right_shift_px = -disparity_px / 2
 - **Depth Map**：RGB + 深度图输出
 
 **B. OpenXR Full Synthesis**：
-- 上传 `left_eye` / `right_eye` 到OpenXR交换链
-- 使用 `XrCompositionLayerProjection` 类型
-- runtime 应优先直接产出 OpenXR 可消费的 `uint8` / RGBA CUDA tensor，避免 viewer 端重复执行 float clamp / multiply / uint8 转换。
-- `CUDA tensor -> GL texture` 必须走共享 GPU texture upload 后端：优先 CUDA/GL image texture copy，失败才允许 PBO fallback；任一 CPU fallback 都必须在控制台用红色标识，并记录失败原因。
+- runtime 应优先直接产出 OpenXR 可消费的 `uint8` / RGBA GPU tensor，避免 viewer 端重复执行 float clamp / multiply / uint8 转换。
+- Windows OpenXR 主路径应优先使用 D3D11 native：`CUDA tensor -> D3D11 texture -> OpenXR D3D11 swapchain / projection layer`。该路径用于绕开 OpenGL swapchain / CUDA-GL interop 的同步和格式限制。
+- OpenGL OpenXR 只作为兼容 fallback：`CUDA/HIP/ROCm tensor -> GL PBO / GL texture -> OpenXR OpenGL swapchain`。CUDA 后端可优先尝试 CUDA/GL image texture copy，失败后使用 PBO fallback；HIP/ROCm 默认使用共享 PBO 路径。
+- 任一 GPU upload 失败导致 CPU fallback 时，必须在控制台用红色标识，并记录失败原因。
 
 **C. OpenXR RGB+D Depth Direct**：
-- 输出RGB + Depth，由Viewer Shader消费
+- 输出 RGB + Depth，由 viewer shader 消费。
 - Viewer Shader 消费 RuntimeSettingsSnapshot 派生出的 shader uniform snapshot。该 snapshot 必须表达 `max_disparity_px`、`depth_strength`、`depth_response`、`convergence`、`render_size`、`screen_roll` 等规范语义；viewer 不得把 IPD、stereo_scale、max_shift_ratio 当作 normalized-depth 强度链重新解释。
+- RGB/depth 若仍停留在算法内部，应保持 GPU tensor；只有进入 OpenXR / 本地 viewer 显示边界时才上传到 D3D11 texture、GL texture、Metal texture 或其它图形资源。
 
 **D. Texture Upload 与 Present 分层**：
-- 可以统一的是 `CUDA tensor -> GL texture` 上传后端；不得把 OpenXR frame loop / `xr_wait` / `xr_submit`、local GUI loop / vsync / window present、capture/runtime pipeline 合并成同一层。
-- OpenXR 与本地窗口都必须复用同一个 GPU texture uploader 语义，避免一个模式修好 CUDA/GL image texture，另一个模式仍静默走 CPU upload。
+- 可以统一的是“GPU tensor 到同类图形资源”的上传语义，不得把 OpenXR frame loop / `xr_wait` / `xr_submit`、local GUI loop / vsync / window present、capture/runtime pipeline 合并成同一层。
+- OpenGL 输出路径必须复用共享 GL texture uploader 语义：通用 RGB/depth 走 `GlTensorPboUploader`，CUDA RGBA image copy 走 `CudaGlTextureUploader`，避免 OpenXR 与本地窗口各自维护一套 GPU tensor -> GL texture 逻辑。
+- Windows OpenXR 长期主路径为 D3D11 native；OpenGL 保留为本地 viewer 和兼容 fallback。D3D11 native、Metal、Vulkan、RTMP/MJPEG 不得强行复用 OpenGL uploader。
 - `glGenerateMipmap` 只属于 OpenGL texture mipmap 生成，不是 CUDA 功能；实时 OpenXR/full-synthesis 上传路径默认不得每帧生成 mipmap，除非明确使用 mip level 采样并已证明收益大于 GPU 开销。
 
 #### 4.11.3 行业依据

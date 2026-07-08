@@ -406,14 +406,62 @@ float4 ps_main(VSOut input) : SV_TARGET
 #elif D2S_SHADER_MODE == 1
     return float4(texColor.Sample(sampLinear, uv).rgb, 1.0);
 #else
-    float depth = saturate(texDepth.Sample(sampLinear, uv).r);
+    if (abs(depthStrength) < 0.000001 || abs(parallaxOffset) < 0.000001) {
+        return float4(texColor.Sample(sampLinear, uv).rgb, 1.0);
+    }
+
+    uint texW = 1;
+    uint texH = 1;
+    texColor.GetDimensions(texW, texH);
+    float2 pixelSize = 1.0 / float2(max(float(texW), 1.0), max(float(texH), 1.0));
+    float2 parDir = normalize(float2(cos(roll), sin(roll)));
+    float2 signedParDir = parDir * (parallaxOffset >= 0.0 ? 1.0 : -1.0);
+
+    float2 dsDir = signedParDir * pixelSize * 1.5;
+    float d0 = texDepth.Sample(sampLinear, uv).r;
+    float dm = texDepth.Sample(sampLinear, uv - dsDir).r;
+    float dp = texDepth.Sample(sampLinear, uv + dsDir).r;
+    float depth = saturate(d0 * 0.5 + dm * 0.25 + dp * 0.25);
     float depthResponse = depth - convergence;
-    float shift = depthResponse * parallaxOffset * depthStrength;
-    float2 shiftedUv = uv - float2(shift * cos(roll), shift * sin(roll));
+
+    float edgeFalloff = smoothstep(0.0, 0.05, uv.x) * (1.0 - smoothstep(0.95, 1.0, uv.x));
+    float shift = depthResponse * parallaxOffset * depthStrength * edgeFalloff;
+    float2 shiftedUv = uv - parDir * shift;
     if (shiftedUv.x < 0.0 || shiftedUv.x > 1.0 || shiftedUv.y < 0.0 || shiftedUv.y > 1.0) {
         return float4(0.0, 0.0, 0.0, 1.0);
     }
-    return float4(texColor.Sample(sampLinear, shiftedUv).rgb, 1.0);
+
+    float4 color = texColor.Sample(sampLinear, shiftedUv);
+    float2 step2 = signedParDir * pixelSize * 2.0;
+    float jump = abs(texDepth.Sample(sampLinear, uv - step2).r - texDepth.Sample(sampLinear, uv + step2).r);
+    float conf = smoothstep(0.04, 0.10, jump);
+    if (conf > 0.001) {
+        float4 accum = float4(0.0, 0.0, 0.0, 0.0);
+        float totalWeight = 0.0;
+        float centerInv = -depth;
+        float2 sweep = signedParDir * pixelSize.x * (parallaxOffset > 0.0 ? -1.0 : 1.0);
+        [loop]
+        for (int i = 1; i <= 12; ++i) {
+            float2 sampleUv = uv + sweep * float(i);
+            if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) {
+                continue;
+            }
+            float sampleInv = 1.0 - texDepth.Sample(sampLinear, sampleUv).r;
+            if (sampleInv > centerInv + 0.012) {
+                float weight = exp(-float(i) * 0.15) * (1.0 + (sampleInv - centerInv) * 10.0);
+                accum += texColor.Sample(sampLinear, sampleUv) * weight;
+                totalWeight += weight;
+                if (totalWeight > 5.0) {
+                    break;
+                }
+            }
+        }
+        if (totalWeight > 0.01) {
+            color = lerp(color, accum / totalWeight, conf);
+        }
+    }
+
+    return float4(color.rgb, 1.0);
 #endif
 }
 """
@@ -622,7 +670,7 @@ class D3D11NativeRenderer:
             f"mips={desc.MipLevels} array={desc.ArraySize} "
             f"sample={desc.SampleDesc.Count}/{desc.SampleDesc.Quality} "
             f"usage={desc.Usage} bind=0x{desc.BindFlags:x} "
-            f"cpu=0x{desc.CPUAccessFlags:x} misc=0x{desc.MiscFlags:x}"
+            f"cpu_access_flags=0x{desc.CPUAccessFlags:x} misc=0x{desc.MiscFlags:x}"
         )
 
     def _get_or_create_swapchain_rtv(self, swapchain_texture):

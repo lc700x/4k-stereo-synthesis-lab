@@ -178,12 +178,52 @@ def _find_local_model_weight(model_dir: str | Path) -> str | None:
         return None
     for filename in _MODEL_WEIGHT_FILENAMES:
         direct = root / filename
-        if direct.exists():
+        if _is_valid_model_weight_file(direct):
             return str(direct)
         for path in root.rglob(filename):
-            if path.is_file():
+            if _is_valid_model_weight_file(path):
                 return str(path)
     return None
+
+
+def _is_valid_model_weight_file(path: str | Path) -> bool:
+    try:
+        p = Path(path)
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _remove_invalid_model_weight(path: str | Path) -> None:
+    try:
+        p = Path(path)
+        if p.exists() and p.stat().st_size <= 0:
+            p.unlink()
+    except OSError:
+        pass
+
+
+def _download_hf_file_direct(model_id: str, filename: str, cache_dir: str | Path, endpoint: str) -> str:
+    import requests
+    from .model_registry import resolve_model_dir
+
+    target_dir = resolve_model_dir(model_id, cache_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / filename
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    url = _hf_resolve_url(endpoint, model_id, filename)
+    _progress_print(f"[Main] Direct model download fallback: {url} -> {target}")
+    response = requests.get(url, headers=HF_DOWNLOAD_HEADERS, stream=True, timeout=30)
+    response.raise_for_status()
+    with open(tmp, "wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                handle.write(chunk)
+    if not _is_valid_model_weight_file(tmp):
+        _remove_invalid_model_weight(tmp)
+        raise FileNotFoundError(f"direct download produced empty model weight: {target}")
+    os.replace(tmp, target)
+    return str(target)
 
 
 def _progress_print(message):
@@ -326,8 +366,11 @@ def _resolve_hf_model_file(
     cache_key = (str(model_id), str(Path(cache_dir).resolve()))
     if not force_download:
         cached = _RESOLVED_HF_MODEL_FILES.get(cache_key)
-        if cached and Path(cached).exists():
+        if cached and _is_valid_model_weight_file(cached):
             return cached
+        if cached:
+            _remove_invalid_model_weight(cached)
+            _RESOLVED_HF_MODEL_FILES.pop(cache_key, None)
         from .model_registry import resolve_model_dir
 
         local_path = _find_local_model_weight(resolve_model_dir(model_id, cache_dir))
@@ -347,6 +390,9 @@ def _resolve_hf_model_file(
                     cache_dir=cache_dir_text,
                     local_files_only=True,
                 )
+                if not _is_valid_model_weight_file(path):
+                    _remove_invalid_model_weight(path)
+                    raise FileNotFoundError(f"cached model weight is empty: {path}")
                 _progress_print(f"[Main] Depth model cache hit: {path}")
                 _RESOLVED_HF_MODEL_FILES[cache_key] = path
                 return path
@@ -378,11 +424,30 @@ def _resolve_hf_model_file(
                         force_download=force_download,
                         tqdm_class=DownloadProgress,
                     )
+                    if not _is_valid_model_weight_file(path):
+                        _remove_invalid_model_weight(path)
+                        path = hf_hub_download(
+                            repo_id=model_id,
+                            filename=filename,
+                            cache_dir=cache_dir_text,
+                            force_download=True,
+                            tqdm_class=DownloadProgress,
+                        )
+                    if not _is_valid_model_weight_file(path):
+                        _remove_invalid_model_weight(path)
+                        path = _download_hf_file_direct(model_id, filename, cache_dir, endpoint)
                     status_write("深度模型权重下载完成，正在准备下一步。")
                     _RESOLVED_HF_MODEL_FILES[cache_key] = path
                     return path
                 except Exception as exc:
                     last_error = exc
+                    try:
+                        path = _download_hf_file_direct(model_id, filename, cache_dir, endpoint)
+                        status_write("深度模型权重下载完成，正在准备下一步。")
+                        _RESOLVED_HF_MODEL_FILES[cache_key] = path
+                        return path
+                    except Exception as direct_exc:
+                        last_error = direct_exc
                     _progress_print(f"[Main] Depth model download failed from {endpoint}: {type(exc).__name__}: {exc}")
     _raise_model_resolution_error(model_id, last_error, local_only=False)
 

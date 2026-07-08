@@ -24,6 +24,7 @@ from OpenGL.GL import (
     GL_UNSIGNED_BYTE,
 )
 from viewer.viewer import BACKEND
+from viewer.gl_texture_uploader import GlTensorPboUploader
 from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
 
 try:
@@ -61,34 +62,27 @@ class CoreFrameUploadMixin:
         self._texture_size = (w, h)
 
     def _init_cuda_pbos(self, w, h):
-        """Create or recreate PBOs and register them with CUDA/HIP."""
+        """Prepare shared CUDA/HIP PBO uploader for RGB+depth GL texture upload."""
         if not self._cuda_gl or BACKEND not in ("CUDA", "HIP"):
             return
-        # Unregister old resources before deleting PBOs
-        if self._pbo_color is not None:
+        uploader = getattr(self, '_gl_tensor_pbo_uploader', None)
+        if uploader is not None and self._pbo_texture_size == (w, h):
+            return
+        if uploader is not None:
             try:
-                self._cuda_gl.unregister_resource(self._cuda_res_color)
-                self._cuda_gl.unregister_resource(self._cuda_res_depth)
-                glDeleteBuffers(2, [self._pbo_color, self._pbo_depth])
+                uploader.release()
             except Exception:
                 pass
-
-        ids = glGenBuffers(2)
-        self._pbo_color = int(ids[0])
-        self._pbo_depth = int(ids[1])
-
-        for pbo_id, nbytes in [
-            (self._pbo_color, w * h * 3),   # RGB uint8
-            (self._pbo_depth, w * h * 4),   # float32
-        ]:
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, pbo_id)
-            glBufferData(GL_PIXEL_UNPACK_BUFFER, nbytes, None, GL_DYNAMIC_DRAW)
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
-
-        self._cuda_res_color = self._cuda_gl.register_buffer(self._pbo_color)
-        self._cuda_res_depth = self._cuda_gl.register_buffer(self._pbo_depth)
+        self._gl_tensor_pbo_uploader = GlTensorPboUploader(
+            self._cuda_gl,
+            log_prefix="OpenXRViewer tensor upload",
+        )
+        self._pbo_color = None
+        self._pbo_depth = None
+        self._cuda_res_color = None
+        self._cuda_res_depth = None
         self._pbo_texture_size = (w, h)
-        print(f"[OpenXRViewer] GPU interop PBOs created ({BACKEND}) {w}x{h}")
+        print(f"[OpenXRViewer] GPU interop PBO uploader ready ({BACKEND}) {w}x{h}")
 
     def _init_cpu_pbos(self, w, h):
         """Create unpack PBOs for CPU-path texture upload."""
@@ -219,44 +213,30 @@ class CoreFrameUploadMixin:
             )
 
         if gpu_ok:
-            if self._pbo_texture_size != (w, h):
+            if self._pbo_texture_size != (w, h) or getattr(self, '_gl_tensor_pbo_uploader', None) is None:
                 self._init_cuda_pbos(w, h)
                 if perf_enabled:
                     _mark_upload('resize_cuda_pbos')
 
-            # Color: CHW tensor ->HWC contiguous uint8 on GPU, DMA into PBO
+            # Color: CHW tensor -> HWC contiguous uint8 on GPU, then shared PBO upload.
             rgb_gpu = rgb.permute(1, 2, 0).contiguous().clamp(0, 255).to(torch.uint8)
+            depth_upload = depth_gpu.contiguous()
             if perf_enabled:
-                _mark_upload('rgb_prepare_gpu')
-            ptr = self._cuda_gl.map_resource(self._cuda_res_color)
-            self._cuda_gl.memcpy_d2d(ptr, rgb_gpu.data_ptr(), rgb_gpu.nbytes)
-            self._cuda_gl.unmap_resource(self._cuda_res_color)
+                _mark_upload('rgb_depth_prepare_gpu')
+            self._gl_tensor_pbo_uploader.upload(
+                [self.color_tex, self.depth_tex],
+                [rgb_gpu, depth_upload],
+                w,
+                h,
+                [
+                    ((int(h), int(w), 3), "torch.uint8", GL_RGB, GL_UNSIGNED_BYTE, 3, True),
+                    ((int(h), int(w)), "torch.float32", GL_RED, GL_FLOAT, 4, False),
+                ],
+            )
             if perf_enabled:
-                _mark_upload('rgb_cuda_copy')
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._pbo_color)
-            glBindTexture(GL_TEXTURE_2D, self.color_tex.glo)
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, ctypes.c_void_p(0))
-            if perf_enabled:
-                _mark_upload('rgb_tex_sub_image')
-            glGenerateMipmap(GL_TEXTURE_2D)
-            if perf_enabled:
-                _mark_upload('rgb_mipmap')
-            glBindTexture(GL_TEXTURE_2D, 0)
-
-            ptr = self._cuda_gl.map_resource(self._cuda_res_depth)
-            self._cuda_gl.memcpy_d2d(ptr, depth_gpu.contiguous().data_ptr(), depth_gpu.nbytes)
-            self._cuda_gl.unmap_resource(self._cuda_res_depth)
-            if perf_enabled:
-                _mark_upload('depth_cuda_copy')
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._pbo_depth)
-            glBindTexture(GL_TEXTURE_2D, self.depth_tex.glo)
-            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h, GL_RED, GL_FLOAT, ctypes.c_void_p(0))
-            if perf_enabled:
-                _mark_upload('depth_tex_sub_image')
+                _mark_upload('rgb_depth_pbo_upload')
             # No glGenerateMipmap for depth: keep DIBR sampling at full-res
             # to match viewer.py FullSBS numerics.
-            glBindTexture(GL_TEXTURE_2D, 0)
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
         else:
             # CPU fallback - use PBO for async DMA when available.
             if hasattr(rgb, 'detach'):

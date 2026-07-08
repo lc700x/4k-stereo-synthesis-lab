@@ -24,6 +24,9 @@ class RuntimeCallbacks:
     def breakdown_add_value(self, name, value):
         self.context.fps_breakdown.add_value(name, value)
 
+    def breakdown_set_latest(self, name, value):
+        self.context.fps_breakdown.set_latest(name, value)
+
     def breakdown_add_runtime_timing(self, runtime_result):
         self.context.fps_breakdown.add_runtime_timing(runtime_result)
 

@@ -36,6 +36,7 @@ class OpenXRRuntimeCallbacks:
     breakdown_inc: Callable = _noop
     breakdown_add_time: Callable = _noop
     breakdown_add_value: Callable = _noop
+    breakdown_set_latest: Callable = _noop
     render_active_event: object | None = None
     source_active_event: object | None = None
     idle_active_event: object | None = None
@@ -123,6 +124,10 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
         viewer._fps_breakdown_inc = callbacks.breakdown_inc
         viewer._fps_breakdown_add_time = callbacks.breakdown_add_time
         viewer._fps_breakdown_add_value = callbacks.breakdown_add_value
+        callbacks.breakdown_set_latest(
+            "openxr_async_effects_enabled",
+            bool(getattr(viewer, "_openxr_async_effects_enabled", True)),
+        )
         callbacks.source_active_set()
         callbacks.render_active_clear()
         callbacks.wait_idle_clear()

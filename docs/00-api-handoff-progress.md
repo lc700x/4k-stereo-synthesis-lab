@@ -47,7 +47,7 @@ Canonical specs for current work:
 
 ## Current Known Issues
 
-- D3D11 native OpenXR direct shader still needs a follow-up to match the OpenGL RGB+depth direct shader's core DIBR semantics. Current D3D11 already applies `screen_roll` to parallax direction, but still lacks the OpenGL shader's 3-tap depth smoothing, non-linear depth shaping, edge falloff, soft disocclusion confidence, push-pull inpaint, alpha edge fade, feather controls, corner radius, and `u_resolution` / `u_viewport` semantics. Estimated AI time for the focused direct-shader parity pass is about 60-90 minutes excluding headset validation; full OpenGL `_render_eye()` experience parity is a larger 3-5 hour follow-up.
+- D3D11 native OpenXR direct shader now includes the core OpenGL RGB+depth DIBR semantics: 3-tap depth smoothing, edge falloff, soft disocclusion confidence, and directional inpaint. Remaining work is VDXR visual/performance validation plus optional polish parity such as rounded-corner alpha, feather controls, and full OpenGL `_render_eye()` experience parity.
 - Runtime scheduling/backpressure must stay latest-frame first. The recent high-refresh capture diagnosis showed direct `wc_cuda` capture can reach high cadence, but a full CUDA runtime frame without a GPU completion boundary can build an async GPU queue and backpressure WGC / CUDA interop down to roughly 50-60 FPS. This is a runtime scheduling issue, not an OpenXR-only presentation issue.
 - The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
 - TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
@@ -62,7 +62,7 @@ Detailed engineering and migration rules live in `docs/02-desktop2stereo-enginee
 Current task queue:
 
 1. Complete GUI live hot-save direct emission of `RuntimeSettingsSnapshot`; keep settings.yaml polling as an explicit compatibility path.
-2. Bring D3D11 native OpenXR RGB+depth direct shader to parity with the OpenGL direct shader's core DIBR quality semantics.
+2. Validate D3D11 native OpenXR projection + RGB+depth direct shader on VDXR, then decide whether optional visual polish parity is still needed.
 3. Validate CUDA/ROCm capture zero-copy on real hardware before any path reports `zero_copy=True`.
 4. Keep runtime scheduling/backpressure covered: CUDA runtime should default to `D2S_RUNTIME_SYNC_AFTER_FRAME=auto`, latest-frame overwrite/drop is expected, and non-CUDA backends must not be accidentally forced into the CUDA sync policy.
 5. Trace the remaining SBS/display FPS gap outside `StereoRuntime.process_*()`: add or inspect timing around raw dequeue, runtime call, runtime_q put/drop, viewer dequeue, texture upload, OpenXR/local submit, present/vsync, and FPS reporting.
@@ -71,7 +71,7 @@ Current task queue:
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
 10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
-11. Validate the landed projection-layer main-screen path on VDXR with real headset logs. Quad layer diagnostics and optional shared-array experimentation may remain available, but Quad must not return as the default proof path for headset 3D.
+11. Continue `docs/36` phase 2: harden the OpenXR frame loop so the headset presenter keeps refreshing from the last good Projection screen frame when runtime/capture/effects are slow, without backpressuring capture/runtime.
 
 ## Current Status
 
@@ -80,9 +80,19 @@ Current task queue:
 Implemented locally in the current worktree:
 
 - Switched the OpenXR main virtual screen path off Quad layer. `ScreenLayerPresenter.prepare_frame_layers()` now leaves Quad updates/headers empty for the main screen, while projection layer remains the required presentation path.
+- Added the D3D11 native projection-layer main-screen branch. When the D3D11 native renderer has a runtime-eye or RGB+depth frame, `ProjectionLayerPresenter` now renders the virtual screen directly into the OpenXR D3D11 projection swapchain instead of skipping projection when NV_DX interop is absent.
+- Closed Phase 1 control-state contract for the D3D11 projection main screen: the projection model matrix now goes through the shared screen pose helper, while OpenXR frame input continues to call the existing controller/raycast/screen-adjust/hot-parameter path before rendering. This keeps visual screen placement and laser/controller hit logic tied to the same screen pose/size state.
+- Added D3D11 projection screen-present accounting. A successful two-eye D3D11 projection render now increments `openxr_projection_screen_present`, and `[FPSBreakdown]` reports it as `screen_proj=...`; `validate_openxr_async()` counts this as a valid main-screen present signal alongside the legacy Quad screen counters.
+- Fixed the OpenXR async validation gate for disabled effects. When `D2S_OPENXR_ASYNC_EFFECTS=0` / `Async effects enabled=False`, `validate_openxr_async()` no longer requires `effect_submit_or_safe_reuse`; when effects are enabled, the original effect-submit/safe-reuse requirement remains.
+- Hardened all model weight resolution against empty files. Local cache hits, `hf_hub_download`, and generic `snapshot_download` results must resolve to a non-empty weight file; empty/failed Hugging Face downloads fall back to direct HTTP streaming into `model.safetensors.tmp` followed by atomic replace.
+- Brought the D3D11 native RGB+depth direct shader up to the core OpenGL DIBR path: 3-tap depth smoothing, parallax edge falloff, soft disocclusion confidence, and directional inpaint. Runtime-eye/full-synthesis input still takes the cheap color-only path because it is already prewarped.
+- Changed the default OpenXR backend from OpenGL-first to D3D11-first. `D2S_OPENXR_BACKEND=opengl` still forces OpenGL, and `auto` still means OpenGL with D3D11 fallback.
 - Removed READY/init-time Quad prewarm calls from OpenXR input/OpenGL startup. Low-level Quad support remains for explicit diagnostics/overlay/legacy experiments.
 - Added an explicit OpenXR runtime output-mode contract: Traditional uses `rgb_depth`, Cinema uses `full_synthesis_eyes`, and `auto` remains the compatibility fallback. Traditional therefore keeps the RGB+depth shader path while sharing the normalized parallax/disparity parameter system with Cinema.
 - Fixed prewarped full-synthesis eye-order handling so Cross Eyed swaps generated left/right eye tensors on that path.
+- Real-device Phase 1 control validation passed on the D3D11 projection main screen: controller laser hits line up with the visible screen, left/right grip dragging moves the Projection screen, distance/size/rotation changes apply immediately to the main screen, and Depth Strength / 2D-3D hot switching still publishes runtime config.
+- Started `docs/36` Phase 2 hard-realtime closure by locking the frame-gate contract: source stale with an existing renderable last-good Projection screen frame must continue into renderer instead of submitting an empty frame. This preserves controller/head pose refresh and `xrEndFrame` cadence while `openxr_no_fresh` records the stale source condition.
+- Updated async validation coverage so `openxr_no_fresh` plus active `screen_proj` is accepted as a valid last-good-frame reuse state, not an async failure, when effect submit/safe reuse is satisfied.
 - Reduced noisy runtime logs: `[FPSBreakdown]` is capped to the requested limited debug count and OpenXR controller-render debug is capped separately.
 - Improved GUI/status progress reporting for weight download, ONNX export, and TensorRT build. Long TensorRT builds should emit `[INFO] [status]` user-facing state instead of leaving the GUI looking stuck behind verbose builder output.
 - Changed reset/default `Render Align` from `8` to `1`. `1` means no implicit output-size cropping; `8`, `16`, and `32` remain manual compatibility choices.
@@ -93,6 +103,16 @@ Verification run during this pass:
 .\src\python3\python.exe -m py_compile src\stereo_runtime\openxr_render.py src\stereo_runtime\presets.py src\stereo_runtime\runtime.py src\xr_viewer\core_openxr_input.py src\xr_viewer\core_openxr_opengl.py src\xr_viewer\screen_layer_presenter.py tests\test_runtime_openxr.py tests\test_presets.py tests\test_openxr_runtime.py tests\test_environment_fast_path.py src\gui\config.py src\stereo_runtime\render_size.py tests\test_render_size.py tests\test_gui_config.py
 .\src\python3\python.exe -m pytest tests\test_openxr_runtime.py -q -p no:cacheprovider
 .\src\python3\python.exe -m pytest tests\test_runtime_openxr.py tests\test_render_size.py tests\test_presets.py::test_openxr_presets_map_shared_stereo_params tests\test_gui_config.py::test_gui_render_size_controls_expose_only_fixed_4k_scale_tiers -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\projection_layer_presenter.py src\xr_viewer\core_openxr_d3d11.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains tests/test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests/test_openxr_runtime.py::test_screen_layer_presenter_does_not_build_quad_layers_for_main_screen -q
+.\src\python3\python.exe -m py_compile src\xr_viewer\d3d11_native_renderer.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests/test_openxr_runtime.py::test_d3d11_direct_shader_keeps_core_dibr_parity -q
+.\src\python3\python.exe -m py_compile src\xr_viewer\core_screen_state.py src\xr_viewer\implementation.py src\xr_viewer\projection_layer_presenter.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests/test_openxr_runtime.py::test_screen_model_matrix_uses_shared_screen_pose_state -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\openxr_frame_gate.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_openxr_frame_gate_keeps_rendering_last_good_frame_when_source_stale -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\utils\breakdown.py src\xr_viewer\openxr_frame_gate.py tests\test_breakdown.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_breakdown.py::test_fps_breakdown_validates_openxr_async_contract tests/test_openxr_runtime.py::test_openxr_frame_gate_keeps_rendering_last_good_frame_when_source_stale -q -p no:cacheprovider
 ```
 
 Result:
@@ -101,11 +121,19 @@ Result:
 py_compile passed
 OpenXR runtime tests passed: 111 passed, 2 warnings
 Runtime OpenXR / render-size / preset / GUI targeted tests passed
+D3D11 native projection-path static tests passed
+D3D11 direct shader core parity static tests passed
+D3D11 projection screen-state contract tests passed
+Real-device D3D11 projection control validation passed
+OpenXR Phase 2 stale-source last-good-frame gate test passed
+OpenXR async validation accepts stale-source screen_proj reuse
 ```
 
 Next validation target:
 
-- Re-run OpenXR on VDXR and confirm the headset uses the projection-layer main screen path, not Quad layer headers, while Traditional mode still follows RGB+depth shader output and Cinema follows full-synthesis eyes.
+- Continue `docs/36` phase 2: verify OpenXR presenter pacing and last-good-frame reuse when runtime/capture/effects are slow, without dropping controller/head pose refresh or blocking `xrEndFrame`.
+- In the real-device `[FPSBreakdown]` line, confirm `screen_proj>0`, `openxr_async_ok=1`, `openxr_async_missing=none`, and `openxr_async_failed=none` after projection rendering is active.
+- If async effects are intentionally disabled, confirm `fx_enabled=0`; in that case missing `effect_submit_or_safe_reuse` is no longer expected.
 - Confirm reset/default render alignment shows `1` and does not silently crop common sizes such as 1920x1080 to a 16-aligned height.
 
 ### 2026-07-07 OpenXR Runtime Preparation Before Capture

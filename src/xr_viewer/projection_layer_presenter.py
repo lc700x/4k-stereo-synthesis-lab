@@ -40,6 +40,12 @@ class ProjectionLayerPresenter:
                 default_proj,
                 updated_quad_eyes=updated_quad_eyes,
             )
+        if viewer._d3d11_native_renderer is not None:
+            return self.render_d3d11_native(
+                views,
+                default_fov,
+                default_proj_d3d,
+            )
         if viewer._interop_mode == 'nv_dx':
             return self.render_nv_dx_interop(
                 views,
@@ -48,6 +54,75 @@ class ProjectionLayerPresenter:
             )
         viewer._breakdown_inc('openxr_projection_d3d11_no_interop_skip')
         return []
+
+    def render_d3d11_native(self, views, default_fov, default_proj_d3d):
+        viewer = self.viewer
+        renderer = viewer._d3d11_native_renderer
+        if renderer is None or not getattr(renderer, "has_frame", False):
+            viewer._breakdown_inc('openxr_projection_d3d11_no_frame')
+            return []
+
+        model = viewer._build_model_mat4()
+        eye_layer_views = []
+        for eye_index in range(2):
+            swapchain = viewer._xr_swapchains[eye_index]
+            img_index = xr.acquire_swapchain_image(swapchain, viewer._xr_sc_acquire_info)
+            viewer._wait_swapchain_image(swapchain)
+            released = False
+            try:
+                sc_image = viewer._swapchain_images[eye_index][img_index]
+                sc_w, sc_h = viewer._swapchain_sizes[eye_index]
+                view = views[eye_index] if views and views[eye_index] else None
+                view_mat = _pose_to_view_mat4(view.pose) if view else np.eye(4, dtype=np.float32)
+                proj_mat = _fov_to_proj_mat4_d3d(view.fov) if view else default_proj_d3d
+                mvp = proj_mat @ view_mat @ model
+
+                if viewer._runtime_direct_source:
+                    renderer.render_runtime_eye(
+                        sc_image.texture,
+                        sc_w,
+                        sc_h,
+                        eye_index,
+                        mvp,
+                    )
+                else:
+                    render_width = int(
+                        getattr(viewer, '_runtime_rgb_depth_render_width', 0) or 0
+                    )
+                    if render_width <= 0:
+                        render_width = int((viewer._texture_size or (0, 0))[0] or 0)
+                    max_disparity = max(
+                        0.0,
+                        float(getattr(viewer, '_runtime_rgb_depth_max_disparity_px', 0.0) or 0.0),
+                    )
+                    disparity_uv = max_disparity / float(render_width) if render_width > 0 else 0.0
+                    eye_sign = -1.0 if eye_index == 0 else 1.0
+                    renderer.render_eye(
+                        sc_image.texture,
+                        sc_w,
+                        sc_h,
+                        eye_index,
+                        eye_sign * disparity_uv / 2.0,
+                        max(0.0, float(getattr(viewer, '_runtime_rgb_depth_depth_strength', viewer.depth_strength) or 0.0)),
+                        float(viewer.convergence),
+                        mvp,
+                        roll=getattr(viewer, 'screen_roll', 0.0),
+                    )
+
+                xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                released = True
+                eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
+            except Exception as exc:
+                if not released:
+                    try:
+                        xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)
+                    except Exception:
+                        pass
+                viewer._breakdown_inc('openxr_projection_render_failed')
+                print(f"[OpenXRViewer] D3D11 projection render failed: {type(exc).__name__}: {exc}")
+                return []
+        viewer._breakdown_inc('openxr_projection_screen_present')
+        return eye_layer_views
 
     def render_nv_dx_interop(self, views, default_fov, default_proj):
         viewer = self.viewer

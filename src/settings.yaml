@@ -328,7 +328,7 @@ Dynamic Convergence: false
 Dynamic Convergence Strength: 0.0
 Stereo Preset: cinema
 Stereo Quality: quality_4k
-Parallax Budget Preset: comfort
+Parallax Budget Preset: standard
 Temporal: true
 Temporal Strength: 0.2
 Auto Scene Reset: true

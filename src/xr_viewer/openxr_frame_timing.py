@@ -11,22 +11,7 @@ class OpenXRFrameTiming:
         self.viewer = viewer
 
     def _log_predicted_pacing(self, predicted_delta_s):
-        if predicted_delta_s <= 0.0:
-            return
-        hz = 1.0 / predicted_delta_s
-        previous_hz = getattr(self.viewer, '_last_xr_predicted_pacing_log_hz', None)
-        now = time.perf_counter()
-        previous_log_t = float(getattr(self.viewer, '_last_xr_predicted_pacing_log_t', 0.0) or 0.0)
-        if previous_hz is not None:
-            if now - previous_log_t < 5.0 or abs(float(previous_hz) - hz) < 5.0:
-                return
-        self.viewer._last_xr_predicted_pacing_log_hz = hz
-        self.viewer._last_xr_predicted_pacing_log_t = now
-        print(
-            f"[OpenXRViewer] App frame pacing from xr.wait_frame: "
-            f"predicted_period={predicted_delta_s * 1000.0:.2f}ms app_hz={hz:.2f}",
-            flush=True,
-        )
+        return
 
     def begin_frame(self, *, breakdown_enabled=False):
         viewer = self.viewer

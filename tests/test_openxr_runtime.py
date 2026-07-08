@@ -256,12 +256,14 @@ def test_openxr_display_refresh_rate_skips_unadvertised_rate(monkeypatch, capsys
     assert "not advertised by runtime" in capsys.readouterr().out
 
 
-def test_openxr_backend_defaults_to_opengl():
+def test_openxr_backend_defaults_to_d3d11():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
-    assert "os.environ.get('D2S_OPENXR_BACKEND', 'opengl')" in implementation
-    assert "using opengl" in implementation
+    assert "os.environ.get('D2S_OPENXR_BACKEND', 'd3d11')" in implementation
+    assert "using d3d11" in implementation
+    assert "Primary OpenXR backend: d3d11" in implementation
     assert "Primary OpenXR backend: opengl (D3D11 fallback enabled)" in implementation
+    assert "Forced OpenXR backend: opengl" in implementation
 
 
 def test_opengl_primary_init_can_fallback_to_d3d11(monkeypatch):
@@ -817,7 +819,11 @@ def test_cpu_fallback_paths_emit_red_console_warnings(monkeypatch):
     assert "using_cpu_update_subresource" in d3d11
     assert "StereoWindow runtime texture upload" in viewer
     assert "StereoWindow RGB+depth texture upload" in viewer
+    assert 'os.environ.get("D2S_GL_UPLOAD_MODE", "image")' in viewer
     assert "CudaGlTextureUploader" in viewer
+    assert "GlTensorPboUploader" in viewer
+    assert "GlTensorPboUploader" in frame_upload
+    assert "CUDA/HIP-GL PBOs created" in gl_uploader
     assert "CUDA/GL image texture upload failed" in gl_uploader
     assert "using PBO fallback" in gl_uploader
     assert "requires {name} support" in gl_uploader
@@ -2405,6 +2411,38 @@ def test_openxr_frame_pipeline_runs_hard_realtime_frame_order():
     assert len(viewer._frame_ts_ring) == 1
 
 
+def test_openxr_frame_gate_keeps_rendering_last_good_frame_when_source_stale():
+    from xr_viewer.openxr_frame_gate import OpenXRFrameGate
+
+    calls = []
+    viewer = SimpleNamespace()
+    viewer._track_session_idle_render = lambda should_render, now: calls.append(("idle", should_render, now)) or False
+    viewer._breakdown_inc = lambda name, amount=1: calls.append(("inc", name, amount))
+    viewer._session_ready_pending = False
+    viewer._has_fresh_source_frame = lambda now: calls.append(("fresh", now)) or False
+    viewer._pause_xr_output_for_source_stall = lambda: calls.append(("pause",))
+    viewer._has_renderable_source_frame = lambda: calls.append(("renderable",)) or True
+    viewer._hard_idle_active = False
+    frame_submitter = SimpleNamespace(
+        submit=lambda *_args, **_kwargs: pytest.fail("stale last-good frame must not submit empty frame")
+    )
+    gate = OpenXRFrameGate(viewer, frame_submitter)
+
+    skip_render, session_idle_timeout = gate.handle_ready_or_stall(
+        frame_state=SimpleNamespace(should_render=True, predicted_display_time=123),
+        now=10.0,
+        composition_layers=[],
+        submit_start=1.5,
+    )
+
+    assert skip_render is False
+    assert session_idle_timeout is False
+    assert ("inc", "openxr_no_fresh", 1) in calls
+    assert ("pause",) in calls
+    assert ("renderable",) in calls
+    assert ("inc", "openxr_no_renderable", 1) not in calls
+
+
 def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch, capsys):
     import xr_viewer.openxr_frame_timing as frame_timing_module
     from xr_viewer.openxr_frame_timing import OpenXRFrameTiming
@@ -2443,11 +2481,11 @@ def test_openxr_frame_timing_waits_and_begins_frame(monkeypatch, capsys):
         for name, seconds in metrics
     )
     output = capsys.readouterr().out
-    assert "App frame pacing from xr.wait_frame" in output
-    assert "app_hz=72." in output
+    assert "App frame pacing from xr.wait_frame" not in output
+    assert "app_hz=72." not in output
 
 
-def test_openxr_frame_timing_pacing_log_ignores_jitter(monkeypatch, capsys):
+def test_openxr_frame_timing_pacing_log_is_disabled(monkeypatch, capsys):
     import xr_viewer.openxr_frame_timing as frame_timing_module
     from xr_viewer.openxr_frame_timing import OpenXRFrameTiming
 
@@ -2460,7 +2498,7 @@ def test_openxr_frame_timing_pacing_log_ignores_jitter(monkeypatch, capsys):
     timing._log_predicted_pacing(1 / 73.36)
 
     output = capsys.readouterr().out
-    assert output.count("App frame pacing from xr.wait_frame") == 1
+    assert "App frame pacing from xr.wait_frame" not in output
 
 
 def test_openxr_frame_input_syncs_actions_and_updates_controllers(monkeypatch):
@@ -3325,9 +3363,74 @@ def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
     assert "self._quad_swapchains[eye_index] = swapchain" in core_quad
     assert "Quad layer {backend} swapchains" in core_quad
     assert "and self._d3d11_native_renderer is not None" in d3d11
-    assert "display body never returns" in d3d11
     assert "renderer.has_frame and renderer.runtime_eye_size is not None" in core_quad
     assert "source_tex.render_runtime_eye(sc_image.texture, quad_w, quad_h, eye_index" in core_quad
+
+
+def test_d3d11_projection_path_uses_native_renderer():
+    presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
+    d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    frame_input = (SRC / "xr_viewer" / "openxr_frame_input.py").read_text(encoding="utf-8")
+
+    assert "The native path renders the virtual screen into Projection layer" in d3d11
+    assert "if viewer._d3d11_native_renderer is not None:" in presenter
+    assert "return self.render_d3d11_native(" in presenter
+    assert "model = viewer._build_model_mat4()" in presenter
+    assert "return self._screen_model_mat4()" in implementation
+    assert "viewer._poll_controller_input(dt)" in frame_input
+    assert "renderer.render_runtime_eye(" in presenter
+    assert "renderer.render_eye(" in presenter
+    assert "openxr_projection_d3d11_no_interop_skip" in presenter
+    assert presenter.index("return self.render_d3d11_native(") < presenter.index(
+        "openxr_projection_d3d11_no_interop_skip"
+    )
+
+
+def test_screen_model_matrix_uses_shared_screen_pose_state():
+    from xr_viewer.core_screen_state import CoreScreenStateMixin
+
+    class Viewer(CoreScreenStateMixin):
+        def _ensure_screen_dimensions(self):
+            if self.screen_height is None:
+                self.screen_height = self.screen_width * 9.0 / 16.0
+
+    viewer = Viewer()
+    viewer.screen_width = 4.0
+    viewer.screen_height = 2.25
+    viewer.screen_yaw = 0.31
+    viewer.screen_pitch = -0.17
+    viewer.screen_roll = 0.08
+    viewer.screen_pan_x = 1.2
+    viewer.screen_pan_y = -0.4
+    viewer.screen_distance = 6.5
+
+    pose = viewer._screen_pose_mat4()
+    model = viewer._screen_model_mat4()
+
+    np.testing.assert_allclose(model[:, 3], pose[:, 3])
+    np.testing.assert_allclose(model[:, 0], pose[:, 0] * 2.0)
+    np.testing.assert_allclose(model[:, 1], pose[:, 1] * 1.125)
+    np.testing.assert_allclose(model[:, 2], pose[:, 2])
+
+
+def test_d3d11_direct_shader_keeps_core_dibr_parity():
+    renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+
+    assert "texColor.GetDimensions(texW, texH)" in renderer
+    assert "d0 * 0.5 + dm * 0.25 + dp * 0.25" in renderer
+    assert "edgeFalloff = smoothstep(0.0, 0.05, uv.x)" in renderer
+    assert "jump = abs(texDepth.Sample" in renderer
+    assert "smoothstep(0.04, 0.10, jump)" in renderer
+    assert "for (int i = 1; i <= 12; ++i)" in renderer
+    assert "return float4(texColor.Sample(sampLinear, uv).rgb, 1.0);" in renderer
+
+
+def test_d3d11_texture_desc_does_not_emit_cpu_keyword_false_positive():
+    renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+
+    assert "cpu_access_flags=0x" in renderer
+    assert "cpu=0x" not in renderer
 
 
 def test_quad_layer_presented_state_resets_when_swapchains_reset():

@@ -61,6 +61,9 @@ class ProjectionLayerPresenter:
         if renderer is None or not getattr(renderer, "has_frame", False):
             viewer._breakdown_inc('openxr_projection_d3d11_no_frame')
             return []
+        update_panorama_background = getattr(renderer, "update_panorama_background", None)
+        if callable(update_panorama_background):
+            update_panorama_background(getattr(viewer, "_panorama_background_path", None))
 
         model = viewer._build_model_mat4()
         eye_layer_views = []

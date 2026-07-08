@@ -92,7 +92,7 @@ class BackgroundLayerRenderer:
         viewer._wait_swapchain_image(swapchain)
         released = False
         prev_viewport = getattr(viewer.ctx, 'viewport', None)
-        prev_depth_mask = getattr(viewer.ctx, 'depth_mask', None)
+        prev_depth_mask = get_depth_mask()
         try:
             sc_image = viewer._background_equirect_images[img_index]
             mgl_fbo = self._get_or_create_equirect_fbo(img_index, sc_image.image, width, height)
@@ -116,8 +116,7 @@ class BackgroundLayerRenderer:
                     pass
             if prev_viewport is not None:
                 viewer.ctx.viewport = prev_viewport
-            if prev_depth_mask is not None:
-                set_depth_mask(prev_depth_mask)
+            set_depth_mask(prev_depth_mask)
             viewer.ctx.enable(moderngl.DEPTH_TEST)
 
     def _panorama_stereo_layout(self):

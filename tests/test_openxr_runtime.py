@@ -3437,6 +3437,7 @@ def test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains():
 def test_d3d11_projection_path_uses_native_renderer():
     presenter = (SRC / "xr_viewer" / "projection_layer_presenter.py").read_text(encoding="utf-8")
     d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
+    renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     frame_input = (SRC / "xr_viewer" / "openxr_frame_input.py").read_text(encoding="utf-8")
 
@@ -3448,6 +3449,10 @@ def test_d3d11_projection_path_uses_native_renderer():
     assert "viewer._poll_controller_input(dt)" in frame_input
     assert "renderer.render_runtime_eye(" in presenter
     assert "renderer.render_eye(" in presenter
+    assert "update_panorama_background(getattr(viewer, \"_panorama_background_path\", None))" in presenter
+    assert "BACKGROUND_HLSL_SOURCE" in renderer
+    assert "def update_panorama_background(self, path):" in renderer
+    assert "self._draw_background()" in renderer
     assert "openxr_projection_d3d11_no_interop_skip" in presenter
     assert presenter.index("return self.render_d3d11_native(") < presenter.index(
         "openxr_projection_d3d11_no_interop_skip"

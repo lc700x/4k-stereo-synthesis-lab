@@ -286,11 +286,26 @@ class ScreenLayerPresenter:
     def prepare_projection_frame_state(self):
         self.viewer._openxr_quad_screen_unavailable_reason = self.quad_screen_unavailable_reason()
 
+    def ensure_panorama_background_ready(self):
+        viewer = self.viewer
+        if not getattr(viewer, '_panorama_background_path', None):
+            return
+        panorama_ready = getattr(viewer, '_panorama_texture_ready', None)
+        if callable(panorama_ready) and panorama_ready() is not None:
+            return
+        get_panorama_texture = getattr(viewer, '_get_panorama_texture', None)
+        if callable(get_panorama_texture):
+            get_panorama_texture()
+        get_panorama_light_mask_texture = getattr(viewer, '_get_panorama_light_mask_texture', None)
+        if callable(get_panorama_light_mask_texture):
+            get_panorama_light_mask_texture()
+
     def prepare_frame_layers(self, *, screen_frame_uploaded=False):
         self._frame_background_layers = []
         self._frame_projection_layer = None
         self._frame_quad_layers = []
         self._frame_background_projection_fallback = False
+        self.ensure_panorama_background_ready()
         background_renderer = getattr(self.viewer, '_background_layer_renderer', None)
         if background_renderer is None:
             background_renderer = BackgroundLayerRenderer(self.viewer)

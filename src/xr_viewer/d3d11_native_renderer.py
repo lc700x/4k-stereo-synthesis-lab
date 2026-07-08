@@ -3,6 +3,7 @@ import os
 import sys
 
 import numpy as np
+from PIL import Image
 
 from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_operation, warn_cpu_transfer
 
@@ -467,6 +468,42 @@ float4 ps_main(VSOut input) : SV_TARGET
 """
 
 
+BACKGROUND_HLSL_SOURCE = r"""
+Texture2D texBackground : register(t0);
+SamplerState sampLinear : register(s0);
+
+struct VSOut {
+    float4 pos : SV_POSITION;
+    float2 uv  : TEXCOORD0;
+};
+
+VSOut vs_main(uint vertexId : SV_VertexID)
+{
+    static const float2 pos[4] = {
+        float2(-1.0, -1.0),
+        float2(-1.0,  1.0),
+        float2( 1.0, -1.0),
+        float2( 1.0,  1.0)
+    };
+    static const float2 uv[4] = {
+        float2(0.0, 1.0),
+        float2(0.0, 0.0),
+        float2(1.0, 1.0),
+        float2(1.0, 0.0)
+    };
+    VSOut output;
+    output.pos = float4(pos[vertexId], 1.0, 1.0);
+    output.uv = uv[vertexId];
+    return output;
+}
+
+float4 ps_main(VSOut input) : SV_TARGET
+{
+    return float4(texBackground.Sample(sampLinear, input.uv).rgb, 1.0);
+}
+"""
+
+
 class D3D11NativeRenderer:
     def __init__(self, device, context, swapchain_format=DXGI_FORMAT_R8G8B8A8_UNORM):
         self.device = device
@@ -499,6 +536,11 @@ class D3D11NativeRenderer:
         self.input_layout = ctypes.c_void_p()
         self.vertex_shader = ctypes.c_void_p()
         self.pixel_shader = ctypes.c_void_p()
+        self.background_vertex_shader = ctypes.c_void_p()
+        self.background_pixel_shader = ctypes.c_void_p()
+        self.background_srv = ctypes.c_void_p()
+        self.background_tex = ctypes.c_void_p()
+        self.background_path = None
         self.sampler = ctypes.c_void_p()
         self.rasterizer = ctypes.c_void_p()
         self.swapchain_rtvs = {}
@@ -571,6 +613,21 @@ class D3D11NativeRenderer:
             _release(vs_blob)
             _release(ps_blob)
 
+        bg_vs_blob = _compile_shader(BACKGROUND_HLSL_SOURCE, "vs_main", "vs_5_0")
+        bg_ps_blob = _compile_shader(BACKGROUND_HLSL_SOURCE, "ps_main", "ps_5_0")
+        try:
+            create_vs = self._device_call(
+                12, ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+            )
+            create_ps = self._device_call(
+                15, ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+            )
+            _check_hr(create_vs(_ptr_value(self.device), _blob_ptr(bg_vs_blob), _blob_size(bg_vs_blob), None, ctypes.byref(self.background_vertex_shader)), "CreateVertexShader(background)")
+            _check_hr(create_ps(_ptr_value(self.device), _blob_ptr(bg_ps_blob), _blob_size(bg_ps_blob), None, ctypes.byref(self.background_pixel_shader)), "CreatePixelShader(background)")
+        finally:
+            _release(bg_vs_blob)
+            _release(bg_ps_blob)
+
         self.vertex_buffer = ctypes.c_void_p()
         self.constant_buffer = self._create_buffer(np.zeros(20, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
 
@@ -636,6 +693,47 @@ class D3D11NativeRenderer:
         )
         _check_hr(create_srv(_ptr_value(self.device), tex, None, ctypes.byref(srv)), "CreateShaderResourceView")
         return tex, srv
+
+    def _create_texture_srv_from_rgba(self, rgba):
+        arr = np.ascontiguousarray(rgba, dtype=np.uint8)
+        height, width = arr.shape[:2]
+        tex = ctypes.c_void_p()
+        srv = ctypes.c_void_p()
+        desc = D3D11Texture2DDesc(
+            width, height, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, DXGISampleDesc(1, 0),
+            D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0,
+        )
+        init = D3D11SubresourceData(ctypes.c_void_p(arr.ctypes.data), width * 4, width * height * 4)
+        create_tex = self._device_call(
+            5, ctypes.c_long, ctypes.POINTER(D3D11Texture2DDesc), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+        )
+        _check_hr(create_tex(_ptr_value(self.device), ctypes.byref(desc), ctypes.byref(init), ctypes.byref(tex)), "CreateTexture2D(background)")
+        create_srv = self._device_call(
+            7, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+        )
+        _check_hr(create_srv(_ptr_value(self.device), tex, None, ctypes.byref(srv)), "CreateShaderResourceView(background)")
+        return tex, srv
+
+    def update_panorama_background(self, path):
+        if not path or self.background_path == path:
+            return
+        _release(self.background_srv)
+        _release(self.background_tex)
+        self.background_srv = ctypes.c_void_p()
+        self.background_tex = ctypes.c_void_p()
+        if os.path.splitext(path)[1].lower() == ".hdr":
+            from .environment_renderer import _hdr_to_ldr_u8, _read_radiance_hdr
+
+            rgb, _size = _read_radiance_hdr(path)
+            rgb = _hdr_to_ldr_u8(rgb)
+        else:
+            rgb = np.asarray(Image.open(path).convert("RGB"), dtype=np.uint8)
+        rgba = np.empty((rgb.shape[0], rgb.shape[1], 4), dtype=np.uint8)
+        rgba[..., :3] = rgb[..., :3]
+        rgba[..., 3] = 255
+        self.background_tex, self.background_srv = self._create_texture_srv_from_rgba(rgba)
+        self.background_path = path
+        print(f"[OpenXRViewer] D3D11 panorama background active: {path} ({rgba.shape[1]}x{rgba.shape[0]})")
 
     def _ensure_render_target(self, width, height):
         if self.render_target_size == (width, height, self.swapchain_format):
@@ -1050,6 +1148,17 @@ class D3D11NativeRenderer:
             depth_srv=None,
         )
 
+    def _draw_background(self):
+        if not self.background_srv:
+            return
+        self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.background_vertex_shader), None, 0)
+        self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.background_pixel_shader), None, 0)
+        srv_arr = (ctypes.c_void_p * 1)(_ptr_value(self.background_srv))
+        self._context_call(8, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, srv_arr)
+        sampler_arr = (ctypes.c_void_p * 1)(_ptr_value(self.sampler))
+        self._context_call(10, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, sampler_arr)
+        self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), 4, 0)
+
     def _render_eye_with_srv(self, swapchain_texture, width, height, eye_index, color_srv, eye_offset, depth_strength, convergence, mvp, *, roll=0.0, depth_srv=None):
         rtv = self._get_or_create_swapchain_rtv(swapchain_texture)
         try:
@@ -1071,6 +1180,7 @@ class D3D11NativeRenderer:
             self._context_call(17, None, ctypes.c_void_p)(_ptr_value(self.context), 0)
             self._context_call(43, None, ctypes.c_void_p)(_ptr_value(self.context), _ptr_value(self.rasterizer))
             self._context_call(24, None, ctypes.c_uint)(_ptr_value(self.context), D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP)
+            self._draw_background()
             self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.vertex_shader), None, 0)
             self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.pixel_shader), None, 0)
 
@@ -1111,6 +1221,7 @@ class D3D11NativeRenderer:
         self._release_runtime_eye_textures()
         for attr in (
             "sampler", "pixel_shader", "vertex_shader", "input_layout",
+            "background_pixel_shader", "background_vertex_shader", "background_srv", "background_tex",
             "rasterizer", "constant_buffer", "vertex_buffer", "render_rtv", "render_tex",
         ):
             ptr = getattr(self, attr, None)

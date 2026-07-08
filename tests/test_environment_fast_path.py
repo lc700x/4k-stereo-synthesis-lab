@@ -725,6 +725,21 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     assert viewer._background_layer_renderer is not None
 
 
+def test_screen_layer_presenter_preloads_panorama_background(monkeypatch):
+    from xr_viewer.screen_layer_presenter import ScreenLayerPresenter
+
+    viewer = _make_default_viewer(monkeypatch)
+    calls = []
+    viewer._panorama_background_path = "background.hdr"
+    viewer._panorama_tex = None
+    viewer._get_panorama_texture = lambda: calls.append("texture")
+    viewer._get_panorama_light_mask_texture = lambda: calls.append("mask")
+
+    ScreenLayerPresenter(viewer).ensure_panorama_background_ready()
+
+    assert calls == ["texture", "mask"]
+
+
 def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch):
     import ctypes
     from types import SimpleNamespace

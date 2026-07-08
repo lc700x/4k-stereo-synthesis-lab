@@ -358,6 +358,24 @@ class CoreSourceStateMixin:
             return
         self._breakdown_add_time("openxr_source_latency", time.perf_counter() - float(source_timestamp))
 
+    def _set_pending_projection_screen_present(self, poll):
+        self._pending_projection_screen_present = poll
+
+    def _record_projection_screen_presented(self):
+        poll = getattr(self, "_pending_projection_screen_present", None)
+        if poll is None:
+            return
+        self._pending_projection_screen_present = None
+        bridge = self._screen_frame_bridge()
+        if getattr(poll, "is_new", False):
+            presented = bridge.mark_presented(getattr(poll, "frame", None))
+            self._breakdown_inc("openxr_new_screen_frame")
+        else:
+            presented = poll
+            self._breakdown_inc("openxr_reused_screen_frame")
+        self._record_screen_frame_bridge_age(bridge)
+        self._record_screen_frame_source_latency(getattr(presented, "source_timestamp", None))
+
     def _runtime_effect_submit_scheduler(self):
         scheduler_factory = getattr(self, "_runtime_effect_scheduler", None)
         if callable(scheduler_factory):

@@ -845,10 +845,11 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     viewer_source = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
 
     assert "#define roll params.w" in source
-    assert "float2 shiftedUv = uv - float2(shift * cos(roll), shift * sin(roll));" in source
+    assert "float2 parDir = normalize(float2(cos(roll), sin(roll)));" in source
+    assert "float2 shiftedUv = uv - parDir * shift;" in source
     assert "#define parallaxOffset params.x" in source
     assert "float depthResponse = depth - convergence;" in source
-    assert "float shift = depthResponse * parallaxOffset * depthStrength;" in source
+    assert "float shift = depthResponse * parallaxOffset * depthStrength * edgeFalloff;" in source
     assert "depthInv" not in source
     assert "def render_eye(self, swapchain_texture, width, height, eye_index, eye_offset, depth_strength, convergence, mvp, roll=0.0):" in source
     assert "constants[16:20] = np.array([eye_offset, depth_strength, convergence, roll]" in source
@@ -1056,6 +1057,8 @@ def test_openxr_screen_upload_budget_reuses_presented_frame_without_dropping_pen
 
     assert viewer._openxr_screen_frame_bridge.has_unpresented_frame()
     assert viewer._openxr_screen_upload_budget_skip_armed is False
+    assert viewer._pending_projection_screen_present.reused is True
+    viewer._record_projection_screen_presented()
     assert ("openxr_reused_screen_frame", 1) in inc_calls
     assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
     assert ("openxr_screen_frame_age_frames", 1.0) in value_calls
@@ -1108,6 +1111,8 @@ def test_openxr_screen_upload_budget_drains_latest_and_keeps_pending_frame():
     assert source_q.empty()
     assert ("viewer_get", 2) in inc_calls
     assert ("viewer_drop", 1) in inc_calls
+    assert viewer._pending_projection_screen_present.reused is True
+    viewer._record_projection_screen_presented()
     assert ("openxr_reused_screen_frame", 1) in inc_calls
     assert ("openxr_screen_upload_budget_skip", 1) in inc_calls
     assert ("openxr_screen_frame_age_frames", 2.0) in value_calls
@@ -1162,13 +1167,16 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
     viewer._openxr_screen_frame_bridge = ScreenFrameBridge(viewer.depth_q)
     viewer._openxr_screen_frame_bridge.latest_frame = pending_frame
     viewer._openxr_screen_frame_bridge.latest_frame_id = 1
+    viewer._openxr_screen_frame_bridge.last_presented_frame = object()
+    viewer._openxr_screen_frame_bridge.last_presented_frame_id = 0
     viewer._openxr_screen_upload_budget_ms = 0.0
     viewer._openxr_screen_upload_budget_skip_armed = False
     viewer._runtime_direct_source = True
     viewer._runtime_eye_has_frame = True
     viewer._runtime_eye_textures = [object(), object()]
     viewer._sbs_ts_ring = []
-    viewer._fps_breakdown_inc = lambda name, amount=1: None
+    inc_calls = []
+    viewer._fps_breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._fps_breakdown_add_time = lambda name, seconds: None
     viewer._fps_breakdown_add_value = lambda name, value: None
 
@@ -1181,7 +1189,10 @@ def test_openxr_upload_does_not_present_reused_runtime_eye_as_new_frame():
     assert ScreenLayerPresenter(viewer).poll_screen_frame() is False
 
     assert viewer._openxr_screen_frame_bridge.has_unpresented_frame()
-    assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
+    assert viewer._pending_projection_screen_present.reused is True
+    viewer._record_projection_screen_presented()
+    assert ("openxr_reused_screen_frame", 1) in inc_calls
+    assert viewer._openxr_screen_frame_bridge.has_unpresented_frame()
 
 
 def test_openxr_effect_submit_is_timed_outside_screen_upload():
@@ -1209,7 +1220,8 @@ def test_openxr_effect_submit_is_timed_outside_screen_upload():
     time_calls = []
     viewer._fps_breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
     viewer._fps_breakdown_add_value = lambda name, value: None
-    viewer._fps_breakdown_inc = lambda name, amount=1: None
+    inc_calls = []
+    viewer._fps_breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     effect_source = object()
 
@@ -1223,6 +1235,11 @@ def test_openxr_effect_submit_is_timed_outside_screen_upload():
 
     assert ScreenLayerPresenter(viewer).poll_screen_frame() is True
 
+    assert viewer._pending_projection_screen_present.is_new is True
+    assert viewer._openxr_screen_frame_bridge.last_presented_frame is None
+    viewer._record_projection_screen_presented()
+    assert ("openxr_new_screen_frame", 1) in inc_calls
+    assert viewer._openxr_screen_frame_bridge.last_presented_frame is not None
     assert viewer._runtime_effect_submit_scheduler().pending_source is effect_source
     names = [name for name, _seconds in time_calls]
     assert names.index("openxr_upload") < names.index("openxr_poll")
@@ -2208,7 +2225,7 @@ def test_openxr_d3d11_interop_hot_path_has_no_glfinish_ext_memory_wait():
 
     assert "interop/PBO" not in d3d11
     assert "PBO readback path" not in d3d11
-    assert "skipped instead of reintroducing D3D11 PBO readback" in d3d11
+    assert "D3D11 native renderer active" in d3d11
     assert not (SRC / "xr_viewer" / "d3d11_backend.py").exists()
     assert "glFinish" not in implementation
     assert "glFinish" not in interop
@@ -3225,7 +3242,8 @@ def test_quad_layer_update_is_not_nested_under_projection_layer_views():
     assert "if not enabled:" in render_projection
     assert "not viewer._use_d3d11" in render_projection
     assert "return self.render_opengl(" in render_projection
-    assert "render_d3d11_native" not in projection_presenter
+    assert "return self.render_d3d11_native(" in projection_presenter
+    assert "def render_d3d11_native(" in projection_presenter
     assert "return self.render_nv_dx_interop(" in render_projection
     assert "openxr_projection_pbo_skipped_for_quad" not in render_projection
     assert "openxr_projection_d3d11_no_interop_skip" in render_projection
@@ -3261,6 +3279,7 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     presenter = ProjectionLayerPresenter(viewer)
     calls = []
     presenter.render_opengl = lambda *args, **kwargs: calls.append("opengl") or ["opengl"]
+    presenter.render_d3d11_native = lambda *args, **kwargs: calls.append("d3d11") or ["d3d11"]
     presenter.render_nv_dx_interop = lambda *args, **kwargs: calls.append("nv_dx") or ["nv_dx"]
     kwargs = dict(
         views=[],
@@ -3275,15 +3294,59 @@ def test_projection_layer_presenter_owns_backend_selection(monkeypatch):
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["opengl"]
     viewer._use_d3d11 = True
     viewer._d3d11_native_renderer = Renderer()
-    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == []
+    assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["d3d11"]
     viewer._d3d11_native_renderer = None
     viewer._interop_mode = "nv_dx"
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == ["nv_dx"]
     viewer._interop_mode = "none"
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(0,), **kwargs) == []
     assert presenter.render_projection(enabled=True, updated_quad_eyes=(), **kwargs) == []
-    assert calls == ["opengl", "nv_dx"]
-    assert viewer.inc_calls == [("openxr_projection_d3d11_no_interop_skip", 1)] * 3
+    assert calls == ["opengl", "d3d11", "nv_dx"]
+    assert viewer.inc_calls == [("openxr_projection_d3d11_no_interop_skip", 1)] * 2
+
+
+def test_d3d11_projection_failure_does_not_mark_screen_presented(monkeypatch):
+    import xr_viewer.projection_layer_presenter as presenter_module
+    from xr_viewer.projection_layer_presenter import ProjectionLayerPresenter
+
+    class FakeXr:
+        @staticmethod
+        def acquire_swapchain_image(_swapchain, _info):
+            return 0
+
+        @staticmethod
+        def release_swapchain_image(_swapchain, _info):
+            pass
+
+    class Renderer:
+        has_frame = True
+
+        def render_runtime_eye(self, *_args, **_kwargs):
+            raise RuntimeError("render failed")
+
+    monkeypatch.setattr(presenter_module, "xr", FakeXr)
+    calls = []
+    viewer = SimpleNamespace(
+        _d3d11_native_renderer=Renderer(),
+        _runtime_direct_source=True,
+        _xr_swapchains={0: "swap0", 1: "swap1"},
+        _xr_sc_acquire_info=object(),
+        _xr_sc_release_info=object(),
+        _swapchain_images={0: [SimpleNamespace(texture="tex0")], 1: [SimpleNamespace(texture="tex1")]},
+        _swapchain_sizes={0: (100, 100), 1: (100, 100)},
+        _wait_swapchain_image=lambda _swapchain: None,
+        _build_model_mat4=lambda: np.eye(4, dtype=np.float32),
+        _record_projection_screen_presented=lambda: calls.append("presented"),
+        _breakdown_inc=lambda name, amount=1: calls.append((name, amount)),
+    )
+
+    assert ProjectionLayerPresenter(viewer).render_d3d11_native(
+        views=[None, None],
+        default_fov=object(),
+        default_proj_d3d=np.eye(4, dtype=np.float32),
+    ) == []
+    assert ("openxr_projection_render_failed", 1) in calls
+    assert "presented" not in calls
 
 
 def test_quad_layer_gate_requires_runtime_direct_textures_and_swapchains():

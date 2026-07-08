@@ -26,6 +26,7 @@ class ScreenLayerPresenter:
         viewer = self.viewer
         poll_start = time.perf_counter()
         bridge = viewer._screen_frame_bridge()
+        viewer._set_pending_projection_screen_present(None)
         poll = bridge.drain_latest()
         latest = poll.frame
         dequeued = poll.dequeued
@@ -41,9 +42,7 @@ class ScreenLayerPresenter:
         if not bridge.has_unpresented_frame():
             reuse = bridge.reuse_presented()
             if reuse.frame is not None:
-                viewer._breakdown_inc("openxr_reused_screen_frame")
-                viewer._record_screen_frame_bridge_age(bridge)
-                viewer._record_screen_frame_source_latency(reuse.source_timestamp)
+                viewer._set_pending_projection_screen_present(reuse)
             viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
 
@@ -53,10 +52,8 @@ class ScreenLayerPresenter:
             reuse = bridge.reuse_presented()
             if reuse.frame is not None:
                 viewer._openxr_screen_upload_budget_skip_armed = False
-                viewer._breakdown_inc("openxr_reused_screen_frame")
+                viewer._set_pending_projection_screen_present(reuse)
                 viewer._breakdown_inc("openxr_screen_upload_budget_skip")
-                viewer._record_screen_frame_bridge_age(bridge)
-                viewer._record_screen_frame_source_latency(reuse.source_timestamp)
                 viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
                 return False
 
@@ -79,14 +76,14 @@ class ScreenLayerPresenter:
             viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
         if getattr(viewer, '_runtime_eye_reused_previous_frame', False):
+            reuse = bridge.reuse_presented()
+            if reuse.frame is not None:
+                viewer._set_pending_projection_screen_present(reuse)
             viewer._breakdown_add_time("openxr_upload", upload_elapsed)
             viewer._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
             return False
 
-        presented = bridge.mark_presented(pending_frame)
-        viewer._record_screen_frame_bridge_age(bridge)
-        viewer._record_screen_frame_source_latency(presented.source_timestamp)
-        viewer._breakdown_inc("openxr_new_screen_frame")
+        viewer._set_pending_projection_screen_present(poll)
         viewer._breakdown_add_time("openxr_upload", upload_elapsed)
         viewer._queue_runtime_effect_submit(effect_source_rgb)
         if frame_ts is not None:

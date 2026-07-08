@@ -122,6 +122,7 @@ class ProjectionLayerPresenter:
                 print(f"[OpenXRViewer] D3D11 projection render failed: {type(exc).__name__}: {exc}")
                 return []
         viewer._breakdown_inc('openxr_projection_screen_present')
+        viewer._record_projection_screen_presented()
         return eye_layer_views
 
     def render_nv_dx_interop(self, views, default_fov, default_proj):
@@ -160,6 +161,8 @@ class ProjectionLayerPresenter:
                         pass
                 viewer._disable_nv_interop_after_failure(exc)
                 return []
+        viewer._breakdown_inc('openxr_projection_screen_present')
+        viewer._record_projection_screen_presented()
         return eye_layer_views
 
     def render_opengl(self, views, default_fov, default_proj, *, updated_quad_eyes=()):
@@ -198,6 +201,8 @@ class ProjectionLayerPresenter:
                 return []
 
             eye_layer_views.append(self._projection_view(swapchain, sc_w, sc_h, view, default_fov))
+        viewer._breakdown_inc('openxr_projection_screen_present')
+        viewer._record_projection_screen_presented()
         return eye_layer_views
 
     def _projection_view(self, swapchain, sc_w, sc_h, view, default_fov):

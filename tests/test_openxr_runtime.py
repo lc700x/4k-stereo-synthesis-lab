@@ -260,6 +260,9 @@ def test_openxr_backend_defaults_to_d3d11():
     implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
     assert "os.environ.get('D2S_OPENXR_BACKEND', 'd3d11')" in implementation
+    assert "os.environ.get('D2S_OPENXR_CONTROLLER_RENDERER', 'd3d11')" in implementation
+    assert "Controller renderer override: opengl (forcing OpenXR backend: opengl)" in implementation
+    assert "forced_backend = 'opengl'" in implementation
     assert "using d3d11" in implementation
     assert "Primary OpenXR backend: d3d11" in implementation
     assert "Primary OpenXR backend: opengl (D3D11 fallback enabled)" in implementation
@@ -851,7 +854,7 @@ def test_openxr_rgb_depth_shaders_use_consistent_parallax_formula(monkeypatch):
     assert "float depthResponse = depth - convergence;" in source
     assert "float shift = depthResponse * parallaxOffset * depthStrength * edgeFalloff;" in source
     assert "depthInv" not in source
-    assert "def render_eye(self, swapchain_texture, width, height, eye_index, eye_offset, depth_strength, convergence, mvp, roll=0.0):" in source
+    assert "def render_eye(self, swapchain_texture, width, height, eye_index, eye_offset, depth_strength, convergence, mvp, roll=0.0, *, view_mat=None, proj_mat=None, overlay_viewer=None):" in source
     assert "constants[16:20] = np.array([eye_offset, depth_strength, convergence, roll]" in source
     assert "eye_sign * ipd * 0.5" not in source
     assert "self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0" in source
@@ -3451,8 +3454,73 @@ def test_d3d11_projection_path_uses_native_renderer():
     assert "renderer.render_eye(" in presenter
     assert "update_panorama_background(getattr(viewer, \"_panorama_background_path\", None))" in presenter
     assert "BACKGROUND_HLSL_SOURCE" in renderer
+    assert "atan2(dir.x, -dir.z)" in renderer
+    assert "background_constant_buffer" in renderer
+    assert "CONTROLLER_HLSL_SOURCE" in renderer
+    assert "LASER_HLSL_SOURCE" in renderer
+    assert "Texture2D texScreenLight : register(t2);" in renderer
+    assert "screenLightEnabled" in renderer
+    assert "screenTint" in renderer
+    assert "texScreenLight.SampleLevel" in renderer
+    assert 'controller_hdr = bool(getattr(viewer, "_controller_hdr_lighting", True))' in renderer
+    assert "env_srv = self.background_srv if controller_hdr and self.background_srv else None" in renderer
+    assert "if not controller_hdr:" in renderer
+    assert "screen_light_srv = None" in renderer
+    assert 'getattr(viewer, "_screen_light_intensity", 3.5)' in renderer
+    assert "0.32 / 3.5" in renderer
+    assert "SV_IsFrontFace" not in renderer
+    assert "if (!isFrontFace)" not in renderer
+    assert "output.uv = input.uv;" in renderer
+    assert "output.uv = float2(input.uv.x, 1.0 - input.uv.y);" not in renderer
+    assert "texel.a" not in renderer
+    assert "alpha < alphaCutoff" not in renderer
+    assert "return float4(saturate(color), 1.0);" in renderer
+    assert "D3D11_BIND_DEPTH_STENCIL" in renderer
+    assert "CreateDepthStencilView(projection)" in renderer
+    assert "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB" in renderer
+    assert "rtv_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB" in renderer
+    assert "rtv_format = DXGI_FORMAT_R8G8B8A8_UNORM" in renderer
+    assert "rtv_format = DXGI_FORMAT_B8G8R8A8_UNORM" in renderer
+    assert "D3D11 linear swapchain RTV unavailable" in renderer
+    assert "_set_depth_enabled(True)" in renderer
+    assert "def _set_blend_disabled(self):" in renderer
+    assert "self._context_call(35, None" in renderer
+    assert "float t = frac(input.beamV - laserParams.x * 0.4);" in renderer
+    assert 'names = [b"POSITION", b"TEXCOORD"]' in renderer
+    assert "lerp(float3(0.0,0.4,1.0), float3(0.0,1.0,1.0)" in renderer
+    assert "if srv0 is not None" in renderer
+    assert "np.array((1.0, 1.0, 1.0), dtype=np.float32)" in renderer
+    assert "np.array((0.7, 0.7, 0.7), dtype=np.float32)" in renderer
+    assert "self.controller_constant_buffer = self._create_buffer(np.zeros(76" in renderer
+    assert "float4 normalRow0;" in renderer
+    assert "dot(normalRow0.xyz, input.normal)" in renderer
+    assert "normal_mat = np.linalg.inv(model[:3, :3]).T.astype(np.float32)" in renderer
+    assert "constants[60:64]" in renderer
+    assert "constants[72:76]" in renderer
+    assert "_draw_controller_models(overlay_viewer, background_view_mat, background_proj_mat, color_srv)" in renderer
+    assert "_draw_lasers(overlay_viewer, background_view_mat, background_proj_mat)" in renderer
+    assert "_controller_indices_for_topology" in renderer
+    assert "D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP" in renderer
+    assert "D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP" in renderer
+    assert "'vertices': vertices" in (SRC / "xr_viewer" / "controller_models.py").read_text(encoding="utf-8")
+    assert "'indices': pd['indices']" in (SRC / "xr_viewer" / "controller_models.py").read_text(encoding="utf-8")
+    assert "overlay_viewer=viewer" in presenter
     assert "def update_panorama_background(self, path):" in renderer
-    assert "self._draw_background()" in renderer
+    render_block = renderer[
+        renderer.index("def _render_eye_with_srv"):
+        renderer.index("    def cleanup", renderer.index("def _render_eye_with_srv"))
+    ]
+    laser_block = renderer[
+        renderer.index("def _draw_lasers"):
+        renderer.index("    def _render_eye_with_srv", renderer.index("def _draw_lasers"))
+    ]
+    assert laser_block.count("self._context_call(7, None") == 1
+    assert laser_block.count("self._context_call(16, None") == 1
+    assert "_set_blend_disabled()" in laser_block
+    assert "_set_blend_disabled()" in render_block
+    assert "(ctypes.c_void_p * 3)" in render_block
+    assert "self._draw_background(background_view_mat, background_proj_mat)" in render_block
+    assert "self._draw_background()" not in render_block
     assert "openxr_projection_d3d11_no_interop_skip" in presenter
     assert presenter.index("return self.render_d3d11_native(") < presenter.index(
         "openxr_projection_d3d11_no_interop_skip"

@@ -9,16 +9,27 @@ from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_oper
 
 
 DXGI_FORMAT_R32G32_FLOAT = 16
+DXGI_FORMAT_R32G32B32A32_FLOAT = 2
+DXGI_FORMAT_D32_FLOAT = 40
 DXGI_FORMAT_R8G8B8A8_UNORM = 28
 DXGI_FORMAT_R8G8B8A8_UNORM_SRGB = 29
+DXGI_FORMAT_B8G8R8A8_UNORM = 87
+DXGI_FORMAT_B8G8R8A8_UNORM_SRGB = 91
 DXGI_FORMAT_R32_FLOAT = 41
+DXGI_FORMAT_R32G32B32_FLOAT = 6
+DXGI_FORMAT_R32_UINT = 42
 
 D3D11_USAGE_DEFAULT = 0
 D3D11_BIND_VERTEX_BUFFER = 0x1
+D3D11_BIND_INDEX_BUFFER = 0x2
 D3D11_BIND_CONSTANT_BUFFER = 0x4
 D3D11_BIND_SHADER_RESOURCE = 0x8
 D3D11_BIND_RENDER_TARGET = 0x20
+D3D11_BIND_DEPTH_STENCIL = 0x40
 D3D11_INPUT_PER_VERTEX_DATA = 0
+D3D11_PRIMITIVE_TOPOLOGY_POINTLIST = 1
+D3D11_PRIMITIVE_TOPOLOGY_LINELIST = 2
+D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP = 3
 D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST = 4
 D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP = 5
 D3D11_SDK_VERSION = 7
@@ -29,6 +40,11 @@ D3D11_RTV_DIMENSION_TEXTURE2DARRAY = 5
 D3D11_FILTER_MIN_MAG_MIP_LINEAR = 0x15
 D3D11_TEXTURE_ADDRESS_CLAMP = 3
 D3D11_COMPARISON_NEVER = 1
+D3D11_COMPARISON_LESS_EQUAL = 4
+D3D11_DEPTH_WRITE_MASK_ZERO = 0
+D3D11_DEPTH_WRITE_MASK_ALL = 1
+D3D11_STENCIL_OP_KEEP = 1
+D3D11_CLEAR_DEPTH = 0x1
 
 
 class DXGISampleDesc(ctypes.Structure):
@@ -102,6 +118,28 @@ class D3D11RenderTargetViewDesc(ctypes.Structure):
         ("MipSlice", ctypes.c_uint),
         ("FirstArraySlice", ctypes.c_uint),
         ("ArraySize", ctypes.c_uint),
+    ]
+
+
+class D3D11DepthStencilOpDesc(ctypes.Structure):
+    _fields_ = [
+        ("StencilFailOp", ctypes.c_uint),
+        ("StencilDepthFailOp", ctypes.c_uint),
+        ("StencilPassOp", ctypes.c_uint),
+        ("StencilFunc", ctypes.c_uint),
+    ]
+
+
+class D3D11DepthStencilDesc(ctypes.Structure):
+    _fields_ = [
+        ("DepthEnable", ctypes.c_int),
+        ("DepthWriteMask", ctypes.c_uint),
+        ("DepthFunc", ctypes.c_uint),
+        ("StencilEnable", ctypes.c_int),
+        ("StencilReadMask", ctypes.c_ubyte),
+        ("StencilWriteMask", ctypes.c_ubyte),
+        ("FrontFace", D3D11DepthStencilOpDesc),
+        ("BackFace", D3D11DepthStencilOpDesc),
     ]
 
 
@@ -351,10 +389,10 @@ SamplerState sampLinear : register(s0);
 
 cbuffer Params : register(b0)
 {
-    float4 mvpRow0;
-    float4 mvpRow1;
-    float4 mvpRow2;
-    float4 mvpRow3;
+    float4 row0;
+    float4 row1;
+    float4 row2;
+    float4 row3;
     float4 params;
 };
 
@@ -388,10 +426,10 @@ VSOut vs_main(uint vertexId : SV_VertexID)
     output.pos = float4(pos[vertexId] * float2(0.35, 0.2), 0.5, 1.0);
 #else
     output.pos = float4(
-        dot(mvpRow0, localPos),
-        dot(mvpRow1, localPos),
-        dot(mvpRow2, localPos),
-        dot(mvpRow3, localPos)
+        dot(row0, localPos),
+        dot(row1, localPos),
+        dot(row2, localPos),
+        dot(row3, localPos)
     );
 #endif
     output.uv = uv[vertexId];
@@ -472,9 +510,26 @@ BACKGROUND_HLSL_SOURCE = r"""
 Texture2D texBackground : register(t0);
 SamplerState sampLinear : register(s0);
 
+cbuffer BgParams : register(b0)
+{
+    float4 invProjRow0;
+    float4 invProjRow1;
+    float4 invProjRow2;
+    float4 invProjRow3;
+    float4 invViewRow0;
+    float4 invViewRow1;
+    float4 invViewRow2;
+    float4 invViewRow3;
+    float4 bgParams;
+};
+
+#define yawOffset bgParams.x
+#define exposure bgParams.y
+#define flipY bgParams.z
+
 struct VSOut {
     float4 pos : SV_POSITION;
-    float2 uv  : TEXCOORD0;
+    float2 ndc : TEXCOORD0;
 };
 
 VSOut vs_main(uint vertexId : SV_VertexID)
@@ -485,21 +540,220 @@ VSOut vs_main(uint vertexId : SV_VertexID)
         float2( 1.0, -1.0),
         float2( 1.0,  1.0)
     };
-    static const float2 uv[4] = {
-        float2(0.0, 1.0),
-        float2(0.0, 0.0),
-        float2(1.0, 1.0),
-        float2(1.0, 0.0)
-    };
     VSOut output;
     output.pos = float4(pos[vertexId], 1.0, 1.0);
-    output.uv = uv[vertexId];
+    output.ndc = pos[vertexId];
     return output;
 }
 
 float4 ps_main(VSOut input) : SV_TARGET
 {
-    return float4(texBackground.Sample(sampLinear, input.uv).rgb, 1.0);
+    static const float PI = 3.14159265358979323846;
+    float4 clip = float4(input.ndc, 1.0, 1.0);
+    float4 viewH = float4(
+        dot(invProjRow0, clip),
+        dot(invProjRow1, clip),
+        dot(invProjRow2, clip),
+        dot(invProjRow3, clip)
+    );
+    float3 viewDir = normalize(viewH.xyz / max(abs(viewH.w), 1e-6));
+    float4 viewDir4 = float4(viewDir, 0.0);
+    float3 dir = normalize(float3(
+        dot(invViewRow0, viewDir4),
+        dot(invViewRow1, viewDir4),
+        dot(invViewRow2, viewDir4)
+    ));
+    float u = atan2(dir.x, -dir.z) / (2.0 * PI) + 0.5 + yawOffset;
+    float v = 0.5 - asin(clamp(dir.y, -1.0, 1.0)) / PI;
+    if (flipY != 0.0) {
+        v = 1.0 - v;
+    }
+    float3 color = texBackground.Sample(sampLinear, float2(frac(u), clamp(v, 0.0, 1.0))).rgb;
+    return float4(saturate(color * max(exposure, 0.0)), 1.0);
+}
+"""
+
+
+CONTROLLER_HLSL_SOURCE = r"""
+Texture2D texBase : register(t0);
+Texture2D texEnv : register(t1);
+Texture2D texScreenLight : register(t2);
+SamplerState sampLinear : register(s0);
+
+cbuffer ControllerParams : register(b0)
+{
+    float4 mvpRow0;
+    float4 mvpRow1;
+    float4 mvpRow2;
+    float4 mvpRow3;
+    float4 modelRow0;
+    float4 modelRow1;
+    float4 modelRow2;
+    float4 modelRow3;
+    float4 normalRow0;
+    float4 normalRow1;
+    float4 normalRow2;
+    float4 baseColorAlpha;
+    float4 materialParams;
+    float4 cameraPosUseEnv;
+    float4 lightParams;
+    float4 screenLightPosEnabled;
+    float4 screenLightNormalIntensity;
+    float4 screenLightRightHalfX;
+    float4 screenLightUpHalfY;
+};
+
+#define roughness materialParams.x
+#define metallic materialParams.y
+#define useTexture materialParams.z
+#define alphaMode materialParams.w
+#define useEnv cameraPosUseEnv.w
+#define envIntensity lightParams.x
+#define alphaCutoff lightParams.y
+#define unlit lightParams.z
+#define screenLightEnabled screenLightPosEnabled.w
+#define screenLightIntensity screenLightNormalIntensity.w
+
+struct VSIn {
+    float3 pos : POSITION;
+    float3 normal : NORMAL;
+    float2 uv : TEXCOORD0;
+};
+
+struct VSOut {
+    float4 pos : SV_POSITION;
+    float3 worldPos : TEXCOORD0;
+    float3 normal : TEXCOORD1;
+    float2 uv : TEXCOORD2;
+};
+
+float4 mulRows(float4 row0, float4 row1, float4 row2, float4 row3, float4 v)
+{
+    return float4(dot(row0, v), dot(row1, v), dot(row2, v), dot(row3, v));
+}
+
+VSOut vs_main(VSIn input)
+{
+    VSOut output;
+    float4 localPos = float4(input.pos, 1.0);
+    float4 world = mulRows(modelRow0, modelRow1, modelRow2, modelRow3, localPos);
+    output.pos = mulRows(mvpRow0, mvpRow1, mvpRow2, mvpRow3, localPos);
+    output.worldPos = world.xyz;
+    output.normal = normalize(float3(
+        dot(normalRow0.xyz, input.normal),
+        dot(normalRow1.xyz, input.normal),
+        dot(normalRow2.xyz, input.normal)
+    ));
+    output.uv = input.uv;
+    return output;
+}
+
+float2 envSampleUv(float3 dir)
+{
+    dir = normalize(dir);
+    float u = atan2(dir.x, dir.z) / 6.28318530718 + 0.5;
+    float v = asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265 + 0.5;
+    return float2(frac(u), 1.0 - v);
+}
+
+float4 ps_main(VSOut input) : SV_TARGET
+{
+    float4 texel = useTexture > 0.5 ? texBase.Sample(sampLinear, input.uv) : float4(1.0, 1.0, 1.0, 1.0);
+    float3 baseColor = texel.rgb * baseColorAlpha.rgb;
+    float3 n = normalize(input.normal);
+    float3 v = normalize(cameraPosUseEnv.xyz - input.worldPos);
+    float3 color = baseColor * 0.30;
+    if (useEnv > 0.5) {
+        float3 r = reflect(-v, n);
+        float3 envSpec = texEnv.SampleLevel(sampLinear, envSampleUv(r), 3.0).rgb;
+        float3 envDiff = texEnv.SampleLevel(sampLinear, envSampleUv(n), 5.0).rgb;
+        float viewFacing = smoothstep(-0.25, 0.65, dot(n, v));
+        color = baseColor * lerp(float3(0.32, 0.32, 0.32), envDiff, 0.36) * envIntensity
+            + envSpec * (0.30 * envIntensity * viewFacing);
+    }
+    float3 topLightPos = cameraPosUseEnv.xyz + float3(0.0, 0.45, -0.18);
+    float3 topLightDir = normalize(topLightPos - input.worldPos);
+    float topFacing = max(dot(n, topLightDir), 0.0);
+    float topFill = pow(topFacing, 1.25) * smoothstep(-0.20, 0.65, dot(n, v));
+    color += baseColor * float3(0.95, 0.97, 1.0) * (0.40 * topFill);
+    if (screenLightEnabled > 0.5) {
+        float3 screenTint = (
+            texScreenLight.SampleLevel(sampLinear, float2(0.50, 0.50), 0.0).rgb +
+            texScreenLight.SampleLevel(sampLinear, float2(0.25, 0.30), 0.0).rgb +
+            texScreenLight.SampleLevel(sampLinear, float2(0.75, 0.30), 0.0).rgb +
+            texScreenLight.SampleLevel(sampLinear, float2(0.25, 0.70), 0.0).rgb +
+            texScreenLight.SampleLevel(sampLinear, float2(0.75, 0.70), 0.0).rgb
+        ) * 0.20;
+        float3 screenLightDir = normalize(screenLightPosEnabled.xyz - input.worldPos);
+        float screenFacing = max(dot(n, screenLightDir), 0.0);
+        float screenKey = pow(screenFacing, 0.75);
+        color += baseColor * screenTint * (1.00 * screenLightIntensity * screenKey);
+
+        float3 r = reflect(-v, n);
+        float denom = dot(r, screenLightNormalIntensity.xyz);
+        if (abs(denom) > 0.001) {
+            float t = dot(screenLightPosEnabled.xyz - input.worldPos, screenLightNormalIntensity.xyz) / denom;
+            if (t > 0.0) {
+                float3 hit = input.worldPos + r * t;
+                float3 local = hit - screenLightPosEnabled.xyz;
+                float2 screenP = float2(
+                    dot(local, screenLightRightHalfX.xyz) / max(screenLightRightHalfX.w, 0.001),
+                    dot(local, screenLightUpHalfY.xyz) / max(screenLightUpHalfY.w, 0.001)
+                );
+                if (abs(screenP.x) <= 1.0 && abs(screenP.y) <= 1.0) {
+                    float2 screenUv = screenP * 0.5 + 0.5;
+                    float3 screenCol = texScreenLight.SampleLevel(sampLinear, float2(1.0 - screenUv.x, 1.0 - screenUv.y), 0.0).rgb;
+                    float fresnel = pow(clamp(1.0 - max(dot(n, v), 0.0), 0.0, 1.0), 2.0);
+                    color += lerp(baseColor * screenTint, screenCol, 0.72) * (0.38 + 0.95 * fresnel) * screenLightIntensity * screenFacing;
+                }
+            }
+        }
+    }
+    return float4(saturate(color), 1.0);
+}
+"""
+
+
+LASER_HLSL_SOURCE = r"""
+cbuffer LaserParams : register(b0)
+{
+    float4 mvpRow0;
+    float4 mvpRow1;
+    float4 mvpRow2;
+    float4 mvpRow3;
+    float4 laserParams;
+};
+
+struct VSIn {
+    float3 pos : POSITION;
+    float beamV : TEXCOORD0;
+};
+
+struct VSOut {
+    float4 pos : SV_POSITION;
+    float beamV : TEXCOORD0;
+};
+
+VSOut vs_main(VSIn input)
+{
+    VSOut output;
+    float4 p = float4(input.pos, 1.0);
+    output.pos = float4(dot(mvpRow0, p), dot(mvpRow1, p), dot(mvpRow2, p), dot(mvpRow3, p));
+    output.beamV = input.beamV;
+    return output;
+}
+
+float4 ps_main(VSOut input) : SV_TARGET
+{
+    float t = frac(input.beamV - laserParams.x * 0.4);
+    float3 col;
+    if (t < 0.167)      col = lerp(float3(0.0,0.4,1.0), float3(0.0,1.0,1.0), t/0.167);
+    else if (t < 0.333) col = lerp(float3(0.0,1.0,1.0), float3(0.0,1.0,0.0), (t-0.167)/0.166);
+    else if (t < 0.5)   col = lerp(float3(0.0,1.0,0.0), float3(1.0,1.0,0.0), (t-0.333)/0.167);
+    else if (t < 0.667) col = lerp(float3(1.0,1.0,0.0), float3(1.0,0.5,0.0), (t-0.5)/0.167);
+    else if (t < 0.833) col = lerp(float3(1.0,0.5,0.0), float3(1.0,0.0,0.0), (t-0.667)/0.166);
+    else                col = lerp(float3(1.0,0.0,0.0), float3(0.0,0.4,1.0), (t-0.833)/0.167);
+    return float4(col, 1.0);
 }
 """
 
@@ -541,10 +795,27 @@ class D3D11NativeRenderer:
         self.background_srv = ctypes.c_void_p()
         self.background_tex = ctypes.c_void_p()
         self.background_path = None
+        self.background_constant_buffer = ctypes.c_void_p()
+        self.controller_vertex_shader = ctypes.c_void_p()
+        self.controller_pixel_shader = ctypes.c_void_p()
+        self.controller_input_layout = ctypes.c_void_p()
+        self.controller_constant_buffer = ctypes.c_void_p()
+        self.controller_prims = {}
+        self.controller_textures = {}
+        self.laser_vertex_shader = ctypes.c_void_p()
+        self.laser_pixel_shader = ctypes.c_void_p()
+        self.laser_input_layout = ctypes.c_void_p()
+        self.laser_constant_buffer = ctypes.c_void_p()
+        self.depth_stencil_state = ctypes.c_void_p()
+        self.depth_disabled_state = ctypes.c_void_p()
+        self.projection_depth_tex = ctypes.c_void_p()
+        self.projection_depth_dsv = ctypes.c_void_p()
+        self.projection_depth_size = None
         self.sampler = ctypes.c_void_p()
         self.rasterizer = ctypes.c_void_p()
         self.swapchain_rtvs = {}
         self._logged_swapchain_desc = set()
+        self._logged_srgb_rtv_fallback = set()
         self.shader_mode = os.environ.get("D2S_D3D11_SHADER_MODE", "stereo").strip().lower()
         self.space_mode = os.environ.get("D2S_D3D11_SPACE_MODE", "world").strip().lower()
         self.debug = str(
@@ -630,6 +901,10 @@ class D3D11NativeRenderer:
 
         self.vertex_buffer = ctypes.c_void_p()
         self.constant_buffer = self._create_buffer(np.zeros(20, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
+        self.background_constant_buffer = self._create_buffer(np.zeros(36, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
+        self._init_controller_pipeline()
+        self._init_laser_pipeline()
+        self._init_depth_states()
 
         samp_desc = D3D11SamplerDesc(
             D3D11_FILTER_MIN_MAG_MIP_LINEAR,
@@ -665,6 +940,121 @@ class D3D11NativeRenderer:
             create_rasterizer(_ptr_value(self.device), ctypes.byref(rast_desc), ctypes.byref(self.rasterizer)),
             "CreateRasterizerState",
         )
+
+    def _init_controller_pipeline(self):
+        vs_blob = _compile_shader(CONTROLLER_HLSL_SOURCE, "vs_main", "vs_5_0")
+        ps_blob = _compile_shader(CONTROLLER_HLSL_SOURCE, "ps_main", "ps_5_0")
+        try:
+            create_vs = self._device_call(
+                12, ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+            )
+            create_ps = self._device_call(
+                15, ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+            )
+            _check_hr(create_vs(_ptr_value(self.device), _blob_ptr(vs_blob), _blob_size(vs_blob), None, ctypes.byref(self.controller_vertex_shader)), "CreateVertexShader(controller)")
+            _check_hr(create_ps(_ptr_value(self.device), _blob_ptr(ps_blob), _blob_size(ps_blob), None, ctypes.byref(self.controller_pixel_shader)), "CreatePixelShader(controller)")
+
+            names = [b"POSITION", b"NORMAL", b"TEXCOORD"]
+            layout = (D3D11InputElementDesc * 3)(
+                D3D11InputElementDesc(names[0], 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0),
+                D3D11InputElementDesc(names[1], 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0),
+                D3D11InputElementDesc(names[2], 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0),
+            )
+            create_layout = self._device_call(
+                11, ctypes.c_long, ctypes.POINTER(D3D11InputElementDesc), ctypes.c_uint,
+                ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)
+            )
+            _check_hr(
+                create_layout(_ptr_value(self.device), layout, 3, _blob_ptr(vs_blob), _blob_size(vs_blob), ctypes.byref(self.controller_input_layout)),
+                "CreateInputLayout(controller)",
+            )
+        finally:
+            _release(vs_blob)
+            _release(ps_blob)
+        self.controller_constant_buffer = self._create_buffer(np.zeros(76, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
+
+    def _init_laser_pipeline(self):
+        vs_blob = _compile_shader(LASER_HLSL_SOURCE, "vs_main", "vs_5_0")
+        ps_blob = _compile_shader(LASER_HLSL_SOURCE, "ps_main", "ps_5_0")
+        try:
+            create_vs = self._device_call(
+                12, ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+            )
+            create_ps = self._device_call(
+                15, ctypes.c_long, ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+            )
+            _check_hr(create_vs(_ptr_value(self.device), _blob_ptr(vs_blob), _blob_size(vs_blob), None, ctypes.byref(self.laser_vertex_shader)), "CreateVertexShader(laser)")
+            _check_hr(create_ps(_ptr_value(self.device), _blob_ptr(ps_blob), _blob_size(ps_blob), None, ctypes.byref(self.laser_pixel_shader)), "CreatePixelShader(laser)")
+            names = [b"POSITION", b"TEXCOORD"]
+            layout = (D3D11InputElementDesc * 2)(
+                D3D11InputElementDesc(names[0], 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0),
+                D3D11InputElementDesc(names[1], 0, DXGI_FORMAT_R32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0),
+            )
+            create_layout = self._device_call(
+                11, ctypes.c_long, ctypes.POINTER(D3D11InputElementDesc), ctypes.c_uint,
+                ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_void_p)
+            )
+            _check_hr(
+                create_layout(_ptr_value(self.device), layout, 2, _blob_ptr(vs_blob), _blob_size(vs_blob), ctypes.byref(self.laser_input_layout)),
+                "CreateInputLayout(laser)",
+            )
+        finally:
+            _release(vs_blob)
+            _release(ps_blob)
+        self.laser_constant_buffer = self._create_buffer(np.zeros(20, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
+
+    def _init_depth_states(self):
+        keep = D3D11DepthStencilOpDesc(
+            D3D11_STENCIL_OP_KEEP,
+            D3D11_STENCIL_OP_KEEP,
+            D3D11_STENCIL_OP_KEEP,
+            D3D11_COMPARISON_NEVER,
+        )
+        create_state = self._device_call(
+            21, ctypes.c_long, ctypes.POINTER(D3D11DepthStencilDesc), ctypes.POINTER(ctypes.c_void_p)
+        )
+        enabled = D3D11DepthStencilDesc(
+            1, D3D11_DEPTH_WRITE_MASK_ALL, D3D11_COMPARISON_LESS_EQUAL,
+            0, 0xFF, 0xFF, keep, keep,
+        )
+        disabled = D3D11DepthStencilDesc(
+            0, D3D11_DEPTH_WRITE_MASK_ZERO, D3D11_COMPARISON_LESS_EQUAL,
+            0, 0xFF, 0xFF, keep, keep,
+        )
+        _check_hr(create_state(_ptr_value(self.device), ctypes.byref(enabled), ctypes.byref(self.depth_stencil_state)), "CreateDepthStencilState(enabled)")
+        _check_hr(create_state(_ptr_value(self.device), ctypes.byref(disabled), ctypes.byref(self.depth_disabled_state)), "CreateDepthStencilState(disabled)")
+
+    def _set_depth_enabled(self, enabled):
+        state = self.depth_stencil_state if enabled else self.depth_disabled_state
+        self._context_call(36, None, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(state), 0)
+
+    def _set_blend_disabled(self):
+        factor = (ctypes.c_float * 4)(0.0, 0.0, 0.0, 0.0)
+        self._context_call(35, None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_float), ctypes.c_uint)(
+            _ptr_value(self.context), None, factor, 0xFFFFFFFF
+        )
+
+    def _ensure_projection_depth(self, width, height):
+        if self.projection_depth_size == (width, height):
+            return self.projection_depth_dsv
+        _release(self.projection_depth_dsv)
+        _release(self.projection_depth_tex)
+        self.projection_depth_dsv = ctypes.c_void_p()
+        self.projection_depth_tex = ctypes.c_void_p()
+        desc = D3D11Texture2DDesc(
+            width, height, 1, 1, DXGI_FORMAT_D32_FLOAT, DXGISampleDesc(1, 0),
+            D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0,
+        )
+        create_tex = self._device_call(
+            5, ctypes.c_long, ctypes.POINTER(D3D11Texture2DDesc), ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+        )
+        _check_hr(create_tex(_ptr_value(self.device), ctypes.byref(desc), None, ctypes.byref(self.projection_depth_tex)), "CreateTexture2D(projection_depth)")
+        create_dsv = self._device_call(
+            10, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
+        )
+        _check_hr(create_dsv(_ptr_value(self.device), _ptr_value(self.projection_depth_tex), None, ctypes.byref(self.projection_depth_dsv)), "CreateDepthStencilView(projection)")
+        self.projection_depth_size = (width, height)
+        return self.projection_depth_dsv
 
     def _create_buffer(self, array, bind_flags):
         data = np.ascontiguousarray(array)
@@ -791,10 +1181,11 @@ class D3D11NativeRenderer:
                 f"{self._format_texture_desc(desc)}"
             )
 
-        # OpenXR runtimes may expose the swapchain image as a typeless texture.
-        # The RTV itself must use the typed swapchain format requested at
-        # xrCreateSwapchain, not the typeless texture storage format.
         rtv_format = self.swapchain_format or desc.Format
+        if rtv_format == DXGI_FORMAT_R8G8B8A8_UNORM_SRGB:
+            rtv_format = DXGI_FORMAT_R8G8B8A8_UNORM
+        elif rtv_format == DXGI_FORMAT_B8G8R8A8_UNORM_SRGB:
+            rtv_format = DXGI_FORMAT_B8G8R8A8_UNORM
         if desc.ArraySize > 1:
             rtv_desc = D3D11RenderTargetViewDesc(
                 rtv_format,
@@ -817,6 +1208,16 @@ class D3D11NativeRenderer:
             9, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p)
         )
         hr = create_rtv(_ptr_value(self.device), texture_ptr, ctypes.byref(rtv_desc), ctypes.byref(rtv))
+        if hr != 0 and rtv_format != (self.swapchain_format or desc.Format):
+            srgb_format = self.swapchain_format or desc.Format
+            rtv_desc.Format = srgb_format
+            hr = create_rtv(_ptr_value(self.device), texture_ptr, ctypes.byref(rtv_desc), ctypes.byref(rtv))
+            if hr == 0 and texture_ptr not in self._logged_srgb_rtv_fallback:
+                print(
+                    "[OpenXRViewer] D3D11 linear swapchain RTV unavailable; "
+                    f"using runtime format {srgb_format}"
+                )
+                self._logged_srgb_rtv_fallback.add(texture_ptr)
         if hr != 0:
             removed_reason = self._device_removed_reason()
             reason_text = "" if removed_reason is None else f" removed_reason={_hr_hex(removed_reason)}"
@@ -1132,35 +1533,298 @@ class D3D11NativeRenderer:
         except Exception as e:
             print(f"[OpenXRViewer] D3D11 world MVP debug failed: {e}")
 
-    def render_eye(self, swapchain_texture, width, height, eye_index, eye_offset, depth_strength, convergence, mvp, roll=0.0):
+    def render_eye(self, swapchain_texture, width, height, eye_index, eye_offset, depth_strength, convergence, mvp, roll=0.0, *, view_mat=None, proj_mat=None, overlay_viewer=None):
         return self._render_eye_with_srv(
             swapchain_texture, width, height, eye_index,
             self.color_srv, eye_offset, depth_strength, convergence, mvp, roll=roll,
-            depth_srv=self.depth_srv,
+            depth_srv=self.depth_srv, background_view_mat=view_mat, background_proj_mat=proj_mat,
+            overlay_viewer=overlay_viewer,
         )
 
-    def render_runtime_eye(self, swapchain_texture, width, height, eye_index, mvp):
+    def render_runtime_eye(self, swapchain_texture, width, height, eye_index, mvp, *, view_mat=None, proj_mat=None, overlay_viewer=None):
         if self.runtime_eye_size is None or not self.runtime_eye_srv[eye_index]:
             raise RuntimeError("D3D11 runtime eye textures are not ready")
         return self._render_eye_with_srv(
             swapchain_texture, width, height, eye_index,
             self.runtime_eye_srv[eye_index], 0.0, 0.0, 0.0, mvp, roll=0.0,
-            depth_srv=None,
+            depth_srv=None, background_view_mat=view_mat, background_proj_mat=proj_mat,
+            overlay_viewer=overlay_viewer,
         )
 
-    def _draw_background(self):
-        if not self.background_srv:
+    def _draw_background(self, view_mat, proj_mat):
+        if not self.background_srv or view_mat is None or proj_mat is None:
             return
+        try:
+            view_rot = np.array(view_mat, dtype=np.float32, copy=True)
+            view_rot[:3, 3] = 0.0
+            inv_proj = np.linalg.inv(np.asarray(proj_mat, dtype=np.float32))
+            inv_view = np.linalg.inv(view_rot)
+        except Exception:
+            return
+        constants = np.zeros(36, dtype=np.float32)
+        constants[:16] = inv_proj.reshape(16)
+        constants[16:32] = inv_view.reshape(16)
+        constants[32:36] = np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32)
+        self._update_subresource(self.background_constant_buffer, constants.ctypes.data, constants.nbytes)
         self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.background_vertex_shader), None, 0)
         self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.background_pixel_shader), None, 0)
+        cb_arr = (ctypes.c_void_p * 1)(_ptr_value(self.background_constant_buffer))
+        self._context_call(7, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+        self._context_call(16, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
         srv_arr = (ctypes.c_void_p * 1)(_ptr_value(self.background_srv))
         self._context_call(8, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, srv_arr)
         sampler_arr = (ctypes.c_void_p * 1)(_ptr_value(self.sampler))
         self._context_call(10, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, sampler_arr)
         self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), 4, 0)
 
-    def _render_eye_with_srv(self, swapchain_texture, width, height, eye_index, color_srv, eye_offset, depth_strength, convergence, mvp, *, roll=0.0, depth_srv=None):
+    def _controller_prim_resources(self, prim):
+        key = id(prim)
+        cached = self.controller_prims.get(key)
+        if cached is not None:
+            return cached
+        vertices = np.asarray(prim.get("vertices"), dtype=np.float32)
+        indices = np.asarray(prim.get("indices"), dtype=np.uint32)
+        if vertices.ndim != 2 or vertices.shape[1] < 8 or indices.size == 0:
+            return None
+        topology = self._controller_topology(prim.get("primitive_mode", 4))
+        indices, topology = self._controller_indices_for_topology(indices.reshape(-1), prim.get("primitive_mode", 4), topology)
+        if indices.size == 0:
+            return None
+        vb = self._create_buffer(np.ascontiguousarray(vertices[:, :8], dtype=np.float32), D3D11_BIND_VERTEX_BUFFER)
+        ib = self._create_buffer(np.ascontiguousarray(indices.reshape(-1), dtype=np.uint32), D3D11_BIND_INDEX_BUFFER)
+        cached = (vb, ib, int(indices.size), topology)
+        self.controller_prims[key] = cached
+        return cached
+
+    @staticmethod
+    def _controller_topology(mode):
+        return {
+            0: D3D11_PRIMITIVE_TOPOLOGY_POINTLIST,
+            1: D3D11_PRIMITIVE_TOPOLOGY_LINELIST,
+            2: D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP,
+            3: D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP,
+            4: D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+            5: D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP,
+            6: D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST,
+        }.get(int(mode or 4), D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
+
+    @staticmethod
+    def _controller_indices_for_topology(indices, mode, topology):
+        mode = int(mode or 4)
+        if mode == 2 and indices.size > 1:
+            indices = np.concatenate([indices, indices[:1]]).astype(np.uint32, copy=False)
+        elif mode == 6 and indices.size >= 3:
+            fan = []
+            for i in range(1, indices.size - 1):
+                fan.extend((indices[0], indices[i], indices[i + 1]))
+            indices = np.asarray(fan, dtype=np.uint32)
+            topology = D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST
+        return np.ascontiguousarray(indices, dtype=np.uint32), topology
+
+    def _controller_texture_srv(self, tex_key, tex_images):
+        if not tex_key:
+            return None
+        cached = self.controller_textures.get(tex_key)
+        if cached is not None:
+            return cached[1]
+        image = tex_images.get(tex_key) if isinstance(tex_images, dict) else None
+        if image is None:
+            return None
+        tex, srv = self._create_texture_srv_from_rgba(image)
+        self.controller_textures[tex_key] = (tex, srv)
+        return srv
+
+    @staticmethod
+    def _alpha_mode_id(alpha_mode):
+        return {"OPAQUE": 0.0, "MASK": 1.0, "BLEND": 2.0}.get(str(alpha_mode or "OPAQUE").upper(), 0.0)
+
+    @staticmethod
+    def _controller_model_base(viewer, grip_mat):
+        t_mat = np.eye(4, dtype=np.float32)
+        off = getattr(viewer, "_calibration_temp_offset", None) if getattr(viewer, "_calibration_mode", False) else getattr(viewer, "_ctrl_model_offset", None)
+        rot_deg = getattr(viewer, "_calibration_temp_rot", None) if getattr(viewer, "_calibration_mode", False) else getattr(viewer, "_ctrl_model_rot_deg", 0.0)
+        off = off if off is not None else (0.0, 0.0, 0.0)
+        t_mat[0, 3], t_mat[1, 3], t_mat[2, 3] = float(off[0]), float(off[1]), float(off[2])
+        ang = np.deg2rad(float(rot_deg or 0.0))
+        ca, sa = np.cos(ang), np.sin(ang)
+        r_mat = np.eye(4, dtype=np.float32)
+        r_mat[1, 1], r_mat[1, 2], r_mat[2, 1], r_mat[2, 2] = ca, -sa, sa, ca
+        return (np.asarray(grip_mat, dtype=np.float32) @ (r_mat @ t_mat)).astype(np.float32)
+
+    def _draw_controller_models(self, viewer, view_mat, proj_mat, screen_light_srv=None):
+        if viewer is None or view_mat is None or proj_mat is None:
+            return
+        now = float(getattr(viewer, "_frame_now", 0.0) or 0.0)
+        hide_after = float(getattr(viewer, "_LASER_HIDE_AFTER", 10.0) or 10.0)
+        controllers = []
+        view_np = np.asarray(view_mat, dtype=np.float32)
+        eye_pos = (-(view_np[:3, :3].T @ view_np[:3, 3])).astype(np.float32)
+        for grip_mat, prims, last_move_attr, press_attr in (
+            (getattr(viewer, "_grip_mat_l", None), getattr(viewer, "_ctrl_prims_l", None), "_laser_last_move_l", "_ctrl_press_l"),
+            (getattr(viewer, "_grip_mat_r", None), getattr(viewer, "_ctrl_prims_r", None), "_laser_last_move_r", "_ctrl_press_r"),
+        ):
+            if grip_mat is None or not prims:
+                continue
+            if now - float(getattr(viewer, last_move_attr, now) or now) > hide_after:
+                continue
+            dist = float(np.linalg.norm(np.asarray(grip_mat, dtype=np.float32)[:3, 3] - eye_pos))
+            controllers.append((dist, grip_mat, prims, getattr(viewer, press_attr, {}) or {}))
+        if not controllers:
+            return
+
+        self._set_blend_disabled()
+        self._set_depth_enabled(True)
+        self._context_call(17, None, ctypes.c_void_p)(_ptr_value(self.context), _ptr_value(self.controller_input_layout))
+        self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.controller_vertex_shader), None, 0)
+        self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.controller_pixel_shader), None, 0)
+        self._context_call(24, None, ctypes.c_uint)(_ptr_value(self.context), D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
+        cb_arr = (ctypes.c_void_p * 1)(_ptr_value(self.controller_constant_buffer))
+        self._context_call(7, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+        self._context_call(16, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+        sampler_arr = (ctypes.c_void_p * 1)(_ptr_value(self.sampler))
+        self._context_call(10, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, sampler_arr)
+
+        vp_mat = (np.asarray(proj_mat, dtype=np.float32) @ np.asarray(view_mat, dtype=np.float32)).astype(np.float32)
+        tex_images = getattr(viewer, "_ctrl_tex_images", {}) or {}
+        controller_hdr = bool(getattr(viewer, "_controller_hdr_lighting", True))
+        env_srv = self.background_srv if controller_hdr and self.background_srv else None
+        if not controller_hdr:
+            screen_light_srv = None
+        controllers.sort(key=lambda x: x[0], reverse=True)
+        for _dist, grip_mat, prims, press_map in controllers:
+            base_model = self._controller_model_base(viewer, grip_mat)
+            for prim in sorted(prims, key=lambda p: int(p.get("tri_count", 0) or 0), reverse=True):
+                visible_key = prim.get("visible_key", "")
+                if visible_key and float(press_map.get(visible_key, 0.0) or 0.0) <= 0.001:
+                    continue
+                model = base_model
+                anim_key = prim.get("anim_key", "") or prim.get("node_name", "")
+                press_amount = max(0.0, min(1.0, float(press_map.get(anim_key, press_map.get(prim.get("node_name", ""), 0.0)) or 0.0)))
+                anim_delta = getattr(viewer, "_controller_anim_delta", lambda *_args: None)(prim.get("press_anim"), press_amount)
+                if anim_delta is not None:
+                    model = (model @ anim_delta).astype(np.float32)
+                axis_anim = prim.get("axis_anim") or {}
+                for axis in ("x", "y"):
+                    amount = press_map.get(f"{anim_key}_{axis}", press_map.get(f"{prim.get('node_name', '')}_{axis}", 0.0))
+                    delta = getattr(viewer, "_controller_anim_delta", lambda *_args: None)(axis_anim.get(axis), amount)
+                    if delta is not None:
+                        model = (model @ delta).astype(np.float32)
+
+                res = self._controller_prim_resources(prim)
+                if res is None:
+                    continue
+                vb, ib, index_count, topology = res
+                mvp = (vp_mat @ model).astype(np.float32)
+                srv0 = self._controller_texture_srv(prim.get("tex_key"), tex_images)
+                base_color = (
+                    np.array((1.0, 1.0, 1.0), dtype=np.float32)
+                    if srv0 is not None
+                    else np.array((0.7, 0.7, 0.7), dtype=np.float32)
+                )
+                constants = np.zeros(76, dtype=np.float32)
+                constants[0:16] = mvp.reshape(16)
+                constants[16:32] = model.reshape(16)
+                try:
+                    normal_mat = np.linalg.inv(model[:3, :3]).T.astype(np.float32)
+                except Exception:
+                    normal_mat = np.eye(3, dtype=np.float32)
+                constants[32:36] = (float(normal_mat[0, 0]), float(normal_mat[0, 1]), float(normal_mat[0, 2]), 0.0)
+                constants[36:40] = (float(normal_mat[1, 0]), float(normal_mat[1, 1]), float(normal_mat[1, 2]), 0.0)
+                constants[40:44] = (float(normal_mat[2, 0]), float(normal_mat[2, 1]), float(normal_mat[2, 2]), 0.0)
+                constants[44:48] = (float(base_color[0]), float(base_color[1]), float(base_color[2]), float(prim.get("base_alpha", 1.0) or 1.0))
+                use_texture = 1.0 if srv0 is not None else 0.0
+                constants[48:52] = (
+                    float(prim.get("roughness_factor", 1.0) or 1.0),
+                    float(prim.get("metallic_factor", 0.0) or 0.0),
+                    use_texture,
+                    self._alpha_mode_id(prim.get("alpha_mode", "OPAQUE")),
+                )
+                constants[52:56] = (float(eye_pos[0]), float(eye_pos[1]), float(eye_pos[2]), 1.0 if env_srv else 0.0)
+                constants[56:60] = (1.0, float(prim.get("alpha_cutoff", 0.5) or 0.5), 1.0 if prim.get("unlit") else 0.0, 0.0)
+                if screen_light_srv is not None and getattr(viewer, "screen_height", None) is not None:
+                    try:
+                        sh, screen_pos, r_ax, u_ax, screen_n = viewer._screen_basis()
+                        screen_light_intensity = max(0.0, float(getattr(viewer, "_screen_light_intensity", 3.5) or 0.0)) * (0.32 / 3.5)
+                        constants[60:64] = (float(screen_pos[0]), float(screen_pos[1]), float(screen_pos[2]), 1.0)
+                        constants[64:68] = (float(screen_n[0]), float(screen_n[1]), float(screen_n[2]), screen_light_intensity)
+                        constants[68:72] = (float(r_ax[0]), float(r_ax[1]), float(r_ax[2]), float(viewer.screen_width) * 0.5)
+                        constants[72:76] = (float(u_ax[0]), float(u_ax[1]), float(u_ax[2]), float(sh) * 0.5)
+                    except Exception:
+                        pass
+                self._update_subresource(self.controller_constant_buffer, constants.ctypes.data, constants.nbytes)
+
+                srv_arr = (
+                    ctypes.c_void_p * 3
+                )(_ptr_value(srv0 or env_srv or 0), _ptr_value(env_srv or srv0 or 0), _ptr_value(screen_light_srv or 0))
+                self._context_call(8, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 3, srv_arr)
+                stride = ctypes.c_uint(32)
+                offset = ctypes.c_uint(0)
+                vb_arr = (ctypes.c_void_p * 1)(_ptr_value(vb))
+                self._context_call(18, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint))(
+                    _ptr_value(self.context), 0, 1, vb_arr, ctypes.byref(stride), ctypes.byref(offset)
+                )
+                self._context_call(19, None, ctypes.c_void_p, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(ib), DXGI_FORMAT_R32_UINT, 0)
+                self._context_call(24, None, ctypes.c_uint)(_ptr_value(self.context), topology)
+                self._context_call(12, None, ctypes.c_uint, ctypes.c_uint, ctypes.c_int)(_ptr_value(self.context), index_count, 0, 0)
+
+    def _draw_lasers(self, viewer, view_mat, proj_mat):
+        if viewer is None or view_mat is None or proj_mat is None or not hasattr(viewer, "_laser_beam_setup"):
+            return
+        try:
+            if getattr(viewer, "_beams_frame", -1) != getattr(viewer, "_frame_count", 0):
+                viewer._cached_beams = viewer._laser_beam_setup()
+                viewer._beams_frame = getattr(viewer, "_frame_count", 0)
+            beams = getattr(viewer, "_cached_beams", None) or []
+        except Exception:
+            return
+        if not beams:
+            return
+        vertices = []
+        for _now, _ctrl_name, _aim_mat, ctrl_pos, fwd_w, right2, _fwd, _up in beams:
+            start = np.asarray(ctrl_pos, dtype=np.float32)
+            end = start + np.asarray(fwd_w, dtype=np.float32) * 0.4
+            right = np.asarray(right2, dtype=np.float32)
+            base_l = start - right * 0.006
+            base_r = start + right * 0.006
+            tip_l = end - right * 0.001
+            tip_r = end + right * 0.001
+            for p, beam_v in (
+                (base_l, 0.0), (base_r, 0.0), (tip_l, 1.0),
+                (base_r, 0.0), (tip_r, 1.0), (tip_l, 1.0),
+            ):
+                vertices.extend([p[0], p[1], p[2], beam_v])
+        data = np.asarray(vertices, dtype=np.float32)
+        if data.size == 0:
+            return
+        vb = self._create_buffer(data, D3D11_BIND_VERTEX_BUFFER)
+        try:
+            self._set_blend_disabled()
+            mvp = (np.asarray(proj_mat, dtype=np.float32) @ np.asarray(view_mat, dtype=np.float32)).astype(np.float32)
+            constants = np.zeros(20, dtype=np.float32)
+            constants[:16] = mvp.reshape(16)
+            constants[16] = float(getattr(viewer, "_frame_now", 0.0) or 0.0)
+            self._update_subresource(self.laser_constant_buffer, constants.ctypes.data, constants.nbytes)
+            self._set_depth_enabled(True)
+            self._context_call(17, None, ctypes.c_void_p)(_ptr_value(self.context), _ptr_value(self.laser_input_layout))
+            self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.laser_vertex_shader), None, 0)
+            self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.laser_pixel_shader), None, 0)
+            cb_arr = (ctypes.c_void_p * 1)(_ptr_value(self.laser_constant_buffer))
+            self._context_call(7, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+            self._context_call(16, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+            self._context_call(24, None, ctypes.c_uint)(_ptr_value(self.context), D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
+            stride = ctypes.c_uint(16)
+            offset = ctypes.c_uint(0)
+            vb_arr = (ctypes.c_void_p * 1)(_ptr_value(vb))
+            self._context_call(18, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint))(
+                _ptr_value(self.context), 0, 1, vb_arr, ctypes.byref(stride), ctypes.byref(offset)
+            )
+            self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), data.size // 4, 0)
+        finally:
+            _release(vb)
+
+    def _render_eye_with_srv(self, swapchain_texture, width, height, eye_index, color_srv, eye_offset, depth_strength, convergence, mvp, *, roll=0.0, depth_srv=None, background_view_mat=None, background_proj_mat=None, overlay_viewer=None):
         rtv = self._get_or_create_swapchain_rtv(swapchain_texture)
+        dsv = self._ensure_projection_depth(int(width), int(height))
         try:
             clear = self._context_call(50, None, ctypes.c_void_p, ctypes.POINTER(ctypes.c_float))
             color = (ctypes.c_float * 4)(0.0, 0.0, 0.0, 1.0)
@@ -1175,12 +1839,17 @@ class D3D11NativeRenderer:
             self._context_call(44, None, ctypes.c_uint, ctypes.POINTER(D3D11Viewport))(_ptr_value(self.context), 1, ctypes.byref(viewport))
 
             rtv_arr = (ctypes.c_void_p * 1)(_ptr_value(rtv))
-            self._context_call(33, None, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p)(_ptr_value(self.context), 1, rtv_arr, None)
+            self._context_call(33, None, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p)(_ptr_value(self.context), 1, rtv_arr, _ptr_value(dsv))
+            self._context_call(53, None, ctypes.c_void_p, ctypes.c_uint, ctypes.c_float, ctypes.c_uint)(
+                _ptr_value(self.context), _ptr_value(dsv), D3D11_CLEAR_DEPTH, 1.0, 0
+            )
 
+            self._set_blend_disabled()
+            self._set_depth_enabled(False)
             self._context_call(17, None, ctypes.c_void_p)(_ptr_value(self.context), 0)
             self._context_call(43, None, ctypes.c_void_p)(_ptr_value(self.context), _ptr_value(self.rasterizer))
             self._context_call(24, None, ctypes.c_uint)(_ptr_value(self.context), D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP)
-            self._draw_background()
+            self._draw_background(background_view_mat, background_proj_mat)
             self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.vertex_shader), None, 0)
             self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.pixel_shader), None, 0)
 
@@ -1198,18 +1867,24 @@ class D3D11NativeRenderer:
             sampler_arr = (ctypes.c_void_p * 1)(_ptr_value(self.sampler))
             self._context_call(10, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, sampler_arr)
             self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), 4, 0)
+            self._draw_lasers(overlay_viewer, background_view_mat, background_proj_mat)
+            self._draw_controller_models(overlay_viewer, background_view_mat, background_proj_mat, color_srv)
             removed_reason = self._device_removed_reason()
             if removed_reason not in (0, None):
                 raise RuntimeError(f"D3D11 device removed after Draw: removed_reason={_hr_hex(removed_reason)}")
         finally:
-            null_srvs = (ctypes.c_void_p * 2)(0, 0)
+            null_srvs = (ctypes.c_void_p * 3)(0, 0, 0)
             null_rtvs = (ctypes.c_void_p * 1)(0)
             try:
-                self._context_call(8, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 2, null_srvs)
+                self._context_call(8, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 3, null_srvs)
             except Exception:
                 pass
             try:
                 self._context_call(33, None, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p)(_ptr_value(self.context), 1, null_rtvs, None)
+            except Exception:
+                pass
+            try:
+                self._set_depth_enabled(False)
             except Exception:
                 pass
 
@@ -1219,9 +1894,25 @@ class D3D11NativeRenderer:
         self.swapchain_rtvs.clear()
         self._release_frame_textures()
         self._release_runtime_eye_textures()
+        _release(self.projection_depth_dsv)
+        _release(self.projection_depth_tex)
+        self.projection_depth_dsv = ctypes.c_void_p()
+        self.projection_depth_tex = ctypes.c_void_p()
+        self.projection_depth_size = None
+        for vb, ib, _index_count, _topology in self.controller_prims.values():
+            _release(vb)
+            _release(ib)
+        self.controller_prims.clear()
+        for tex, srv in self.controller_textures.values():
+            _release(srv)
+            _release(tex)
+        self.controller_textures.clear()
         for attr in (
             "sampler", "pixel_shader", "vertex_shader", "input_layout",
-            "background_pixel_shader", "background_vertex_shader", "background_srv", "background_tex",
+            "background_pixel_shader", "background_vertex_shader", "background_srv", "background_tex", "background_constant_buffer",
+            "controller_pixel_shader", "controller_vertex_shader", "controller_input_layout", "controller_constant_buffer",
+            "laser_pixel_shader", "laser_vertex_shader", "laser_input_layout", "laser_constant_buffer",
+            "depth_stencil_state", "depth_disabled_state",
             "rasterizer", "constant_buffer", "vertex_buffer", "render_rtv", "render_tex",
         ):
             ptr = getattr(self, attr, None)

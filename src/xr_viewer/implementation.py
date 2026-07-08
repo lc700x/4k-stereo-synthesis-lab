@@ -973,6 +973,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._ctrl_prims_l      = []     # list of {vao, vbo, ibo, tex_id} for left
         self._ctrl_prims_r      = []     # list of {vao, vbo, ibo, tex_id} for right
         self._ctrl_tex_cache    = {}     # tex_id -> moderngl Texture
+        self._ctrl_tex_images   = {}     # shared RGBA arrays for non-GL renderers
 
         # Laser auto-hide: track last movement time and previous pose per controller
         _now = time.perf_counter()
@@ -1029,9 +1030,18 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # smoothly instead of snapping.  None = no animation in progress.
 
         # D3D11 backend state (populated by _init_d3d11_device when D3D11 path is active)
+        controller_renderer = str(
+            kwargs.get('openxr_controller_renderer', os.environ.get('D2S_OPENXR_CONTROLLER_RENDERER', 'd3d11')) or 'd3d11'
+        ).strip().lower()
         forced_backend = str(
             kwargs.get('openxr_backend', os.environ.get('D2S_OPENXR_BACKEND', 'd3d11')) or 'd3d11'
         ).strip().lower()
+        if controller_renderer == 'opengl':
+            if forced_backend not in ('auto', 'opengl'):
+                print("[OpenXRViewer] Controller renderer override: opengl (forcing OpenXR backend: opengl)")
+            forced_backend = 'opengl'
+        elif controller_renderer not in ('d3d11', 'native', 'auto'):
+            print(f"[OpenXRViewer] Invalid D2S_OPENXR_CONTROLLER_RENDERER={controller_renderer!r}; using backend default")
         if forced_backend not in ('auto', 'opengl', 'd3d11'):
             print(f"[OpenXRViewer] Invalid D2S_OPENXR_BACKEND={forced_backend!r}; using d3d11")
             forced_backend = 'd3d11'
@@ -1509,6 +1519,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._env_prog['u_screen_light_intensity'].value = 2.0
 
         self._ctrl_tex_cache = {}
+        self._ctrl_tex_images = {}
         self._ctrl_prims_l = []
         self._ctrl_prims_r = []
         self._init_all_controller_models()

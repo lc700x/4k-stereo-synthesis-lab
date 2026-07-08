@@ -87,6 +87,9 @@ class ProjectionLayerPresenter:
                         sc_h,
                         eye_index,
                         mvp,
+                        view_mat=view_mat,
+                        proj_mat=proj_mat,
+                        overlay_viewer=viewer,
                     )
                 else:
                     render_width = int(
@@ -110,6 +113,9 @@ class ProjectionLayerPresenter:
                         float(viewer.convergence),
                         mvp,
                         roll=getattr(viewer, 'screen_roll', 0.0),
+                        view_mat=view_mat,
+                        proj_mat=proj_mat,
+                        overlay_viewer=viewer,
                     )
 
                 xr.release_swapchain_image(swapchain, viewer._xr_sc_release_info)

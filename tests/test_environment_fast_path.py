@@ -143,10 +143,10 @@ def test_default_profile_starts_with_surround_glow():
     profile = json.loads(profile_path.read_text(encoding="utf-8"))
 
     assert "xr_quad_layer_enabled" not in profile
-    assert profile["glow_mode"] == "surround"
+    assert profile["glow_mode"] == "veil"
     assert profile["controller_hdr_lighting"] is False
-    assert profile["glow_intensity_multiplier"] == 0.0
-    assert profile["glow_shell_intensity_multiplier"] == 1.85
+    assert profile["glow_intensity_multiplier"] == 1.85
+    assert profile["glow_shell_intensity_multiplier"] == 0.0
     assert profile["frosted_glow_blend"] == 2.40
     assert profile["frosted_glow_thickness"] == 2.40
     assert profile["lighting_preset_index"] == 0
@@ -234,7 +234,7 @@ def test_screen_light_source_lookup_failure_disables_light_without_safe_downsamp
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
 
     assert viewer._screen_light_source_texture() == (None, None)
-    assert ("openxr_screen_light_source_failed", 1) in inc_calls
+    assert ("openxr_screen_light_source_failed", 1) not in inc_calls
 
 
 def test_screen_effect_age_diagnostic_failure_does_not_break_effect_source(monkeypatch):
@@ -578,11 +578,12 @@ def test_openxr_async_plan_uses_runtime_view_pose_and_project_side_complex_bake(
     report = (ROOT / "docs" / "35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md").read_text(encoding="utf-8")
 
     assert "真实位置与朝向" in plan
-    assert "3DoF" not in plan
+    assert "当前目标以 3DoF 原地转头为前提" in plan
     assert "rotation-only" not in plan
-    assert "3DoF" not in report
+    assert "3DoF 前提" in report
+    assert "未来若支持 6DoF" in report
     assert "rotation-only" not in report
-    assert "按真实 view pose（位置与朝向）" in report
+    assert "使用当前最新 head pose" in report
     assert "复杂房间 mask bake 仍待接入" not in plan
     assert "项目内不实现复杂房间 bake" in plan
 
@@ -636,7 +637,7 @@ def test_panorama_background_is_preloaded_outside_render_path():
     assert "openxr_background_panorama_failed" in render_func
     assert "finally:" in render_func
     render_finally = render_func.split("finally:", 1)[1]
-    assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+    assert "set_depth_mask(previous_depth_mask)" in render_finally
     assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
     assert "tex.use(location=8)" in render_func
     assert "_bind_screen_light_source_texture(location=10)" in render_func
@@ -863,11 +864,13 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
 
     inc_calls = []
     time_calls = []
+    value_calls = []
     viewer = Viewer()
     viewer._panorama_texture_ready = lambda: object()
     viewer._openxr_equirect_background_supported = False
     viewer._breakdown_inc = lambda name, amount=1: inc_calls.append((name, amount))
     viewer._breakdown_add_time = lambda name, seconds: time_calls.append((name, seconds))
+    viewer._breakdown_add_value = lambda name, value: value_calls.append((name, value))
 
     headers, projection_fallback = BackgroundLayerRenderer(viewer).make_background_layers()
 
@@ -884,6 +887,7 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     viewer._panorama_render_settings = lambda: (0.0, 1.0, False, 0, (0.5, 0.5), (0.25, 0.25))
     viewer._background_equirect_uploaded_key = None
     viewer._background_equirect_pending_tex = None
+    viewer._frame_count = 10
     renderer = BackgroundLayerRenderer(viewer)
     uploads = []
 
@@ -912,6 +916,14 @@ def test_background_layer_renderer_prefers_native_layer_before_projection_and_qu
     assert uploads == [tex]
     assert any(name == "openxr_background_upload" for name, _seconds in time_calls)
     assert ("openxr_background_layer", 1) in inc_calls
+    assert ("openxr_background_safe_age_frames", 0.0) in value_calls
+
+    viewer._frame_count = 12
+    headers, projection_fallback = renderer.make_background_layers()
+    assert len(headers) == 1
+    assert projection_fallback is False
+    assert ("openxr_background_reuse", 1) in inc_calls
+    assert ("openxr_background_safe_age_frames", 2.0) in value_calls
 
     fail_tex = type("Tex", (), {"glo": 41, "size": (1024, 512)})()
     viewer._panorama_texture_ready = lambda: fail_tex
@@ -1166,7 +1178,7 @@ def test_env_model_render_failure_restores_gl_state():
     render_func = render_text.split("def _render_env_model", 1)[1]
     render_body = render_func.split("        if self._env_perf_log:", 1)[0]
 
-    assert "previous_depth_mask = self.ctx.depth_mask" in render_body
+    assert "previous_depth_mask = get_depth_mask()" in render_body
     assert "try:" in render_body
     assert "except Exception as exc:" in render_body
     assert "openxr_background_env_model_failed" in render_body
@@ -1174,7 +1186,7 @@ def test_env_model_render_failure_restores_gl_state():
     render_finally = render_body.split("finally:", 1)[1]
     assert "self.ctx.disable(moderngl.CULL_FACE)" in render_finally
     assert "self.ctx.disable(moderngl.BLEND)" in render_finally
-    assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+    assert "set_depth_mask(previous_depth_mask)" in render_finally
     assert "glFrontFace(GL_CCW)" in render_finally
     assert "self._env_prog['u_use_texture'].value = 1" in render_finally
     assert "self._env_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)" in render_finally
@@ -1701,7 +1713,7 @@ def test_glow_downsample_cache_is_shared_across_eyes():
     assert "finally:" in prepare_func
     render_finally = prepare_func.split("finally:", 1)[1]
     assert "self.ctx.viewport = prev_viewport" in render_finally
-    assert "self.ctx.depth_mask = prev_depth_mask" in render_finally
+    assert "set_depth_mask(prev_depth_mask)" in render_finally
     assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
     assert "self.ctx.disable(moderngl.BLEND)" in render_finally
 
@@ -1719,7 +1731,7 @@ def test_screen_quality_pass_restores_gl_state_on_failure():
     assert "finally:" in func
     render_finally = func.split("finally:", 1)[1]
     assert "self.ctx.viewport = prev_viewport" in render_finally
-    assert "self.ctx.depth_mask = prev_depth_mask" in render_finally
+    assert "set_depth_mask(prev_depth_mask)" in render_finally
     assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
     assert "self.ctx.disable(moderngl.BLEND)" in render_finally
 
@@ -1885,14 +1897,14 @@ def test_no_room_glow_pass_restores_gl_state_on_failure():
     base_text = (SRC / "xr_viewer" / "base.py").read_text(encoding="utf-8")
     func = base_text.split("def _render_glow", 1)[1].split("def _render_shadow", 1)[0]
 
-    assert "previous_depth_mask = self.ctx.depth_mask" in func
+    assert "previous_depth_mask = get_depth_mask()" in func
     assert "try:" in func
     assert "except Exception as exc:" in func
     assert "openxr_screen_glow_failed" in func
     assert "finally:" in func
     render_finally = func.split("finally:", 1)[1]
     assert "self.ctx.disable(moderngl.BLEND)" in render_finally
-    assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+    assert "set_depth_mask(previous_depth_mask)" in render_finally
 
 
 def test_screen_effect_entrypoints_keep_failures_soft(monkeypatch):
@@ -1930,14 +1942,14 @@ def test_screen_effect_passes_restore_gl_state_on_failure():
 
     for start, end, diagnostic in checks:
         func = effects_text.split(start, 1)[1].split(end, 1)[0]
-        assert "previous_depth_mask = self.ctx.depth_mask" in func
+        assert "previous_depth_mask = get_depth_mask()" in func
         assert "try:" in func
         assert "except Exception as exc:" in func
         assert diagnostic in func
         assert "finally:" in func
         render_finally = func.split("finally:", 1)[1]
         assert "self.ctx.disable(moderngl.BLEND)" in render_finally
-        assert "self.ctx.depth_mask = previous_depth_mask" in render_finally
+        assert "set_depth_mask(previous_depth_mask)" in render_finally
         assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_finally
 
 

@@ -2100,6 +2100,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
         "openxr_background_upload",
         "openxr_background_upload_budget_skip",
         "openxr_background_layer_failed",
+        "openxr_background_reuse",
+        "openxr_background_safe_age_frames",
         "openxr_effect_source_promote_reuse",
         "openxr_wall_light_mask_loaded",
         "openxr_wall_light_mask_missing",
@@ -2133,6 +2135,8 @@ def test_openxr_async_phase0_diagnostics_are_wired():
     assert "fx_ds_failed={rate('openxr_glow_downsample_failed')" in breakdown
     assert "bg_path=layer:{rate('openxr_background_layer')" in breakdown
     assert "bg_upload={avg_ms('openxr_background_upload')" in breakdown
+    assert "bg_age={avg_value('openxr_background_safe_age_frames')" in breakdown
+    assert "bg_reuse={rate('openxr_background_reuse')" in breakdown
     assert "upload:{rate('openxr_background_layer_upload')" in breakdown
     assert "budget_skip:{rate('openxr_background_upload_budget_skip')" in breakdown
     assert "upload_failed:{rate('openxr_background_layer_upload_failed')" in breakdown

@@ -301,6 +301,8 @@ class FPSBreakdown:
             f"quad_unavail={quad_unavailable} "
             f"background={avg_ms('openxr_background'):.2f}ms "
             f"bg_upload={avg_ms('openxr_background_upload'):.2f}ms "
+            f"bg_age={avg_value('openxr_background_safe_age_frames'):.2f}f "
+            f"bg_reuse={rate('openxr_background_reuse'):.1f} "
             f"bg_path=layer:{rate('openxr_background_layer'):.1f},"
             f"upload:{rate('openxr_background_layer_upload'):.1f},"
             f"budget_skip:{rate('openxr_background_upload_budget_skip'):.1f},"

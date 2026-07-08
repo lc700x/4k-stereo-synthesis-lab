@@ -162,6 +162,7 @@ class BackgroundLayerRenderer:
             self.viewer._background_equirect_pending_tex = tex
             return None
         width, height = self.viewer._background_equirect_size
+        self._record_safe_background_reuse(source_key)
         if self._panorama_stereo_layout() == 1:
             eye_w = int(width) // 2
             return [
@@ -169,6 +170,22 @@ class BackgroundLayerRenderer:
                 self._make_equirect_layer(xr.EyeVisibility.RIGHT, eye_w, eye_w, height),
             ]
         return [self._make_equirect_layer(xr.EyeVisibility.BOTH, 0, width, height)]
+
+    def _record_safe_background_reuse(self, source_key):
+        viewer = self.viewer
+        frame_id = int(getattr(viewer, '_frame_count', 0) or 0)
+        if getattr(viewer, '_background_equirect_last_reuse_frame', None) == frame_id:
+            return
+        uploaded_frame = getattr(viewer, '_background_equirect_uploaded_frame', None)
+        if uploaded_frame is not None:
+            viewer._breakdown_add_value(
+                'openxr_background_safe_age_frames',
+                max(0.0, float(frame_id - int(uploaded_frame))),
+            )
+        if getattr(viewer, '_background_equirect_last_layer_key', None) == source_key:
+            viewer._breakdown_inc('openxr_background_reuse')
+        viewer._background_equirect_last_layer_key = source_key
+        viewer._background_equirect_last_reuse_frame = frame_id
 
     def flush_pending_upload_after_submit(self):
         tex = getattr(self.viewer, '_background_equirect_pending_tex', None)
@@ -183,6 +200,7 @@ class BackgroundLayerRenderer:
         source_key = self._source_key(tex)
         try:
             self._upload_equirect_texture(tex)
+            self.viewer._background_equirect_uploaded_frame = int(getattr(self.viewer, '_frame_count', 0) or 0)
             self.viewer._background_equirect_failed_key = None
         except Exception as exc:
             print(f"[OpenXRViewer] Background equirect upload failed: {type(exc).__name__}: {exc}")

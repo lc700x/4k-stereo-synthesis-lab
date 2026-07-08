@@ -124,6 +124,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_background_env_model", 1)
     breakdown.inc("openxr_background_env_model_failed", 4)
     breakdown.inc("openxr_background_idle", 3)
+    breakdown.inc("openxr_background_reuse", 5)
     breakdown.inc("openxr_effect_ready_age_record_failed", 1)
     breakdown.inc("openxr_effect_source_ready_publish", 3)
     breakdown.inc("openxr_effect_source_safe_publish", 2)
@@ -151,6 +152,7 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     breakdown.inc("openxr_input_trigger_failed", 1)
     breakdown.add_value("openxr_screen_frame_age_frames", 2)
     breakdown.add_value("openxr_effect_ready_age_frames", 4)
+    breakdown.add_value("openxr_background_safe_age_frames", 6)
     breakdown.add_time("openxr_source_latency", 0.015)
     breakdown.add_time("openxr_effect_submit", 0.007)
     breakdown.add_time("runtime_eye_total", 0.050)
@@ -259,6 +261,8 @@ def test_fps_breakdown_logs_openxr_loop_segments(capsys):
     assert "quad_unavail=missing_swapchain:1.0,not_runtime_direct:2.0" in output
     assert "background=5.00ms" in output
     assert "bg_upload=8.00ms" in output
+    assert "bg_age=6.00f" in output
+    assert "bg_reuse=5.0" in output
     assert "bg_path=layer:1.0,upload:1.0,budget_skip:1.0,upload_failed:2.0,fallback:2.0,layer_failed:3.0,panorama:2.0,env:1.0,env_failed:4.0,idle:3.0" in output
     assert "layer_count=5.0" in output
     assert "xr_end=6.00ms" in output

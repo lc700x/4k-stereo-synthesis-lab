@@ -138,6 +138,10 @@ Next validation target:
 - If async effects are intentionally disabled, confirm `fx_enabled=0`; in that case missing `effect_submit_or_safe_reuse` is no longer expected.
 - Confirm reset/default render alignment shows `1` and does not silently crop common sizes such as 1920x1080 to a 16-aligned height.
 
+Phase 3 start:
+
+- Added native panorama/equirect background safe-result diagnostics. `BackgroundLayerRenderer` now records `openxr_background_safe_age_frames` and `openxr_background_reuse` when an already-uploaded equirect background is reused, so real-device logs can prove background reuse/age is separate from Projection screen submit cadence.
+
 ### 2026-07-07 OpenXR Runtime Preparation Before Capture
 
 Implemented locally in the current worktree:

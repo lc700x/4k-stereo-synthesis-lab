@@ -141,6 +141,29 @@ Next validation target:
 Phase 3 start:
 
 - Added native panorama/equirect background safe-result diagnostics. `BackgroundLayerRenderer` now records `openxr_background_safe_age_frames` and `openxr_background_reuse` when an already-uploaded equirect background is reused, so real-device logs can prove background reuse/age is separate from Projection screen submit cadence.
+- Real-device HDR validation showed the active D3D11 OpenXR session was reaching the Projection path but not preparing any panorama background resource: `[FPSBreakdown]` reported `bg_path=layer:0.0,upload:0.0,...fallback:0.0,panorama:0.0` and no `Panorama background loaded` line.
+- Fixed the background preparation gap by adding `ScreenLayerPresenter.ensure_panorama_background_ready()` and calling it before background layer/fallback decisions. After that change, real-device logs showed `Panorama background loaded: ...\hdr_universe\universe.hdr (10000x5000)` and `Projection layer active: reason=background_projection_fallback`.
+- Fixed the D3D11 native Projection fallback visibility gap. Before this pass, `D3D11NativeRenderer` only drew the virtual screen into the projection swapchain, so an active projection-background fallback still produced no visible HDR room/background. It now loads the panorama image into a D3D11 SRV, draws a full-screen background pass, then draws the virtual screen on top.
+- Current Phase 3 limitation: the D3D11 panorama path is a visibility/stability fallback, not the final head-pose-correct equirect/cubemap background renderer. The final `docs/36` target is still an async-safe room/background texture path with correct sampling and old-frame consumption.
+
+Verification run during this Phase 3 update:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\xr_viewer\d3d11_native_renderer.py src\xr_viewer\projection_layer_presenter.py src\xr_viewer\screen_layer_presenter.py src\xr_viewer\background_layer_renderer.py tests\test_openxr_runtime.py tests\test_environment_fast_path.py
+.\src\python3\python.exe -m pytest tests/test_breakdown.py tests/test_environment_fast_path.py tests/test_openxr_runtime.py -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+197 passed, 2 skipped, 2 warnings
+```
+
+Next validation target:
+
+- Re-run real-device OpenXR D3D11 with an HDR environment selected and confirm `D3D11 panorama background active: ... universe.hdr` appears before or near Projection rendering, with HDR background visible behind the virtual screen.
+- Continue Phase 3 toward the final async projection-background design: replace the minimal D3D11 full-screen fallback with head-pose-correct equirect/cubemap sampling and safe reusable background textures.
 
 ### 2026-07-07 OpenXR Runtime Preparation Before Capture
 

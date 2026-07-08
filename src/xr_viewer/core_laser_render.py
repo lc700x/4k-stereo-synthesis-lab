@@ -1,5 +1,6 @@
 import logging
 import math
+import os
 import time
 
 logger = logging.getLogger(__name__)
@@ -7,6 +8,9 @@ logger = logging.getLogger(__name__)
 import moderngl
 import numpy as np
 from OpenGL.GL import GL_CCW, GL_CW, glFrontFace
+
+from .gl_state import set_depth_mask
+from .laser_params import LASER_BASE_HALF_WIDTH_M, LASER_MAX_LENGTH_M
 
 
 class CoreLaserRenderMixin:
@@ -265,7 +269,7 @@ class CoreLaserRenderMixin:
             self._render_laser_hit_circles(mgl_fbo, vp_mat, beams)
             return
         mgl_fbo.use()
-        beam_max_len = 0.4
+        beam_max_len = LASER_MAX_LENGTH_M
         for now, ctrl_name, _aim_mat, ctrl_pos, fwd_w, right2, fwd, up in beams:
             cursor_uv = self._cursor_uv_l if ctrl_name == 'left' else self._cursor_uv_r
             if self._cursor_ctrl == ctrl_name and cursor_uv is not None:
@@ -279,7 +283,7 @@ class CoreLaserRenderMixin:
                 else:
                     hit_dist = min(sc_dist, kb_dist, ov_dist)
             draw_len = min(beam_max_len, max(0.01, hit_dist))
-            beam_r = 0.006
+            beam_r = LASER_BASE_HALF_WIDTH_M
             scale = np.diag([beam_r, draw_len, beam_r, 1.0]).astype('f4')
             rot = np.eye(4, dtype='f4')
             rot[:3, 0] = right2
@@ -398,34 +402,29 @@ class CoreLaserRenderMixin:
 
         controllers.sort(key=lambda x: x[0], reverse=True)
         mgl_fbo.use()
+        config_material_diag = ""
+        for _dist, _grip_mat, prims, _press_map in controllers:
+            for prim in prims:
+                config_material_diag = str((prim.get('material') or {}).get('material_diag', '') or '').strip().lower()
+                if config_material_diag:
+                    break
+            if config_material_diag:
+                break
+        material_diag = os.environ.get("D2S_OPENXR_CONTROLLER_MATERIAL_DIAG", "").strip().lower() or config_material_diag
+        diag_opaque_unlit = material_diag in ("1", "true", "unlit", "opaque_unlit")
         cam_pos = eye_pos.astype(np.float32)
-        env_tex = None
-        if getattr(self, '_controller_hdr_lighting', True) and getattr(self, '_panorama_background_path', None) and hasattr(self, '_panorama_texture_ready'):
-            try:
-                env_tex = self._panorama_texture_ready()
-            except Exception:
-                env_tex = None
-        if env_tex is not None:
-            env_tex.use(location=9)
-            self._controller_prog['u_env_tex'].value = 9
-            self._controller_prog['u_use_env_tex'].value = 1
-            settings = getattr(self, '_panorama_background_settings', {}) or {}
-            try:
-                env_intensity = max(0.0, float(settings.get('exposure', 1.0) or 1.0))
-            except (TypeError, ValueError):
-                env_intensity = 1.0
-            self._controller_prog['u_env_intensity'].value = env_intensity
-            try:
-                _yaw_offset, _exposure, _flip_y, stereo_layout, _light_uv, _light_radius = self._panorama_render_settings()
-            except Exception:
-                stereo_layout = 0
-            self._controller_prog['u_env_stereo_layout'].value = int(stereo_layout)
-            self._controller_prog['u_env_eye_index'].value = 1 if int(getattr(self, '_current_eye_index', 0) or 0) == 1 else 0
-        else:
-            self._controller_prog['u_use_env_tex'].value = 0
-            self._controller_prog['u_env_intensity'].value = 0.0
-            self._controller_prog['u_env_stereo_layout'].value = 0
-            self._controller_prog['u_env_eye_index'].value = 0
+        self._controller_prog['u_light_color'].value = tuple(getattr(self, '_env_head_light_color', (0.24, 0.24, 0.26)))
+        self._controller_prog['u_ambient_color'].value = tuple(getattr(self, '_env_ambient_color', (0.14, 0.13, 0.15)))
+        self._controller_prog['u_env_exposure'].value = float(getattr(self, '_env_exposure', 1.12) or 1.12)
+        self._controller_prog['u_env_gamma'].value = float(getattr(self, '_env_gamma', 2.2) or 2.2)
+        self._controller_prog['u_emissive_strength'].value = float(getattr(self, '_env_emissive_strength', 1.0) or 1.0)
+        self._controller_prog['u_shading_mode'].value = 0
+        self._controller_prog['u_foliage_mode'].value = 0
+        self._controller_prog['u_light_dir'].value = tuple(float(x) for x in getattr(self, '_env_fallback_dir', (0.25, -0.82, -0.52))[:3])
+        self._controller_prog['u_light_intensity'].value = (0.0, 0.0, 0.0)
+        for slot in range(2):
+            self._controller_prog[f'u_fill_light_color{slot}'].value = (0.0, 0.0, 0.0)
+            self._controller_prog[f'u_fill_light_range{slot}'].value = 1.0
         screen_tex = None
         if getattr(self, '_controller_hdr_lighting', True):
             if hasattr(self, '_bind_screen_light_source_texture'):
@@ -474,11 +473,29 @@ class CoreLaserRenderMixin:
             self._controller_prog['u_camera_pos'].write(cam_pos.tobytes())
 
             sorted_prims = sorted(prims, key=lambda p: p['tri_count'], reverse=True)
+            opaque_prims = []
+            blend_prims = []
+            for prim in sorted_prims:
+                mat = prim.get('material') or {}
+                if not diag_opaque_unlit and int(mat.get('alpha_mode_id', 0)) == 2:
+                    blend_prims.append(prim)
+                else:
+                    opaque_prims.append(prim)
+            if len(blend_prims) > 1:
+                def _blend_sort_key(prim):
+                    center = prim.get('sort_center_local')
+                    if center is None:
+                        center = np.zeros(3, dtype=np.float32)
+                    world_center = base_model_mat @ np.array([float(center[0]), float(center[1]), float(center[2]), 1.0], dtype=np.float32)
+                    delta = world_center[:3] - cam_pos
+                    return float(np.dot(delta, delta))
+
+                blend_prims.sort(key=_blend_sort_key, reverse=True)
 
             if self._use_d3d11:
                 glFrontFace(GL_CW)
 
-            for prim in sorted_prims:
+            for prim in opaque_prims + blend_prims:
                 visible_key = prim.get('visible_key', '')
                 if visible_key and float(press_map.get(visible_key, 0.0) or 0.0) <= 0.001:
                     continue
@@ -499,15 +516,59 @@ class CoreLaserRenderMixin:
                 if axis_y_delta is not None:
                     model_mat = (model_mat @ axis_y_delta).astype(np.float32)
                 self._controller_prog['u_model'].write(model_mat.T.tobytes())
-                tex = self._ctrl_tex_cache.get(prim['tex_key'])
-                if tex is not None:
-                    tex.use(location=3)
-                    self._controller_prog['u_use_texture'].value = 1
-                    self._controller_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)
+                mat = prim.get('material') or {}
+                if mat.get('double_sided', False):
+                    self.ctx.disable(moderngl.CULL_FACE)
                 else:
-                    self._controller_prog['u_use_texture'].value = 0
-                    self._controller_prog['u_base_color_factor'].value = (0.7, 0.7, 0.7)
+                    self.ctx.enable(moderngl.CULL_FACE)
+                if not diag_opaque_unlit and int(mat.get('alpha_mode_id', 0)) == 2:
+                    self.ctx.enable(moderngl.BLEND)
+                    self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
+                    set_depth_mask(False)
+                else:
+                    self.ctx.disable(moderngl.BLEND)
+                    set_depth_mask(True)
+                self._controller_prog['u_base_color_factor'].value = tuple(float(x) for x in mat.get('base_color', (1.0, 1.0, 1.0))[:3])
+                self._controller_prog['u_base_alpha'].value = 1.0 if diag_opaque_unlit else float(mat.get('base_alpha', 1.0))
+                self._controller_prog['u_roughness'].value = float(mat.get('roughness', 1.0))
+                self._controller_prog['u_metallic'].value = float(mat.get('metallic', 0.0))
+                self._controller_prog['u_emissive_factor'].value = tuple(float(x) for x in mat.get('emissive_factor', (0.0, 0.0, 0.0))[:3])
+                self._controller_prog['u_unlit'].value = 1 if diag_opaque_unlit or mat.get('unlit', False) else 0
+                self._controller_prog['u_alpha_mode'].value = 0 if diag_opaque_unlit else int(mat.get('alpha_mode_id', 0))
+                self._controller_prog['u_double_sided'].value = 1 if mat.get('double_sided', False) else 0
+                self._controller_prog['u_alpha_cutoff'].value = float(mat.get('alpha_cutoff', 0.5))
+                self._controller_prog['u_tex_offset'].value = tuple(float(x) for x in mat.get('tex_offset', (0.0, 0.0))[:2])
+                self._controller_prog['u_tex_scale'].value = tuple(float(x) for x in mat.get('tex_scale', (1.0, 1.0))[:2])
+                self._controller_prog['u_tex_rotation'].value = float(mat.get('tex_rotation', 0.0))
+                self._controller_prog['u_base_texcoord'].value = int(mat.get('base_texcoord', 0))
+                for uniform, location, key_name in (
+                    ('texture', 3, 'base_key'),
+                    ('normal_tex', 4, 'normal_key'),
+                    ('occlusion_tex', 5, 'occlusion_key'),
+                    ('mr_tex', 6, 'mr_key'),
+                    ('emissive_tex', 7, 'emissive_key'),
+                ):
+                    tex = self._ctrl_tex_cache.get(mat.get(key_name))
+                    use_name = 'u_use_texture' if uniform == 'texture' else f'u_use_{uniform}'
+                    if diag_opaque_unlit and uniform != 'texture':
+                        self._controller_prog[use_name].value = 0
+                        continue
+                    if tex is not None:
+                        tex.use(location=location)
+                        self._controller_prog[use_name].value = 1
+                    else:
+                        self._controller_prog[use_name].value = 0
+                self._controller_prog['u_normal_scale'].value = float(mat.get('normal_scale', 1.0))
+                self._controller_prog['u_occlusion_strength'].value = float(mat.get('occlusion_strength', 1.0))
+                self._controller_prog['u_normal_texcoord'].value = int(mat.get('normal_texcoord', 0))
+                self._controller_prog['u_occlusion_texcoord'].value = int(mat.get('occlusion_texcoord', 0))
+                self._controller_prog['u_mr_texcoord'].value = int(mat.get('mr_texcoord', 0))
+                self._controller_prog['u_emissive_texcoord'].value = int(mat.get('emissive_texcoord', 0))
+                self._controller_prog['u_baked_lightmap'].value = 0
                 prim['vao'].render(prim.get('render_mode', moderngl.TRIANGLES))
 
             if self._use_d3d11:
                 glFrontFace(GL_CCW)
+        self.ctx.disable(moderngl.BLEND)
+        self.ctx.disable(moderngl.CULL_FACE)
+        set_depth_mask(True)

@@ -610,6 +610,7 @@ class EnvironmentRendererMixin:
                 self._env_prog['u_unlit'].value = rs['unlit']
                 self._env_prog['u_foliage_mode'].value = rs['foliage']
                 self._env_prog['u_alpha_mode'].value = rs['am']
+                self._env_prog['u_double_sided'].value = 1 if rs['double_sided'] else 0
                 self._env_prog['u_alpha_cutoff'].value = rs['ac']
 
                 if rs['blend']:

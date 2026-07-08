@@ -165,6 +165,41 @@ Next validation target:
 - Re-run real-device OpenXR D3D11 with an HDR environment selected and confirm `D3D11 panorama background active: ... universe.hdr` appears before or near Projection rendering, with HDR background visible behind the virtual screen.
 - Continue Phase 3 toward the final async projection-background design: replace the minimal D3D11 full-screen fallback with head-pose-correct equirect/cubemap sampling and safe reusable background textures.
 
+### 2026-07-09 OpenXR D3D11 Controller, Laser, and Color-Space Follow-up
+
+Implemented locally in the current worktree:
+
+- Added shared controller glTF material preparation so OpenGL and D3D11 consume the same semantic fields for base color, alpha mode, `doubleSided`, sampler/texture transform, texcoord index, sRGB-vs-linear texture role, normal, metallic-roughness, occlusion, and emissive maps. This is shared material-field preparation, not a claim of complete glTF 2.0 compliance.
+- Added `src/xr_viewer/controllers/common.json` as the shared controller material/diagnostic config. `diagnostics.materialMode: "opaque_unlit"` or `D2S_OPENXR_CONTROLLER_MATERIAL_DIAG=opaque_unlit` can temporarily force opaque unlit controller materials for texture/alpha diagnosis.
+- Fixed D3D11 HP / Index controller texture transparency by matching glTF/OpenGL front-face winding with `FrontCounterClockwise=1` and using WRAP sampling for controller UVs that exceed `0..1`.
+- Extended the D3D11 controller path to bind the prepared base/normal/occlusion/metallic-roughness/emissive material textures and to support `TEXCOORD0` / `TEXCOORD1`.
+- Set the controller surface lighting policy: controller models ignore environment profile punctual/fill lights and are affected by screen light/reflection, head/top light, HDR environment lighting when enabled, and base ambient only. Environment `profile.json` lights still belong to the room/environment path.
+- Moved laser beam dimensions into shared `laser_params.py`: controller-end total width is 6 mm, tip total width is 2 mm. OpenGL and D3D11 now use their own renderer-specific crossed tapered quad geometry for a colored light-column appearance while sharing the same dimensions.
+- Fixed the D3D11 projection screen darkening path by keeping the intermediate desktop color texture as `DXGI_FORMAT_R8G8B8A8_UNORM`; this avoids unintended sRGB decode without a matching encode when the final RTV is UNORM. OpenXR swapchain selection may still prefer sRGB where the runtime exposes it.
+- Documented the GLB CPU/GPU boundary: glTF/GLB parse, image decode, and first texture upload use CPU-side work, while per-frame controller rendering samples already-created GPU textures.
+
+Verification run during this pass:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\xr_viewer\controller_materials.py src\xr_viewer\controller_models.py src\xr_viewer\core_laser_render.py src\xr_viewer\d3d11_native_renderer.py src\xr_viewer\environment_renderer.py src\xr_viewer\glsl.py src\xr_viewer\implementation.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_controller_material_preserves_gltf_double_sided_without_override tests\test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests\test_openxr_runtime.py::test_controller_render_debug_logs_once_as_debug tests\test_openxr_runtime.py::test_laser_width_is_shared_between_opengl_and_d3d11 tests\test_openxr_runtime.py::test_controller_lighting_ignores_environment_profile_lights tests\test_openxr_runtime.py::test_d3d11_fallback_uses_unorm_intermediate_color_texture -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+Targeted OpenXR controller/D3D11 tests passed
+HLSL compile probes passed: controller_hlsl_ok, laser_hlsl_ok, projection_hlsl_ok
+User real-device visual check: D3D11 HP and Index controller textures no longer appear transparent
+```
+
+Next validation target:
+
+- Re-run real-device D3D11 after the UNORM intermediate color fix and compare projection screen brightness against OpenGL.
+- Visually confirm the controller lighting policy across several environments: screen reflection, top/head light, HDR environment, and no environment profile punctual/fill light affecting controller material.
+- Keep `diagnostics.materialMode` as a temporary diagnosis aid only; remove or leave disabled once controller material validation is stable.
+
 ### 2026-07-07 OpenXR Runtime Preparation Before Capture
 
 Implemented locally in the current worktree:

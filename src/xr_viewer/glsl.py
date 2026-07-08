@@ -587,6 +587,7 @@ uniform vec3 u_emissive_factor;
 uniform int u_unlit;             // KHR_materials_unlit: skip lighting
 uniform float u_alpha_cutoff;    // alphaMode=MASK discard threshold
 uniform int u_alpha_mode;        // 0=OPAQUE, 1=MASK, 2=BLEND
+uniform int u_double_sided;      // glTF doubleSided
 uniform int u_use_mr_tex;        // 0: use uniform factors, 1: sample mr texture
 uniform int u_use_emissive_tex;  // 0: use factor only, 1: sample emissive texture
 uniform int u_normal_texcoord;
@@ -698,6 +699,7 @@ void main() {
         if (materialAlpha < u_alpha_cutoff) discard;
     }
 
+    if (!gl_FrontFacing && u_double_sided == 0) discard;
     vec3 N = normalize(v_normal);
     if (!gl_FrontFacing) N = -N;
 

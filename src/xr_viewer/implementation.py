@@ -61,8 +61,6 @@ from .glsl import (
     _BEAM_FRAG,
     _BEAM_VERT,
     _BORDER_FRAG,
-    _CTRL_FRAG,
-    _CTRL_VERT,
     _CURVED_COPY_FRAG,
     _CURVED_VERT,
     _ENV_FRAG,
@@ -1336,17 +1334,23 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._border_prog,
             [(self.ctx.buffer(laser_verts.tobytes()), '2f 8x', 'in_position')],
         )
-        # Flat beam (quadrilateral) + rainbow flow animation
+        # Crossed quads approximate a light column while keeping the beam shader simple.
         self._beam_prog = self.ctx.program(
             vertex_shader=_BEAM_VERT,
             fragment_shader=_BEAM_FRAG,
         )
-        # Single quadrilateral: Y=0(base, thick) ->Y=1(tip, thin)
+        # Two crossed quadrilaterals: Y=0(base, thick) ->Y=1(tip, thin)
         beam_verts = np.array([
             -1.0, 0.0, 0.0, 0.0,   # bottom-left, v=0
             1.0, 0.0, 0.0, 0.0,   # bottom-right, v=0
             -0.15, 1.0, 0.0, 1.0,   # top-left, v=1
             0.15, 1.0, 0.0, 1.0,   # top-right, v=1
+            0.15, 1.0, 0.0, 1.0,
+            0.0, 0.0, -1.0, 0.0,
+            0.0, 0.0, -1.0, 0.0,
+            0.0, 0.0, 1.0, 0.0,
+            0.0, 1.0, -0.15, 1.0,
+            0.0, 1.0, 0.15, 1.0,
         ], dtype='f4')
         beam_vbo = self.ctx.buffer(beam_verts.tobytes())
         self._beam_vao = self.ctx.vertex_array(
@@ -1446,18 +1450,58 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         # VR controller 3D model shader
         self._controller_prog = self.ctx.program(
-            vertex_shader=_CTRL_VERT,
-            fragment_shader=_CTRL_FRAG,
+            vertex_shader=_ENV_VERT,
+            fragment_shader=_ENV_FRAG,
         )
         self._controller_prog['u_tex'].value = 3
         self._controller_prog['u_use_texture'].value = 1
         self._controller_prog['u_base_color_factor'].value = (1.0, 1.0, 1.0)
-        self._controller_prog['u_use_env_tex'].value = 0
-        self._controller_prog['u_env_stereo_layout'].value = 0
-        self._controller_prog['u_env_eye_index'].value = 0
-        self._controller_prog['u_env_intensity'].value = 0.0
+        self._controller_prog['u_base_alpha'].value = 1.0
+        self._controller_prog['u_light_color'].value = (0.45, 0.45, 0.48)
+        self._controller_prog['u_ambient_color'].value = (0.08, 0.08, 0.09)
+        self._controller_prog['u_roughness'].value = 1.0
+        self._controller_prog['u_metallic'].value = 0.0
+        self._controller_prog['u_emissive_factor'].value = (0.0, 0.0, 0.0)
+        self._controller_prog['u_unlit'].value = 0
+        self._controller_prog['u_alpha_cutoff'].value = 0.5
+        self._controller_prog['u_alpha_mode'].value = 0
+        self._controller_prog['u_double_sided'].value = 0
+        self._controller_prog['u_normal_tex'].value = 4
+        self._controller_prog['u_use_normal_tex'].value = 0
+        self._controller_prog['u_occlusion_tex'].value = 5
+        self._controller_prog['u_use_occlusion_tex'].value = 0
+        self._controller_prog['u_mr_tex'].value = 6
+        self._controller_prog['u_use_mr_tex'].value = 0
+        self._controller_prog['u_emissive_tex'].value = 7
+        self._controller_prog['u_use_emissive_tex'].value = 0
+        self._controller_prog['u_normal_scale'].value = 1.0
+        self._controller_prog['u_occlusion_strength'].value = 1.0
+        self._controller_prog['u_normal_texcoord'].value = 0
+        self._controller_prog['u_occlusion_texcoord'].value = 0
+        self._controller_prog['u_mr_texcoord'].value = 0
+        self._controller_prog['u_emissive_texcoord'].value = 0
+        self._controller_prog['u_tex_offset'].value = (0.0, 0.0)
+        self._controller_prog['u_tex_scale'].value = (1.0, 1.0)
+        self._controller_prog['u_tex_rotation'].value = 0.0
+        self._controller_prog['u_base_texcoord'].value = 0
+        self._controller_prog['u_baked_lightmap'].value = 0
+        self._controller_prog['u_light_dir'].value = (0.0, -1.0, 0.0)
+        self._controller_prog['u_light_intensity'].value = (0.0, 0.0, 0.0)
+        self._controller_prog['u_fill_light_pos0'].value = (0.0, 0.0, 0.0)
+        self._controller_prog['u_fill_light_color0'].value = (0.0, 0.0, 0.0)
+        self._controller_prog['u_fill_light_range0'].value = 1.0
+        self._controller_prog['u_fill_light_pos1'].value = (0.0, 0.0, 0.0)
+        self._controller_prog['u_fill_light_color1'].value = (0.0, 0.0, 0.0)
+        self._controller_prog['u_fill_light_range1'].value = 1.0
         self._controller_prog['u_screen_light_enabled'].value = 0
+        self._controller_prog['u_screen_light_color'].value = (1.0, 1.0, 1.0)
+        self._controller_prog['u_screen_light_tex'].value = 10
         self._controller_prog['u_screen_light_intensity'].value = 0.0
+        self._controller_prog['u_env_exposure'].value = 1.0
+        self._controller_prog['u_env_gamma'].value = 2.2
+        self._controller_prog['u_emissive_strength'].value = 1.0
+        self._controller_prog['u_shading_mode'].value = 0
+        self._controller_prog['u_foliage_mode'].value = 0
 
         # Environment model shader (no gl_FrontFacing discard, double-sided lighting)
         self._env_prog = self.ctx.program(
@@ -1476,6 +1520,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._env_prog['u_unlit'].value = 0
         self._env_prog['u_alpha_cutoff'].value = 0.5
         self._env_prog['u_alpha_mode'].value = 0
+        self._env_prog['u_double_sided'].value = 0
         self._env_prog['u_mr_tex'].value = 6
         self._env_prog['u_use_mr_tex'].value = 0
         self._env_prog['u_emissive_tex'].value = 7

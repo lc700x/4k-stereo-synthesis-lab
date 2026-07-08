@@ -61,6 +61,56 @@ def test_controller_render_debug_logs_once_as_debug():
     assert '"[OpenXRViewer] controller render: "' in render_func
     assert "[OpenXRViewer][debug] controller render:" not in render_func
     assert "_controller_render_debug_count = log_count + 1" in render_func
+    assert "D2S_OPENXR_CONTROLLER_MATERIAL_DIAG" in render_func
+    assert "config_material_diag" in render_func
+    assert "or config_material_diag" in render_func
+    assert 'diag_opaque_unlit = material_diag in ("1", "true", "unlit", "opaque_unlit")' in render_func
+    assert "self._controller_prog['u_unlit'].value = 1 if diag_opaque_unlit" in render_func
+
+
+def test_controller_material_preserves_gltf_double_sided_without_override():
+    from xr_viewer.controller_materials import prepare_controller_material
+
+    config = {
+        "defaults": {"metallicFactor": 0.0, "roughnessFactor": 1.0},
+        "diagnostics": {"materialMode": "opaque_unlit"},
+    }
+    pd = {"metallic_factor": 0.5, "roughness_factor": 0.55, "alpha_mode": "OPAQUE", "double_sided": True}
+
+    vive = prepare_controller_material(pd, "VIVE/left", config)
+    pico = prepare_controller_material(pd, "PICO/left", config)
+    assert vive["metallic"] == 0.5
+    assert vive["double_sided"]
+    assert pico["metallic"] == 0.5
+    assert pico["double_sided"]
+    assert pico["material_diag"] == "opaque_unlit"
+
+
+def test_laser_width_is_shared_between_opengl_and_d3d11():
+    from xr_viewer.laser_params import LASER_BASE_HALF_WIDTH_M
+
+    core_laser = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+
+    assert LASER_BASE_HALF_WIDTH_M == 0.003
+    assert "beam_r = LASER_BASE_HALF_WIDTH_M" in core_laser
+    assert "axis * LASER_BASE_HALF_WIDTH_M" in renderer
+    assert "Two crossed quadrilaterals" in (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+    assert "for axis in (right, up):" in renderer
+
+
+def test_controller_lighting_ignores_environment_profile_lights():
+    core_laser = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+    gl_block = core_laser.split("def _render_controllers", 1)[1].split("    def _render_laser_hit_circles", 1)[0]
+    d3d_block = renderer.split("def _draw_controller_models", 1)[1].split("    def _draw_lasers", 1)[0]
+
+    assert "_scene_lights" not in gl_block
+    assert "_env_fill_lights" not in gl_block
+    assert "_scene_lights" not in d3d_block
+    assert "_env_fill_lights" not in d3d_block
+    assert "u_light_intensity'].value = (0.0, 0.0, 0.0)" in gl_block
+    assert "dir_color = np.zeros(3, dtype=np.float32)" in d3d_block
 
 
 def test_frame_size_from_eye_uses_height_width_shape_for_array_like():
@@ -655,14 +705,13 @@ def test_quad_layer_swapchain_logs_alignment_details():
     assert "scale={scale:.3f}" in quad
 
 
-def test_d3d11_fallback_prefers_srgb_color_path():
+def test_d3d11_fallback_uses_unorm_intermediate_color_texture():
     from xr_viewer.d3d_interop import _D3D11_PREFERRED_FORMATS
 
     d3d11 = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
 
     assert _D3D11_PREFERRED_FORMATS[:4] == [29, 28, 91, 87]
-    assert "self.color_format = (" in d3d11
-    assert "DXGI_FORMAT_R8G8B8A8_UNORM_SRGB" in d3d11
+    assert "self.color_format = DXGI_FORMAT_R8G8B8A8_UNORM" in d3d11
     assert "self._create_texture_srv(width, height, self.color_format)" in d3d11
 
 
@@ -3462,19 +3511,31 @@ def test_d3d11_projection_path_uses_native_renderer():
     assert "screenLightEnabled" in renderer
     assert "screenTint" in renderer
     assert "texScreenLight.SampleLevel" in renderer
+    assert "Texture2D texNormal : register(t3);" in renderer
+    assert "Texture2D texOcclusion : register(t4);" in renderer
+    assert "Texture2D texMR : register(t5);" in renderer
+    assert "Texture2D texEmissive : register(t6);" in renderer
+    assert "D2S_OPENXR_CONTROLLER_MATERIAL_DIAG" in renderer
+    assert "config_material_diag" in renderer
+    assert "or config_material_diag" in renderer
+    assert 'diag_opaque_unlit = material_diag in ("1", "true", "unlit", "opaque_unlit")' in renderer
+    assert "env_srv = None" in renderer
+    assert "alpha_mode = 0 if diag_opaque_unlit else int(mat.get(\"alpha_mode_id\", 0))" in renderer
     assert 'controller_hdr = bool(getattr(viewer, "_controller_hdr_lighting", True))' in renderer
     assert "env_srv = self.background_srv if controller_hdr and self.background_srv else None" in renderer
     assert "if not controller_hdr:" in renderer
     assert "screen_light_srv = None" in renderer
     assert 'getattr(viewer, "_screen_light_intensity", 3.5)' in renderer
     assert "0.32 / 3.5" in renderer
-    assert "SV_IsFrontFace" not in renderer
-    assert "if (!isFrontFace)" not in renderer
-    assert "output.uv = input.uv;" in renderer
+    assert "SV_IsFrontFace" in renderer
+    assert "if (!isFrontFace && doubleSided < 0.5)" in renderer
+    assert "n = -n;" in renderer
+    assert "output.uv0 = input.uv0;" in renderer
+    assert "output.uv1 = input.uv1;" in renderer
     assert "output.uv = float2(input.uv.x, 1.0 - input.uv.y);" not in renderer
-    assert "texel.a" not in renderer
-    assert "alpha < alphaCutoff" not in renderer
-    assert "return float4(saturate(color), 1.0);" in renderer
+    assert "texel.a" in renderer
+    assert "alpha < alphaCutoff" in renderer
+    assert "return float4(saturate(color), alphaMode > 1.5 ? alpha : 1.0);" in renderer
     assert "D3D11_BIND_DEPTH_STENCIL" in renderer
     assert "CreateDepthStencilView(projection)" in renderer
     assert "DXGI_FORMAT_B8G8R8A8_UNORM_SRGB" in renderer
@@ -3483,27 +3544,55 @@ def test_d3d11_projection_path_uses_native_renderer():
     assert "rtv_format = DXGI_FORMAT_B8G8R8A8_UNORM" in renderer
     assert "D3D11 linear swapchain RTV unavailable" in renderer
     assert "_set_depth_enabled(True)" in renderer
+    assert "def _set_depth_read_only(self):" in renderer
     assert "def _set_blend_disabled(self):" in renderer
+    assert "def _set_blend_alpha(self):" in renderer
+    assert "CreateBlendState(controller_alpha)" in renderer
+    assert "D3D11_TEXTURE_ADDRESS_WRAP" in renderer
+    assert "D3D11_TEXTURE_ADDRESS_WRAP,\n            D3D11_TEXTURE_ADDRESS_WRAP,\n            D3D11_TEXTURE_ADDRESS_WRAP" in renderer
+    assert "D3D11RasterizerDesc(\n            D3D11_FILL_SOLID,\n            D3D11_CULL_NONE,\n            1," in renderer
+    assert "doubleSided lightParams.w" in renderer
     assert "self._context_call(35, None" in renderer
     assert "float t = frac(input.beamV - laserParams.x * 0.4);" in renderer
     assert 'names = [b"POSITION", b"TEXCOORD"]' in renderer
     assert "lerp(float3(0.0,0.4,1.0), float3(0.0,1.0,1.0)" in renderer
-    assert "if srv0 is not None" in renderer
-    assert "np.array((1.0, 1.0, 1.0), dtype=np.float32)" in renderer
-    assert "np.array((0.7, 0.7, 0.7), dtype=np.float32)" in renderer
-    assert "self.controller_constant_buffer = self._create_buffer(np.zeros(76" in renderer
+    assert 'mat = prim.get("material") or {}' in renderer
+    assert 'self._controller_texture_srv(mat.get("normal_key"), tex_images)' in renderer
+    assert 'self._controller_texture_srv(mat.get("occlusion_key"), tex_images)' in renderer
+    assert 'self._controller_texture_srv(mat.get("mr_key"), tex_images)' in renderer
+    assert 'self._controller_texture_srv(mat.get("emissive_key"), tex_images)' in renderer
+    assert "self.controller_constant_buffer = self._create_buffer(np.zeros(128" in renderer
     assert "float4 normalRow0;" in renderer
     assert "dot(normalRow0.xyz, input.normal)" in renderer
+    assert "float4 texTransform0;" in renderer
+    assert "float4 texCoordParams2;" in renderer
+    assert "baseTexcoord" in renderer
+    assert "normalTexcoord" in renderer
+    assert "mrTexcoord" in renderer
+    assert "emissiveTexcoord" in renderer
     assert "normal_mat = np.linalg.inv(model[:3, :3]).T.astype(np.float32)" in renderer
     assert "constants[60:64]" in renderer
     assert "constants[72:76]" in renderer
+    assert "constants[124:128]" in renderer
     assert "_draw_controller_models(overlay_viewer, background_view_mat, background_proj_mat, color_srv)" in renderer
     assert "_draw_lasers(overlay_viewer, background_view_mat, background_proj_mat)" in renderer
     assert "_controller_indices_for_topology" in renderer
     assert "D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP" in renderer
     assert "D3D11_PRIMITIVE_TOPOLOGY_LINESTRIP" in renderer
-    assert "'vertices': vertices" in (SRC / "xr_viewer" / "controller_models.py").read_text(encoding="utf-8")
-    assert "'indices': pd['indices']" in (SRC / "xr_viewer" / "controller_models.py").read_text(encoding="utf-8")
+    controller_models = (SRC / "xr_viewer" / "controller_models.py").read_text(encoding="utf-8")
+    controller_materials = (SRC / "xr_viewer" / "controller_materials.py").read_text(encoding="utf-8")
+    controller_common = (SRC / "xr_viewer" / "controllers" / "common.json").read_text(encoding="utf-8")
+    assert "'vertices': vertices" in controller_models
+    assert "'indices': pd['indices']" in controller_models
+    assert "'material': prepare_controller_material" in controller_models
+    assert "collect_controller_texture_requests(prims_data)" in controller_models
+    assert '"useEnvironmentPbr": true' in controller_common
+    assert '"metallicRoughnessTexture": true' in controller_common
+    assert '"emissiveTexture": true' in controller_common
+    assert '"diagnostics": {' in controller_common
+    assert '"materialMode":' in controller_common
+    assert '"normal_texcoord"' in controller_materials
+    assert '"mr_texcoord"' in controller_materials
     assert "overlay_viewer=viewer" in presenter
     assert "def update_panorama_background(self, path):" in renderer
     render_block = renderer[
@@ -3518,7 +3607,7 @@ def test_d3d11_projection_path_uses_native_renderer():
     assert laser_block.count("self._context_call(16, None") == 1
     assert "_set_blend_disabled()" in laser_block
     assert "_set_blend_disabled()" in render_block
-    assert "(ctypes.c_void_p * 3)" in render_block
+    assert "(ctypes.c_void_p * 7)" in render_block
     assert "self._draw_background(background_view_mat, background_proj_mat)" in render_block
     assert "self._draw_background()" not in render_block
     assert "openxr_projection_d3d11_no_interop_skip" in presenter

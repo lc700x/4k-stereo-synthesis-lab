@@ -5,6 +5,11 @@ import time
 
 import numpy as np
 
+from .controller_materials import (
+    collect_controller_texture_requests,
+    load_controller_common_config,
+    prepare_controller_material,
+)
 from .gltf_loader import (
     apply_gltf_sampler_to_texture,
     gltf_primitive_mode_to_moderngl,
@@ -41,16 +46,13 @@ class ControllerModelsMixin:
                 print(f"[OpenXRViewer] Failed to read {profile_path}: {e}")
 
         _dir_key = brand_name
+        common_config = load_controller_common_config(self._controllers_root)
 
         def _create_prims(glb_path, target_list):
             prims_data, textures, _lights = load_glb_model(glb_path)
             _file_stem = os.path.splitext(os.path.basename(glb_path))[0]
             _prefix = f"{_dir_key}/{_file_stem}"
-            sampler_requests = set()
-            for pd in prims_data:
-                tid = int(pd.get('tex_id', -1))
-                if tid >= 0:
-                    sampler_requests.add((tid, normalize_gltf_sampler(pd.get('base_sampler'))))
+            sampler_requests = collect_controller_texture_requests(prims_data)
             for tid, sampler in sampler_requests:
                 if tid < len(textures) and textures[tid] is not None:
                     cache_key = gltf_texture_cache_key(_prefix, tid, sampler)
@@ -63,23 +65,29 @@ class ControllerModelsMixin:
                         result['tex_cache'][cache_key] = mtex
             for pd in prims_data:
                 vertices = pd['vertices']
-                if getattr(vertices, 'ndim', 0) == 2 and vertices.shape[1] > 8:
-                    vertices = vertices[:, :8].astype(np.float32, copy=False)
+                if getattr(vertices, 'ndim', 0) == 2 and vertices.shape[1] < 10:
+                    vertices = np.hstack([vertices[:, :8], vertices[:, 6:8]]).astype(np.float32, copy=False)
                 vbo = self.ctx.buffer(vertices.tobytes())
+                tangent = pd.get('tangent')
+                if not isinstance(tangent, np.ndarray) or tangent.shape[0] != vertices.shape[0]:
+                    tangent = np.tile(np.array([1.0, 0.0, 0.0, 1.0], dtype=np.float32), (vertices.shape[0], 1))
+                tan_vbo = self.ctx.buffer(tangent.astype(np.float32, copy=False).tobytes())
                 ibo = self.ctx.buffer(pd['indices'].tobytes())
                 vao = self.ctx.vertex_array(
                     self._controller_prog,
-                    [(vbo, '3f 3f 2f', 'in_position', 'in_normal', 'in_uv')],
+                    [(vbo, '3f 3f 2f 2f', 'in_position', 'in_normal', 'in_uv', 'in_uv1'),
+                     (tan_vbo, '4f', 'in_tangent')],
                     ibo,
                 )
                 target_list.append({
-                    'vao': vao, 'vbo': vbo, 'ibo': ibo,
+                    'vao': vao, 'vbo': vbo, 'tan_vbo': tan_vbo, 'ibo': ibo,
                     'vertices': vertices,
                     'indices': pd['indices'],
                     'tex_key': (
                         gltf_texture_cache_key(_prefix, pd['tex_id'], pd.get('base_sampler'))
                         if pd['tex_id'] >= 0 else None
                     ),
+                    'material': prepare_controller_material(pd, _prefix, common_config),
                     'base_color': pd.get('base_color', np.array([1.0, 1.0, 1.0], dtype=np.float32)),
                     'base_texcoord': pd.get('base_texcoord', 0),
                     'roughness_factor': pd.get('roughness_factor', 1.0),

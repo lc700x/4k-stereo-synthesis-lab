@@ -10,7 +10,15 @@ import numpy as np
 from OpenGL.GL import GL_CCW, GL_CW, glFrontFace
 
 from .gl_state import set_depth_mask
+from .controller_lighting import CONTROLLER_HEAD_LIGHT_COLOR, CONTROLLER_TOP_LIGHT_INTENSITY
 from .laser_params import LASER_BASE_HALF_WIDTH_M, LASER_MAX_LENGTH_M
+
+
+def _set_optional_uniform(program, name, value):
+    if name in program:
+        program[name].value = value
+        return True
+    return False
 
 
 class CoreLaserRenderMixin:
@@ -413,7 +421,10 @@ class CoreLaserRenderMixin:
         material_diag = os.environ.get("D2S_OPENXR_CONTROLLER_MATERIAL_DIAG", "").strip().lower() or config_material_diag
         diag_opaque_unlit = material_diag in ("1", "true", "unlit", "opaque_unlit")
         cam_pos = eye_pos.astype(np.float32)
-        self._controller_prog['u_light_color'].value = tuple(getattr(self, '_env_head_light_color', (0.24, 0.24, 0.26)))
+        self._controller_prog['u_light_color'].value = tuple(getattr(self, '_env_head_light_color', CONTROLLER_HEAD_LIGHT_COLOR))
+        if not _set_optional_uniform(self._controller_prog, 'u_top_light_intensity', CONTROLLER_TOP_LIGHT_INTENSITY) and not getattr(self, '_controller_top_light_uniform_missing_logged', False):
+            self._controller_top_light_uniform_missing_logged = True
+            print("[OpenXRViewer] controller shader uniform missing: u_top_light_intensity")
         self._controller_prog['u_ambient_color'].value = tuple(getattr(self, '_env_ambient_color', (0.14, 0.13, 0.15)))
         self._controller_prog['u_env_exposure'].value = float(getattr(self, '_env_exposure', 1.12) or 1.12)
         self._controller_prog['u_env_gamma'].value = float(getattr(self, '_env_gamma', 2.2) or 2.2)

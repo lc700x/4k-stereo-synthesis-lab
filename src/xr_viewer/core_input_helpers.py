@@ -221,7 +221,7 @@ class CoreInputHelpersMixin:
         cur_shifted = bool(sh[0] or sh[1] or self._caps_lock)
         if cur_shifted != self._kb_show_shifted:
             self._kb_show_shifted = cur_shifted
-            self._build_keyboard_texture()
+            self._refresh_or_upload_keyboard_content()
 
     def _accum_scroll(self, x_axis, y_axis, dt):
         """Accumulate thumbstick deflection into accelerated mouse wheel events."""

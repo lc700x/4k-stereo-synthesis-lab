@@ -131,7 +131,7 @@ from .core_d3d_interop import CoreD3DInteropMixin
 from .core_frame_upload import CoreFrameUploadMixin
 from .core_keyboard import CoreKeyboardMixin
 from .core_input_helpers import CoreInputHelpersMixin
-from .core_laser_render import CoreLaserRenderMixin
+from .core_laser_render import CoreLaserRenderMixin, _set_optional_uniform
 from .core_overlay_panels import CoreOverlayPanelsMixin
 from .core_runtime_eye import CoreRuntimeEyeMixin
 from .core_screen_control import CoreScreenControlMixin
@@ -145,6 +145,7 @@ from .core_openxr_opengl import CoreOpenXROpenGLMixin
 from .core_source_state import CoreSourceStateMixin
 from .core_window_input import CoreWindowInputMixin
 from .core_environment_hooks import CoreEnvironmentHooksMixin
+from .controller_lighting import CONTROLLER_HEAD_LIGHT_COLOR, CONTROLLER_TOP_LIGHT_INTENSITY
 from .background_presenter import BackgroundPresenter
 from .openxr_frame_pipeline import OpenXRFramePipeline
 from .overlay_layer_presenter import OverlayLayerPresenter
@@ -416,7 +417,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         # Viewer-side room lighting.  glTF emissive surfaces do not light other
         # surfaces, so XR uses a small fixed light rig unless the GLB provides
         # KHR_lights_punctual lights.
-        self._env_head_light_color = tuple(kwargs.get('env_head_light_color', (0.24, 0.24, 0.26)))
+        self._env_head_light_color = tuple(kwargs.get('env_head_light_color', CONTROLLER_HEAD_LIGHT_COLOR))
         self._env_ambient_color = tuple(kwargs.get('env_ambient_color', (0.14, 0.13, 0.15)))
         self._env_fallback_dir = np.array(kwargs.get('env_directional_dir', (0.25, -0.82, -0.52)), dtype=np.float32)
         self._env_fallback_dir = self._env_fallback_dir / (np.linalg.norm(self._env_fallback_dir) + 1e-8)
@@ -724,8 +725,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
 
         # Virtual keyboard
         self._keyboard_visible     = False
-        self._keyboard_tex         = None  # moderngl Texture (RGBA, _KB_TEX_W x _KB_TEX_H)
-        self._keyboard_vao         = None  # quad VAO using _overlay_prog
+        self._overlay_quads_handle_2d_panels = True
         self._keyboard_keys        = []    # list of _KeyEntry
         self._keyboard_width       = 1.6   # metres
         self._keyboard_height      = 0.33  # metres (6 rows)
@@ -1499,6 +1499,8 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._controller_prog['u_screen_light_intensity'].value = 0.0
         self._controller_prog['u_env_exposure'].value = 1.0
         self._controller_prog['u_env_gamma'].value = 2.2
+        if not _set_optional_uniform(self._controller_prog, 'u_top_light_intensity', CONTROLLER_TOP_LIGHT_INTENSITY):
+            print("[OpenXRViewer] controller shader uniform missing: u_top_light_intensity")
         self._controller_prog['u_emissive_strength'].value = 1.0
         self._controller_prog['u_shading_mode'].value = 0
         self._controller_prog['u_foliage_mode'].value = 0
@@ -3669,11 +3671,9 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         if hasattr(self, '_flush_runtime_settings_if_idle'):
             self._flush_runtime_settings_if_idle()
 
-        # Rebuild keyboard geometry if width changed
-        if (self._keyboard_visible and self._keyboard_tex is not None
-                and abs(self._keyboard_width - self._kb_last_build_width) > 0.001):
+        # Refresh shared keyboard content if width changed.
+        if (self._keyboard_visible and abs(self._keyboard_width - self._kb_last_build_width) > 0.001):
             self._sync_keyboard_size_from_width()
-            self._build_keyboard_texture()
             if not (grip_l or grip_r):
                 self._anchor_keyboard_below_screen()
 
@@ -3803,7 +3803,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
                 else:
                     self._keyboard_visible = not self._keyboard_visible
                     if self._keyboard_visible:
-                        if self._keyboard_tex is None:
+                        if not getattr(self, "_keyboard_keys", None):
                             self._init_keyboard()
                         self._anchor_keyboard_below_screen()
         elif not x_now:

@@ -2,6 +2,7 @@ import time
 
 from .projection_layer_presenter import ProjectionLayerPresenter
 from .screen_layer_presenter import ScreenLayerPresenter
+from .overlay_quad_presenter import QuadOverlayPresenter
 from .view_pose_tracker import ViewPoseTracker
 
 
@@ -12,6 +13,7 @@ class OpenXRFrameRenderer:
         self.screen_presenter = ScreenLayerPresenter(viewer)
         viewer._screen_layer_presenter = self.screen_presenter
         self.projection_presenter = ProjectionLayerPresenter(viewer)
+        self.overlay_quad_presenter = QuadOverlayPresenter(viewer)
 
     def render_frame(self, *, composition_layers, display_time, default_fov, default_proj, default_proj_d3d):
         viewer = self.viewer
@@ -37,6 +39,10 @@ class OpenXRFrameRenderer:
             print(f"[OpenXRViewer] Projection layer render failed: {type(exc).__name__}: {exc}")
             viewer._breakdown_inc('openxr_projection_render_failed')
             eye_layer_views = []
+        if eye_layer_views:
+            overlay_quad_headers = self.overlay_quad_presenter.prepare_layers()
+            if overlay_quad_headers:
+                quad_layer_headers = tuple(quad_layer_headers) + tuple(overlay_quad_headers)
         self.screen_presenter.append_frame_layers(
             composition_layers,
             projection_views=eye_layer_views,

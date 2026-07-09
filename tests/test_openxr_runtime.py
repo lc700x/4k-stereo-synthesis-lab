@@ -68,6 +68,67 @@ def test_controller_render_debug_logs_once_as_debug():
     assert "self._controller_prog['u_unlit'].value = 1 if diag_opaque_unlit" in render_func
 
 
+def test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path():
+    frame_renderer = (SRC / "xr_viewer" / "openxr_frame_renderer.py").read_text(encoding="utf-8")
+    overlay_quad = (SRC / "xr_viewer" / "overlay_quad_presenter.py").read_text(encoding="utf-8")
+    core_keyboard = (SRC / "xr_viewer" / "core_keyboard.py").read_text(encoding="utf-8")
+    overlay_textures = (SRC / "xr_viewer" / "overlay_textures.py").read_text(encoding="utf-8")
+
+    assert "QuadOverlayPresenter" in frame_renderer
+    assert "self.overlay_quad_presenter.prepare_layers()" in frame_renderer
+    assert "if eye_layer_views:" in frame_renderer
+    assert "class QuadOverlayPresenter" in overlay_quad
+    assert "D3D11OverlayQuadPresenter" not in overlay_quad
+    assert "OverlayQuadPresenter =" not in overlay_quad
+    assert '"keyboard"' in overlay_quad
+    assert '"osd"' in overlay_quad
+    assert '"hand_fps"' in overlay_quad
+    assert '"hand_help"' in overlay_quad
+    assert '"team_status"' in overlay_quad
+    assert '"team_help"' in overlay_quad
+    assert "viewer._overlay_quad_presented_keys = set()" in overlay_quad
+    assert 'viewer._overlay_quad_presented_keys.add(spec["key"])' in overlay_quad
+    assert "xr.EyeVisibility.BOTH" in overlay_quad
+    assert "_update_subresource(" in overlay_quad
+    assert "image.texture" in overlay_quad
+    assert "glTexSubImage2D(" in overlay_quad
+    assert "not getattr(viewer, \"_use_d3d11\", False)" not in overlay_quad
+    assert "xr is None" in overlay_quad
+    assert "_quad_swapchains" not in overlay_quad
+    assert "build_fps_overlay_rgba" in overlay_quad
+    assert "build_help_rgba" in overlay_quad
+    assert "build_team_help_rgba" in overlay_quad
+    assert "build_team_status_rgba" in overlay_quad
+    assert "from .overlay_textures import build_keyboard_rgba" in core_keyboard
+    assert "build_keyboard_rgba(" in core_keyboard
+    assert "def _refresh_keyboard_content" in core_keyboard
+    assert "def _init_keyboard(self)" in core_keyboard
+    assert "def _build_keyboard_texture" not in core_keyboard
+    assert "def _render_keyboard" not in core_keyboard
+    assert "_keyboard_tex" not in core_keyboard
+    assert "np.flipud(spec" not in overlay_quad
+    assert "rgba = spec[\"rgba\"]" in overlay_quad
+    assert "np.flipud" not in overlay_textures
+    assert "init_keyboard()" in overlay_quad
+    assert "build_texture" not in overlay_quad
+    assert "ImageDraw" not in overlay_quad
+    assert "_KB_ROWS" not in overlay_quad
+    assert "def build_keyboard_rgba" in overlay_textures
+    assert "def build_short_osd_rgba" in overlay_textures
+    assert "def build_fps_overlay_rgba" in overlay_textures
+    assert "def build_team_status_rgba" in overlay_textures
+    assert "def build_help_rgba" in overlay_textures
+    assert "def build_team_help_rgba" in overlay_textures
+    projection_overlay = (SRC / "xr_viewer" / "overlay_layer_presenter.py").read_text(encoding="utf-8")
+    assert "_overlay_quads_handle_2d_panels" in projection_overlay
+    assert "quad_keys" not in projection_overlay
+    assert "viewer._render_keyboard" not in projection_overlay
+    assert "not quad_handles_2d and viewer._hand_fps_visible" in projection_overlay
+    assert "not quad_handles_2d and viewer._team_fps_visible" in projection_overlay
+    assert "not quad_handles_2d and viewer._fps_overlay_visible" in projection_overlay
+    assert "not quad_handles_2d and viewer._team_status_visible" in projection_overlay
+
+
 def test_controller_material_preserves_gltf_double_sided_without_override():
     from xr_viewer.controller_materials import prepare_controller_material
 
@@ -111,6 +172,30 @@ def test_controller_lighting_ignores_environment_profile_lights():
     assert "_env_fill_lights" not in d3d_block
     assert "u_light_intensity'].value = (0.0, 0.0, 0.0)" in gl_block
     assert "dir_color = np.zeros(3, dtype=np.float32)" in d3d_block
+
+
+def test_controller_top_light_intensity_is_shared_between_opengl_and_d3d11():
+    from xr_viewer.controller_lighting import CONTROLLER_HEAD_LIGHT_COLOR, CONTROLLER_TOP_LIGHT_INTENSITY
+
+    glsl = (SRC / "xr_viewer" / "glsl.py").read_text(encoding="utf-8")
+    core_laser = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
+
+    assert CONTROLLER_HEAD_LIGHT_COLOR == (0.55, 0.55, 0.58)
+    assert CONTROLLER_TOP_LIGHT_INTENSITY == 0.55
+    assert "uniform float u_top_light_intensity;" in glsl
+    assert "u_top_light_intensity * top_fill" in glsl
+    assert "CONTROLLER_TOP_LIGHT_INTENSITY" in core_laser
+    assert "def _set_optional_uniform" in core_laser
+    assert "_set_optional_uniform(self._controller_prog, 'u_top_light_intensity', CONTROLLER_TOP_LIGHT_INTENSITY)" in core_laser
+    assert "_set_optional_uniform(self._controller_prog, 'u_top_light_intensity', CONTROLLER_TOP_LIGHT_INTENSITY)" in implementation
+    assert "self._controller_prog['u_top_light_intensity']" not in core_laser
+    assert "self._controller_prog['u_top_light_intensity']" not in implementation
+    assert "controller shader uniform missing: u_top_light_intensity" in core_laser
+    assert "CONTROLLER_TOP_LIGHT_INTENSITY" in renderer
+    assert "CONTROLLER_HEAD_LIGHT_COLOR" in implementation
+    assert "lightColor.rgb * lightColor.w" in renderer
 
 
 def test_frame_size_from_eye_uses_height_width_shape_for_array_like():
@@ -2311,7 +2396,6 @@ def test_quad_layer_keeps_projection_scene_layer(monkeypatch):
     viewer._env_model_visible = False
     viewer._env_model_prims = []
     viewer._keyboard_visible = False
-    viewer._keyboard_tex = None
     viewer._aim_mat_l = None
     viewer._aim_mat_r = None
     viewer._grip_mat_l = None
@@ -3855,7 +3939,6 @@ def test_screen_layer_presenter_does_not_build_quad_layers_for_main_screen(monke
     viewer._quad_layer_screen_presentable = lambda: not viewer.render_projection_layer
     viewer._background_presenter = SimpleNamespace(projection_fallback_needed=lambda: False)
     viewer._keyboard_visible = False
-    viewer._keyboard_tex = None
     viewer._aim_mat_l = None
     viewer._aim_mat_r = None
     viewer._grip_mat_l = None
@@ -3968,7 +4051,6 @@ def test_screen_layer_presenter_quad_failure_produces_no_screen_layer():
         native_background_available=lambda **_kwargs: False,
     )
     viewer._keyboard_visible = False
-    viewer._keyboard_tex = None
     viewer._aim_mat_l = None
     viewer._aim_mat_r = None
     viewer._grip_mat_l = None

@@ -254,8 +254,6 @@ class ScreenLayerPresenter:
                 print(f"[OpenXRViewer] Background projection gate failed: {type(exc).__name__}: {exc}")
                 viewer._breakdown_inc('openxr_background_layer_failed')
                 return "background_gate_failed"
-        if viewer._keyboard_visible and viewer._keyboard_tex is not None:
-            return "keyboard"
         if viewer._aim_mat_l is not None or viewer._aim_mat_r is not None:
             return "controller_aim"
         if viewer._grip_mat_l is not None or viewer._grip_mat_r is not None:

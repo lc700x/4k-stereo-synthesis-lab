@@ -442,6 +442,7 @@ uniform int u_env_eye_index;
 uniform int u_screen_light_enabled;
 uniform float u_env_intensity;
 uniform float u_screen_light_intensity;
+uniform float u_top_light_intensity;
 uniform vec3 u_camera_pos;     // Camera world coordinates (= headset position)
 uniform vec3 u_screen_light_pos;
 uniform vec3 u_screen_light_normal;
@@ -490,7 +491,7 @@ void main() {
     vec3 top_light_dir = normalize(top_light_pos - v_position);
     float top_facing = max(dot(N, top_light_dir), 0.0);
     float top_fill = pow(top_facing, 1.25) * smoothstep(-0.20, 0.65, dot(N, V));
-    color += baseColor * vec3(0.95, 0.97, 1.0) * (0.40 * top_fill);
+    color += baseColor * vec3(0.95, 0.97, 1.0) * (u_top_light_intensity * top_fill);
 
     if (u_screen_light_enabled == 1) {
         vec3 screen_tint = (

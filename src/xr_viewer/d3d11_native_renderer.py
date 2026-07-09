@@ -6,6 +6,7 @@ import numpy as np
 from PIL import Image
 
 from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_operation, warn_cpu_transfer
+from .controller_lighting import CONTROLLER_HEAD_LIGHT_COLOR, CONTROLLER_TOP_LIGHT_INTENSITY
 from .laser_params import LASER_BASE_HALF_WIDTH_M, LASER_MAX_LENGTH_M, LASER_TIP_HALF_WIDTH_M
 
 
@@ -813,7 +814,7 @@ float4 ps_main(VSOut input, bool isFrontFace : SV_IsFrontFace) : SV_TARGET
     float3 color = baseColor * ambientColor.rgb;
     float3 topLightPos = cameraPosUseEnv.xyz + float3(0.0, 0.45, -0.18);
     float3 topLightDir = normalize(topLightPos - input.worldPos);
-    color += pbrLight(n, v, baseColor, metal, rough, topLightDir, lightColor.rgb, 1.0);
+    color += pbrLight(n, v, baseColor, metal, rough, topLightDir, lightColor.rgb * lightColor.w, 1.0);
     color += pbrLight(n, v, baseColor, metal, rough, -normalize(directionalLight.xyz), directionalColor.rgb, 1.0);
     float3 fill0 = fillLightPosRange0.xyz - input.worldPos;
     color += pbrLight(n, v, baseColor, metal, rough, normalize(fill0), fillLightColor0.rgb, 1.0 / (1.0 + dot(fill0, fill0) / max(fillLightPosRange0.w * fillLightPosRange0.w, 0.001)));
@@ -1895,7 +1896,7 @@ class D3D11NativeRenderer:
             screen_light_srv = None
         elif not controller_hdr:
             screen_light_srv = None
-        head_light = np.asarray(getattr(viewer, "_env_head_light_color", (0.24, 0.24, 0.26)), dtype=np.float32)
+        head_light = np.asarray(getattr(viewer, "_env_head_light_color", CONTROLLER_HEAD_LIGHT_COLOR), dtype=np.float32)
         ambient = np.asarray(getattr(viewer, "_env_ambient_color", (0.14, 0.13, 0.15)), dtype=np.float32)
         dir_vec = np.asarray(getattr(viewer, "_env_fallback_dir", (0.25, -0.82, -0.52)), dtype=np.float32)
         dir_vec = dir_vec / (np.linalg.norm(dir_vec) + 1e-8)
@@ -2032,7 +2033,12 @@ class D3D11NativeRenderer:
                     0.0 if diag_opaque_unlit else 1.0 if mr_srv is not None else 0.0,
                     0.0 if diag_opaque_unlit else 1.0 if emissive_srv is not None else 0.0,
                 )
-                constants[96:100] = (float(head_light[0]), float(head_light[1]), float(head_light[2]), 0.0)
+                constants[96:100] = (
+                    float(head_light[0]),
+                    float(head_light[1]),
+                    float(head_light[2]),
+                    CONTROLLER_TOP_LIGHT_INTENSITY,
+                )
                 constants[100:104] = (float(ambient[0]), float(ambient[1]), float(ambient[2]), 0.0)
                 constants[104:108] = (float(dir_vec[0]), float(dir_vec[1]), float(dir_vec[2]), 0.0)
                 constants[108:112] = (float(dir_color[0]), float(dir_color[1]), float(dir_color[2]), 0.0)

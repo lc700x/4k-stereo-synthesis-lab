@@ -40,7 +40,6 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     viewer._keyboard_visible = True
     viewer._keyboard_width = 1.0
     viewer._keyboard_height = 0.2
-    viewer._keyboard_tex = object()
     viewer._kb_last_build_width = 1.0
     viewer._screen_footprint_logged = set()
     viewer._border_alpha = 0.0
@@ -50,16 +49,16 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     viewer._preset_osd_last_key = (0, "Small  2.00 x 1.12 m")
     viewer._reset_orientation_offsets = lambda: None
     viewer._clear_screen_grab_anchors = lambda: None
-    viewer._build_keyboard_texture_called = False
+    viewer._refresh_keyboard_content_called = False
     viewer._anchor_keyboard_below_screen_called = False
 
-    def _build_keyboard_texture():
-        viewer._build_keyboard_texture_called = True
+    def _refresh_keyboard_content():
+        viewer._refresh_keyboard_content_called = True
 
     def _anchor_keyboard_below_screen():
         viewer._anchor_keyboard_below_screen_called = True
 
-    monkeypatch.setattr(viewer, "_build_keyboard_texture", _build_keyboard_texture)
+    monkeypatch.setattr(viewer, "_refresh_keyboard_content", _refresh_keyboard_content)
     monkeypatch.setattr(viewer, "_anchor_keyboard_below_screen", _anchor_keyboard_below_screen)
 
     assert viewer._apply_preset(1)
@@ -75,7 +74,7 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     assert viewer._preset_osd_last_key is None
     assert viewer._keyboard_width == 2.0
     assert viewer._keyboard_height > 0.0
-    assert viewer._build_keyboard_texture_called
+    assert viewer._refresh_keyboard_content_called
     assert viewer._anchor_keyboard_below_screen_called
 
     viewer._head_pos_w = np.array([0.0, 1.0, -2.0], dtype=np.float32)
@@ -210,8 +209,8 @@ def test_laser_hit_circles_render_without_depth_test_like_keyboard_cursor():
     draw_hit_circles = hit_circle_block.index("viewer._render_lasers(mgl_fbo, vp_mat, blend=True)")
     enable_blend = hit_circle_block.index("viewer.ctx.enable(moderngl.BLEND)")
     assert disable_depth < enable_blend < draw_hit_circles
-    assert "setattr(viewer.ctx, 'depth_mask', False)" in hit_circle_block
-    assert "viewer.ctx.depth_mask = True" in render_overlays
+    assert "set_depth_mask(False)" in hit_circle_block
+    assert "set_depth_mask(True)" in render_overlays
 
 
 def test_render_eye_delegates_projection_overlays_to_presenter():
@@ -222,6 +221,7 @@ def test_render_eye_delegates_projection_overlays_to_presenter():
     assert "OverlayLayerPresenter(self)" in render_eye
     assert "render_projection_overlays(" in render_eye
     assert "self._render_keyboard(mgl_fbo, vp_mat)" not in render_eye
+    assert "def _render_keyboard" not in (SRC / "xr_viewer" / "core_keyboard.py").read_text(encoding="utf-8")
     assert "self._render_lasers(mgl_fbo, vp_mat, blend=True)" not in render_eye
 
 
@@ -455,9 +455,8 @@ def test_openxr_startup_seed_frame_marks_fresh_only_after_renderable_source():
 
     assert "viewer._update_runtime_frame(first_runtime_result)" in startup_block
     assert "viewer._update_frame(first_rgb, first_depth)" in startup_block
-    renderable_block = startup_block.split("if viewer._has_renderable_source_frame():", 1)[1].split("viewer._mark_source_frame_received()", 1)[0]
-    assert "bridge.mark_presented(first_source_frame)" in renderable_block
-    assert "else:" not in startup_block
+    assert "bridge.latest_frame = first_source_frame" in startup_block
+    assert "bridge.mark_presented(first_source_frame)" not in startup_block
     assert startup_block.count("viewer._mark_source_frame_received()") == 1
 
 

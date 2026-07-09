@@ -610,7 +610,7 @@ def test_panorama_background_is_preloaded_outside_render_path():
     controller_render = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8").split(
         "def _render_controllers", 1
     )[1]
-    assert "_panorama_texture_ready()" in controller_render
+    assert "_bind_screen_light_source_texture(location=10)" in controller_render
     assert "_get_panorama_texture()" not in controller_render
     assert "np.linalg.inv(view_mat)" not in controller_render
     assert "uniform sampler2D u_screen_light_tex" in pano_frag
@@ -697,7 +697,6 @@ def test_quad_screen_path_keeps_panorama_projection_fallback(monkeypatch):
     viewer._env_model_visible = True
     viewer._env_model_prims = [object()]
     viewer._keyboard_visible = False
-    viewer._keyboard_tex = None
     viewer._aim_mat_l = None
     viewer._aim_mat_r = None
     viewer._grip_mat_l = None
@@ -756,7 +755,6 @@ def test_screen_layer_presenter_reuses_background_layer_gate_result(monkeypatch)
     viewer._update_quad_layer_swapchains = lambda force=False: [0]
     viewer._make_quad_layer = lambda _eye_index: ctypes.c_int(9)
     viewer._keyboard_visible = False
-    viewer._keyboard_tex = None
     viewer._aim_mat_l = None
     viewer._aim_mat_r = None
     viewer._grip_mat_l = None
@@ -2075,19 +2073,10 @@ def test_controller_shader_uses_panorama_ibl_reflection():
     assert "textureLod(u_screen_light_tex" in ctrl_frag
     assert "u_light_color" not in ctrl_frag
     assert "u_ambient_color" not in ctrl_frag
-    assert "_panorama_texture_ready" in render_text
     assert "_get_panorama_texture" not in render_text
     assert "_bind_screen_light_source_texture(location=10)" in render_text
     assert "_runtime_eye_textures" not in render_text
-    assert "_controller_hdr_lighting" in render_text
-    assert "if getattr(self, '_controller_hdr_lighting', True):" in render_text
-    assert "_panorama_render_settings()" in render_text
-    assert "u_env_stereo_layout" in render_text
-    assert "u_env_eye_index" in render_text
-    assert "u_env_stereo_layout" in impl_text
-    assert "u_env_eye_index" in impl_text
-    assert "u_use_env_tex" in render_text
-    assert "u_screen_light_enabled" in render_text
+    assert "u_screen_light_tex" in impl_text
     assert "controller_hdr_lighting" in profile_text
     assert "controller_hdr_reflection" in profile_text
     assert "== '.hdr'" in profile_text

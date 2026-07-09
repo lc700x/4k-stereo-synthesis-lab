@@ -179,12 +179,16 @@ Implemented locally in the current worktree:
 - Documented the GLB CPU/GPU boundary: glTF/GLB parse, image decode, and first texture upload use CPU-side work, while per-frame controller rendering samples already-created GPU textures.
 - Added a separate shared overlay Quad presenter for virtual keyboard and short OSD panels. It owns independent overlay Quad swapchains, uploads small RGBA UI textures only when their content changes, appends the Quad layers after the Projection main screen, and does not re-enable Quad as the main stereo screen path. OpenGL uploads into OpenXR GL swapchain textures; D3D11 uploads into D3D11 swapchain textures.
 - Moved the virtual keyboard texture and short OSD RGBA generation into shared `overlay_textures.py`. OpenGL keeps the previously validated keyboard layout/render semantics and D3D11 consumes the same RGBA/key-rect builder; backend-specific code only performs API upload and Quad layer submit. Future keyboard/OSD functional changes must land in the shared builder first, not in backend-specific duplicate drawing code.
+- Reverted the always-on foreground Projection layer experiment. Controller models, laser beams, and the screen hit circle are rendered again in the main Projection path; virtual keyboard, short OSD/FPS/help panels remain Quad overlays.
+- Added an independent keyboard cursor Quad overlay. The keyboard panel texture still handles key hover/held highlighting through the shared builder, but the cursor ring uses a small static RGBA texture and only changes Quad pose/size. It is submitted only while the matching controller still has a keyboard hover target, so it disappears when the laser leaves the keyboard.
 
 Verification run during this pass:
 
 ```powershell
 .\src\python3\python.exe -m py_compile src\xr_viewer\controller_materials.py src\xr_viewer\controller_models.py src\xr_viewer\core_laser_render.py src\xr_viewer\d3d11_native_renderer.py src\xr_viewer\environment_renderer.py src\xr_viewer\glsl.py src\xr_viewer\implementation.py src\xr_viewer\overlay_textures.py src\xr_viewer\overlay_quad_presenter.py src\xr_viewer\openxr_frame_renderer.py tests\test_openxr_runtime.py
 .\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_controller_material_preserves_gltf_double_sided_without_override tests\test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests\test_openxr_runtime.py::test_controller_render_debug_logs_once_as_debug tests\test_openxr_runtime.py::test_laser_width_is_shared_between_opengl_and_d3d11 tests\test_openxr_runtime.py::test_controller_lighting_ignores_environment_profile_lights tests\test_openxr_runtime.py::test_d3d11_fallback_uses_unorm_intermediate_color_texture tests\test_openxr_runtime.py::test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\core_keyboard.py src\xr_viewer\overlay_quad_presenter.py src\xr_viewer\overlay_textures.py src\xr_viewer\d3d11_native_renderer.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py tests\test_keyboard_screen_preset.py
 ```
 
 Result:
@@ -193,6 +197,7 @@ Result:
 py_compile passed
 Targeted OpenXR controller/D3D11 tests passed
 HLSL compile probes passed: controller_hlsl_ok, laser_hlsl_ok, projection_hlsl_ok
+OpenXR keyboard/Quad overlay regression tests passed: 149 passed
 User real-device visual check: D3D11 HP and Index controller textures no longer appear transparent
 ```
 

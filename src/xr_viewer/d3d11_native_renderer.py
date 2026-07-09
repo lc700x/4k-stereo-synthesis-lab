@@ -1,4 +1,5 @@
 import ctypes
+import math
 import os
 import sys
 
@@ -7,7 +8,7 @@ from PIL import Image
 
 from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_operation, warn_cpu_transfer
 from .controller_lighting import CONTROLLER_HEAD_LIGHT_COLOR, CONTROLLER_TOP_LIGHT_INTENSITY
-from .laser_params import LASER_BASE_HALF_WIDTH_M, LASER_MAX_LENGTH_M, LASER_TIP_HALF_WIDTH_M
+from .laser_params import CURSOR_RING_INNER_RATIO, LASER_BASE_HALF_WIDTH_M, LASER_MAX_LENGTH_M, LASER_TIP_HALF_WIDTH_M
 
 
 DXGI_FORMAT_R32G32_FLOAT = 16
@@ -886,6 +887,7 @@ cbuffer LaserParams : register(b0)
     float4 mvpRow2;
     float4 mvpRow3;
     float4 laserParams;
+    float4 laserColor;
 };
 
 struct VSIn {
@@ -909,6 +911,9 @@ VSOut vs_main(VSIn input)
 
 float4 ps_main(VSOut input) : SV_TARGET
 {
+    if (laserParams.y > 0.5) {
+        return laserColor;
+    }
     float t = frac(input.beamV - laserParams.x * 0.4);
     float3 col;
     if (t < 0.167)      col = lerp(float3(0.0,0.4,1.0), float3(0.0,1.0,1.0), t/0.167);
@@ -1178,7 +1183,30 @@ class D3D11NativeRenderer:
         finally:
             _release(vs_blob)
             _release(ps_blob)
-        self.laser_constant_buffer = self._create_buffer(np.zeros(20, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
+        self.laser_constant_buffer = self._create_buffer(np.zeros(24, dtype=np.float32), D3D11_BIND_CONSTANT_BUFFER)
+        self._init_laser_hit_circle_buffers()
+
+    def _init_laser_hit_circle_buffers(self):
+        segs = 40
+        ring = []
+        disk = []
+        for i in range(segs):
+            a0 = (i / segs) * math.tau
+            a1 = ((i + 1) / segs) * math.tau
+            outer0 = (math.cos(a0), math.sin(a0))
+            outer1 = (math.cos(a1), math.sin(a1))
+            inner0 = (outer0[0] * CURSOR_RING_INNER_RATIO, outer0[1] * CURSOR_RING_INNER_RATIO)
+            inner1 = (outer1[0] * CURSOR_RING_INNER_RATIO, outer1[1] * CURSOR_RING_INNER_RATIO)
+            for x, y in (outer0, inner0, outer1, outer1, inner0, inner1):
+                ring.extend([x, y, 0.0, 0.0])
+            for x, y in ((0.0, 0.0), outer0, outer1):
+                disk.extend([x, y, 0.0, 0.0])
+        ring_data = np.asarray(ring, dtype=np.float32)
+        disk_data = np.asarray(disk, dtype=np.float32)
+        self.laser_hit_ring_vertex_buffer = self._create_buffer(ring_data, D3D11_BIND_VERTEX_BUFFER)
+        self.laser_hit_disk_vertex_buffer = self._create_buffer(disk_data, D3D11_BIND_VERTEX_BUFFER)
+        self.laser_hit_ring_vertex_count = int(ring_data.size // 4)
+        self.laser_hit_disk_vertex_count = int(disk_data.size // 4)
 
     def _init_depth_states(self):
         keep = D3D11DepthStencilOpDesc(
@@ -2114,7 +2142,7 @@ class D3D11NativeRenderer:
         try:
             self._set_blend_disabled()
             mvp = (np.asarray(proj_mat, dtype=np.float32) @ np.asarray(view_mat, dtype=np.float32)).astype(np.float32)
-            constants = np.zeros(20, dtype=np.float32)
+            constants = np.zeros(24, dtype=np.float32)
             constants[:16] = mvp.reshape(16)
             constants[16] = float(getattr(viewer, "_frame_now", 0.0) or 0.0)
             self._update_subresource(self.laser_constant_buffer, constants.ctypes.data, constants.nbytes)
@@ -2135,6 +2163,59 @@ class D3D11NativeRenderer:
             self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), data.size // 4, 0)
         finally:
             _release(vb)
+
+    def _draw_laser_hit_circles(self, viewer, view_mat, proj_mat):
+        if viewer is None or view_mat is None or proj_mat is None or not hasattr(viewer, "_laser_hit_circle_draws"):
+            return
+        old_view = getattr(viewer, "_current_view_mat", None)
+        try:
+            if getattr(viewer, "_beams_frame", -1) != getattr(viewer, "_frame_count", 0):
+                viewer._cached_beams = viewer._laser_beam_setup()
+                viewer._beams_frame = getattr(viewer, "_frame_count", 0)
+            beams = getattr(viewer, "_cached_beams", None) or []
+            viewer._current_view_mat = np.asarray(view_mat, dtype=np.float32)
+            draws = viewer._laser_hit_circle_draws(beams)
+        except Exception as exc:
+            if not getattr(self, "_d3d11_hit_circle_error_logged", False):
+                self._d3d11_hit_circle_error_logged = True
+                print(f"[OpenXRViewer] D3D11 laser hit circle failed: {type(exc).__name__}: {exc}", flush=True)
+            return
+        finally:
+            viewer._current_view_mat = old_view
+        if not draws:
+            return
+        view_np = np.asarray(view_mat, dtype=np.float32)
+        eye_pos = (-(view_np[:3, :3].T @ view_np[:3, 3])).astype(np.float32)
+        vp = (np.asarray(proj_mat, dtype=np.float32) @ view_np).astype(np.float32)
+        self._set_blend_alpha()
+        self._set_depth_enabled(False)
+        self._context_call(17, None, ctypes.c_void_p)(_ptr_value(self.context), _ptr_value(self.laser_input_layout))
+        self._context_call(11, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.laser_vertex_shader), None, 0)
+        self._context_call(9, None, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint)(_ptr_value(self.context), _ptr_value(self.laser_pixel_shader), None, 0)
+        cb_arr = (ctypes.c_void_p * 1)(_ptr_value(self.laser_constant_buffer))
+        self._context_call(7, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+        self._context_call(16, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p))(_ptr_value(self.context), 0, 1, cb_arr)
+        self._context_call(24, None, ctypes.c_uint)(_ptr_value(self.context), D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST)
+        for shape, model, color in draws:
+            m = np.asarray(model, dtype=np.float32).copy()
+            to_eye = eye_pos - m[:3, 3]
+            dist = float(np.linalg.norm(to_eye))
+            if dist > 1e-5:
+                m[:3, 3] += (to_eye / dist) * 0.01
+            constants = np.zeros(24, dtype=np.float32)
+            constants[:16] = (vp @ m).reshape(16)
+            constants[17] = 1.0
+            constants[20:24] = np.asarray(color, dtype=np.float32)
+            self._update_subresource(self.laser_constant_buffer, constants.ctypes.data, constants.nbytes)
+            stride = ctypes.c_uint(16)
+            offset = ctypes.c_uint(0)
+            vb = self.laser_hit_ring_vertex_buffer if shape == "ring" else self.laser_hit_disk_vertex_buffer
+            vertex_count = self.laser_hit_ring_vertex_count if shape == "ring" else self.laser_hit_disk_vertex_count
+            vb_arr = (ctypes.c_void_p * 1)(_ptr_value(vb))
+            self._context_call(18, None, ctypes.c_uint, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint), ctypes.POINTER(ctypes.c_uint))(
+                _ptr_value(self.context), 0, 1, vb_arr, ctypes.byref(stride), ctypes.byref(offset)
+            )
+            self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), vertex_count, 0)
 
     def _render_eye_with_srv(self, swapchain_texture, width, height, eye_index, color_srv, eye_offset, depth_strength, convergence, mvp, *, roll=0.0, depth_srv=None, background_view_mat=None, background_proj_mat=None, overlay_viewer=None):
         rtv = self._get_or_create_swapchain_rtv(swapchain_texture)
@@ -2183,6 +2264,7 @@ class D3D11NativeRenderer:
             self._context_call(13, None, ctypes.c_uint, ctypes.c_uint)(_ptr_value(self.context), 4, 0)
             self._draw_lasers(overlay_viewer, background_view_mat, background_proj_mat)
             self._draw_controller_models(overlay_viewer, background_view_mat, background_proj_mat, color_srv)
+            self._draw_laser_hit_circles(overlay_viewer, background_view_mat, background_proj_mat)
             removed_reason = self._device_removed_reason()
             if removed_reason not in (0, None):
                 raise RuntimeError(f"D3D11 device removed after Draw: removed_reason={_hr_hex(removed_reason)}")
@@ -2226,6 +2308,7 @@ class D3D11NativeRenderer:
             "background_pixel_shader", "background_vertex_shader", "background_srv", "background_tex", "background_constant_buffer",
             "controller_pixel_shader", "controller_vertex_shader", "controller_input_layout", "controller_constant_buffer",
             "laser_pixel_shader", "laser_vertex_shader", "laser_input_layout", "laser_constant_buffer",
+            "laser_hit_ring_vertex_buffer", "laser_hit_disk_vertex_buffer",
             "depth_stencil_state", "depth_read_state", "depth_disabled_state", "blend_state",
             "rasterizer", "constant_buffer", "vertex_buffer", "render_rtv", "render_tex",
         ):

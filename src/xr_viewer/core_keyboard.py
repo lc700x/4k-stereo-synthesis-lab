@@ -11,19 +11,25 @@ from .overlay_textures import build_keyboard_rgba
 class CoreKeyboardMixin:
     """Virtual keyboard layout texture, sizing, world transform, and rendering."""
 
-    def _refresh_keyboard_content(self):
+    def _refresh_keyboard_content(self, hover_indices=(), held_indices=()):
         """Refresh shared keyboard RGBA/key hit rects without assuming a renderer."""
+        hover_indices = tuple(i for i in hover_indices if i is not None)
+        held_indices = tuple(i for i in held_indices if i is not None)
         self._keyboard_rgba, self._keyboard_keys = build_keyboard_rgba(
             bool(self._kb_show_shifted),
             self._keyboard_width,
             self._keyboard_height,
             getattr(self, "font_type", None),
+            hover_indices=hover_indices,
+            held_indices=held_indices,
         )
         self._keyboard_content_key = (
             "keyboard",
             bool(self._kb_show_shifted),
             round(float(self._keyboard_width), 4),
             round(float(self._keyboard_height), 4),
+            hover_indices,
+            held_indices,
         )
         return self._keyboard_rgba
 

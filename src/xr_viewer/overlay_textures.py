@@ -4,6 +4,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 from .keyboard_layout import _KB_ROWS, _KB_TEX_H, _KB_TEX_W, _KB_UNITS_WIDE, _KeyEntry
+from .laser_params import CURSOR_RING_INNER_RATIO
 from viewer.controller_help import get_controller_help_rows
 
 
@@ -26,8 +27,11 @@ def load_overlay_font(size, font_type=None, *, prefer_cjk=False):
     return ImageFont.load_default()
 
 
-def build_keyboard_rgba(show_shifted, keyboard_width, keyboard_height, font_type=None):
-    """Build the validated OpenGL keyboard texture content for any renderer."""
+def build_keyboard_rgba(show_shifted, keyboard_width, keyboard_height, font_type=None, *, hover_indices=(), held_indices=(), hover_points=()):
+    """Build the validated keyboard texture content for any renderer."""
+    hover_indices = set(i for i in hover_indices if i is not None)
+    held_indices = set(i for i in held_indices if i is not None)
+    hover_points = tuple(p for p in hover_points if p is not None)
     tw, th = _KB_TEX_W, _KB_TEX_H
     row_h = th / len(_KB_ROWS)
     unit_w = tw / float(_KB_UNITS_WIDE)
@@ -59,10 +63,13 @@ def build_keyboard_rgba(show_shifted, keyboard_width, keyboard_height, font_type
                 lx = lx_end
                 continue
 
+            key_index = len(keys)
+            is_held = key_index in held_indices
+            is_hover = key_index in hover_indices
             draw.rectangle(
                 [px + pad, py0 + pad, px_end - pad, py1 - pad],
-                fill=(60, 62, 70, 255),
-                outline=(130, 132, 140, 255),
+                fill=(92, 122, 170, 255) if is_held else (72, 92, 125, 255) if is_hover else (60, 62, 70, 255),
+                outline=(245, 248, 255, 255) if is_held or is_hover else (130, 132, 140, 255),
             )
 
             display_label = shifted_label if show_shifted and shifted_label is not None else label
@@ -91,7 +98,29 @@ def build_keyboard_rgba(show_shifted, keyboard_width, keyboard_height, font_type
             px = px_end
             lx = lx_end
 
+    for lx, ly in hover_points:
+        cx = int((float(lx) + kw_half) / max(float(keyboard_width), 1e-6) * tw)
+        cy = int((kh_half - float(ly)) / max(float(keyboard_height), 1e-6) * th)
+        if 0 <= cx < tw and 0 <= cy < th:
+            r_outer = 11
+            r_inner = int(round(r_outer * CURSOR_RING_INNER_RATIO))
+            draw.ellipse([cx - r_outer, cy - r_outer, cx + r_outer, cy + r_outer], fill=(80, 180, 255, 235))
+            draw.ellipse([cx - r_inner, cy - r_inner, cx + r_inner, cy + r_inner], fill=(255, 255, 255, 220))
+
     return np.ascontiguousarray(np.asarray(img, dtype=np.uint8)), keys
+
+
+def build_cursor_rgba(size=64):
+    size = max(8, int(size))
+    yy, xx = np.ogrid[:size, :size]
+    c = (size - 1) * 0.5
+    d = np.sqrt((xx - c) ** 2 + (yy - c) ** 2)
+    outer = size * 0.45
+    inner = outer * CURSOR_RING_INNER_RATIO
+    rgba = np.zeros((size, size, 4), dtype=np.uint8)
+    rgba[d <= outer] = (80, 180, 255, 235)
+    rgba[d <= inner] = (255, 255, 255, 235)
+    return np.ascontiguousarray(rgba)
 
 
 def build_short_osd_rgba(lines, font_type=None, *, width=768, height=96):

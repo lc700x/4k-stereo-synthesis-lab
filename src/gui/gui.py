@@ -127,6 +127,7 @@ class Desktop2StereoGUI(
         self.page.window.visible = True
         self.page.update()
         await asyncio.sleep(0)
+        self._fit_window_to_content(update=True, resize_window=True)
         self._signal_gui_ready()
         asyncio.create_task(self._prepare_startup_after_window_visible())
 

@@ -21,6 +21,7 @@ import collections
 import glfw
 import moderngl
 from .gl_state import get_depth_mask, set_depth_mask
+from .laser_params import CURSOR_RING_INNER_RATIO
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 Image.MAX_IMAGE_PIXELS = None  # Allow loading large 16K atlas images.
@@ -955,6 +956,7 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
         self._aim_space_r   = None   # XrSpace for right aim
         self._laser_vao     = None   # thin quad for laser beam
         self._dot_vao       = None   # small square for controller origin dot
+        self._ring_vao      = None   # annulus ring for hit-point indicator
         self._circle_vao    = None   # tessellated circle for hit-point indicator
         # Cached aim poses updated each frame (numpy 4x4 view-space matrices)
         self._aim_mat_l     = None
@@ -1357,9 +1359,24 @@ class OpenXRViewerCore(CoreOpenXROpenGLMixin, CoreOpenXRD3D11Mixin, CoreOpenXRLi
             self._beam_prog,
             [(beam_vbo, '3f 4x 1f', 'in_position', 'in_v')],
         )
-        # Hit-point indicator: tessellated circle (TRIANGLE_FAN), blue stroke + white fill
+        # Hit-point indicator: annulus ring plus solid center disk.
         N_SEG = 32
-        circle_data = [0.0, 0.0, 0.0, 0.0]  # centre vertex
+        ring_data = []
+        inner = CURSOR_RING_INNER_RATIO
+        for i in range(N_SEG):
+            a0 = 2.0 * math.pi * i / N_SEG
+            a1 = 2.0 * math.pi * (i + 1) / N_SEG
+            outer0 = (math.cos(a0), math.sin(a0))
+            outer1 = (math.cos(a1), math.sin(a1))
+            inner0 = (outer0[0] * inner, outer0[1] * inner)
+            inner1 = (outer1[0] * inner, outer1[1] * inner)
+            for x, y in (outer0, inner0, outer1, outer1, inner0, inner1):
+                ring_data.extend([x, y, 0.0, 0.0])
+        self._ring_vao = self.ctx.vertex_array(
+            self._border_prog,
+            [(self.ctx.buffer(np.array(ring_data, dtype='f4').tobytes()), '2f 8x', 'in_position')],
+        )
+        circle_data = [0.0, 0.0, 0.0, 0.0]
         for i in range(N_SEG + 1):
             a = 2.0 * math.pi * i / N_SEG
             circle_data.extend([math.cos(a), math.sin(a), 0.0, 0.0])

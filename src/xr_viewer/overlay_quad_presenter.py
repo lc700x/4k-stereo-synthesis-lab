@@ -20,6 +20,7 @@ except ImportError:
     xr = None
 
 from .overlay_textures import (
+    build_cursor_rgba,
     build_fps_overlay_rgba,
     build_help_rgba,
     build_keyboard_rgba,
@@ -100,6 +101,7 @@ class QuadOverlayPresenter:
         keyboard = self._keyboard_spec()
         if keyboard is not None:
             specs.append(keyboard)
+            specs.extend(self._keyboard_cursor_specs())
         osd = self._osd_spec()
         if osd is not None:
             specs.append(osd)
@@ -126,16 +128,20 @@ class QuadOverlayPresenter:
             if callable(init_keyboard):
                 init_keyboard()
         show_shift = bool(getattr(v, "_kb_show_shifted", False))
+        hover_indices = tuple(i for i in (getattr(v, "_kb_hover_l", None), getattr(v, "_kb_hover_r", None)) if i is not None)
+        held_indices = tuple(i for i in (getattr(v, "_kb_held_key_l", None), getattr(v, "_kb_held_key_r", None)) if i is not None)
         content_key = (
             "keyboard",
             show_shift,
             round(float(v._keyboard_width), 4),
             round(float(v._keyboard_height), 4),
+            hover_indices,
+            held_indices,
         )
         if getattr(v, "_keyboard_content_key", None) != content_key:
             refresh = getattr(v, "_refresh_keyboard_content", None)
             if callable(refresh):
-                refresh()
+                refresh(hover_indices=hover_indices, held_indices=held_indices)
         rgba = getattr(v, "_keyboard_rgba", None)
         if rgba is None:
             rgba, keys = build_keyboard_rgba(
@@ -143,6 +149,8 @@ class QuadOverlayPresenter:
                 float(v._keyboard_width),
                 float(v._keyboard_height),
                 getattr(v, "font_type", None),
+                hover_indices=hover_indices,
+                held_indices=held_indices,
             )
             v._keyboard_keys = keys
         world = v._kb_world_mat()
@@ -154,6 +162,35 @@ class QuadOverlayPresenter:
             "size": (float(v._keyboard_width), float(v._keyboard_height)),
             "content_key": content_key,
         }
+
+    def _keyboard_cursor_specs(self):
+        v = self.viewer
+        specs = []
+        world = v._kb_world_mat()
+        qx, qy, qz, qw = _quat_from_matrix(world[:3, :3])
+        normal = np.asarray(world[:3, 2], dtype=np.float64)
+        rgba = self._cached_rgba(("keyboard_cursor_rgba",), lambda: build_cursor_rgba(64))
+        for hand, smooth_attr, hover_attr in (("l", "_kb_smooth_l", "_kb_hover_l"), ("r", "_kb_smooth_r", "_kb_hover_r")):
+            if getattr(v, hover_attr, None) is None:
+                continue
+            pos_local = getattr(v, smooth_attr, None)
+            if pos_local is None:
+                continue
+            try:
+                local = np.array([float(pos_local[0]), float(pos_local[1]), 0.0, 1.0], dtype=np.float64)
+            except Exception:
+                continue
+            pos = (world.astype(np.float64) @ local)[:3] + normal * 0.003
+            dist = max(0.1, float(getattr(v, "_keyboard_distance", 1.0) or 1.0))
+            radius = 0.012 * float(np.clip(dist / 2.0, 0.35, 50.0))
+            specs.append({
+                "key": f"keyboard_cursor_{hand}",
+                "rgba": rgba,
+                "pose": (qx, qy, qz, qw, float(pos[0]), float(pos[1]), float(pos[2])),
+                "size": (radius * 2.0, radius * 2.0),
+                "content_key": ("keyboard_cursor", hand),
+            })
+        return specs
 
     def _cached_rgba(self, content_key, builder):
         cached = self._rgba_cache.get(content_key)
@@ -203,6 +240,7 @@ class QuadOverlayPresenter:
             screen_dist = getattr(v, "_screen_view_distance", None)
             v._cached_screen_dist = float(screen_dist() if callable(screen_dist) else getattr(v, "screen_distance", 0.0))
             v._cached_depth_strength = float(getattr(v, "depth_strength", 0.0) or 0.0)
+            v._cached_help_visible = bool(getattr(v, "_team_help_visible", False) or getattr(v, "_help_panel_visible", False))
             v._cached_vr_res = tuple(getattr(v, "_swapchain_sizes", {}).get(0, (0, 0)))
             v._cached_sbs_res = tuple(getattr(v, "frame_size", (0, 0)))
             v._last_overlay_update = now
@@ -341,9 +379,7 @@ class QuadOverlayPresenter:
         v = self.viewer
         if not getattr(v, "_team_fps_visible", False) or getattr(v, "screen_height", None) is None:
             return None
-        now = float(getattr(v, "_frame_now", time.perf_counter()) or 0.0)
-        if now - float(getattr(v, "_team_last_overlay_update", -999.0) or -999.0) >= 1.0:
-            v._team_last_overlay_update = now
+        self._refresh_fps_cache()
         gap, panel_h = v._team_status_panel_metrics()
         tex_size = tuple(getattr(v, "_team_status_tex_size", (768, 224)))
         panel_w = panel_h * (float(tex_size[0]) / max(1.0, float(tex_size[1])))
@@ -356,27 +392,23 @@ class QuadOverlayPresenter:
             v._team_status_alpha = 1.0
         content_key = (
             "team_status",
-            round(float(getattr(v, "actual_fps", 0.0) or 0.0), 1),
-            round(float(getattr(v, "sbs_fps", 0.0) or 0.0), 1),
-            round(float(getattr(v, "total_latency", 0.0) or 0.0), 1),
-            round(float(getattr(v, "depth_strength", 0.0) or 0.0), 3),
-            tuple(getattr(v, "_swapchain_sizes", {}).get(0, (0, 0))),
-            tuple(getattr(v, "frame_size", (0, 0))),
-            bool(getattr(v, "_team_help_visible", False)),
+            self._fps_values_key(),
+            bool(getattr(v, "_cached_help_visible", False)),
+            str(getattr(v, "_active_environment", None) or getattr(v, "_environment_model", None) or "Default"),
         )
         rgba = self._cached_rgba(content_key, lambda: build_team_status_rgba(
-            actual_fps=getattr(v, "actual_fps", 0.0),
-            sbs_fps=getattr(v, "sbs_fps", 0.0),
-            latency_ms=getattr(v, "total_latency", 0.0),
-            screen_width=getattr(v, "screen_width", 0.0),
-            screen_height=float(getattr(v, "screen_width", 0.0) or 0.0) * 9.0 / 16.0,
-            screen_distance=v._screen_view_distance(),
-            depth_strength=getattr(v, "depth_strength", 0.0),
-            vr_res=getattr(v, "_swapchain_sizes", {}).get(0, (0, 0)),
-            sbs_res=getattr(v, "frame_size", (0, 0)),
+            actual_fps=getattr(v, "_cached_actual_fps", 0.0),
+            sbs_fps=getattr(v, "_cached_sbs_fps", 0.0),
+            latency_ms=getattr(v, "_cached_latency", 0.0),
+            screen_width=getattr(v, "_cached_screen_width", 0.0),
+            screen_height=getattr(v, "_cached_screen_height", 0.0),
+            screen_distance=getattr(v, "_cached_screen_dist", 0.0),
+            depth_strength=getattr(v, "_cached_depth_strength", 0.0),
+            vr_res=getattr(v, "_cached_vr_res", (0, 0)),
+            sbs_res=getattr(v, "_cached_sbs_res", (0, 0)),
             environment_name=(getattr(v, "_active_environment", None) or getattr(v, "_environment_model", None) or "Default"),
             controller_brand=getattr(v, "_current_brand", None),
-            shortcuts_visible=getattr(v, "_team_help_visible", False),
+            shortcuts_visible=getattr(v, "_cached_help_visible", False),
             font_type=getattr(v, "font_type", None),
             size=tex_size,
         ))
@@ -433,7 +465,8 @@ class QuadOverlayPresenter:
         released = False
         try:
             image = entry["images"][img_index]
-            if entry.get("content_key") != spec["content_key"]:
+            content_keys = entry["content_keys"]
+            if content_keys.get(int(img_index)) != spec["content_key"]:
                 rgba = spec["rgba"]
                 if getattr(self.viewer, "_use_d3d11", False):
                     if getattr(self.viewer, "_swapchain_is_bgra", False):
@@ -446,7 +479,7 @@ class QuadOverlayPresenter:
                     )
                 else:
                     self._upload_opengl_rgba(image.image, rgba)
-                entry["content_key"] = spec["content_key"]
+                content_keys[int(img_index)] = spec["content_key"]
                 self.viewer._breakdown_inc("openxr_overlay_quad_upload")
             xr.release_swapchain_image(swapchain, self.viewer._xr_sc_release_info)
             released = True
@@ -510,7 +543,7 @@ class QuadOverlayPresenter:
             "swapchain": swapchain,
             "images": xr.enumerate_swapchain_images(swapchain, self.viewer._quad_swapchain_image_type),
             "size": (int(w), int(h)),
-            "content_key": None,
+            "content_keys": {},
         }
         self._entries[key] = entry
         return entry

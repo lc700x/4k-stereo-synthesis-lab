@@ -864,6 +864,10 @@ swapchain render target / blend state / depth state
 D3D11 native 实现时不得复制手柄操作、屏幕调节、热参数、虚拟键盘等业务逻辑。
 应复用 OpenXR shared interaction layer，只新增或补齐 D3D11 renderer backend。
 OpenGL backend 保留为本地 viewer / OpenXR fallback；两套 backend 只在绘制、shader、texture 和 swapchain 层分叉。
+当前显示分工：主虚拟屏幕、controller model、laser beam、screen hit cursor 属于 main Projection path；virtual keyboard、short OSD/FPS/help panel 属于 Quad overlay。
+不再使用 always-on foreground Projection layer 补画手柄/激光；该方案会增加 XR loop 压力且不是当前默认实现。
+键盘 cursor 是标准 OpenXR Quad composition layer 的一个小 overlay，用静态 RGBA cursor texture；只有对应手柄仍 hover keyboard key 时提交，离开键盘后必须隐藏。
+Keyboard hover/held key highlight 属于 keyboard texture 内容，只在 hover/held key index 变化时刷新；cursor 位置变化不得触发整张 keyboard texture 每帧重建。
 ```
 
 ### OpenXR controller glTF material contract
@@ -1020,7 +1024,9 @@ diagonal_in = hypot(screen_width_m, screen_height_m) / 0.0254
 6. preset OSD 显示 5.0 s，live distance 只更新显示文本，不得进入触发 key 以免头部微动持续刷新倒计时。
 7. 虚拟键盘与屏幕下边缘的间距按屏幕高度 15% 计算。
 8. 屏幕边缘吸附释放角为 6°。
-9. 屏幕与键盘的激光命中光圈共用同一 cursor-ring model，并按 eye-to-hit distance 缩放。
+9. 屏幕与键盘的激光命中光圈共享同一视觉语义：屏幕光圈在 main Projection path 绘制；键盘光圈作为独立小 Quad overlay 显示在 keyboard Quad 之上，并按 eye-to-hit distance 缩放。
+10. 键盘光圈只在对应手柄仍 hover keyboard key 时提交；离开键盘后必须隐藏，不能停留在最后位置。
+11. 键盘按键 hover/held 高亮可刷新 keyboard texture，但 cursor 位置移动不得导致整张 keyboard texture 每帧重建或上传。
 ```
 
 手柄屏幕操作规则：

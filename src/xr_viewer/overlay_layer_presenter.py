@@ -7,10 +7,12 @@ class OverlayLayerPresenter:
     def __init__(self, viewer):
         self.viewer = viewer
 
-    def render_projection_overlays(self, *, eye_index, mgl_fbo, vp_mat, view_mat, swapchain_size, mark_perf=None):
+    def render_projection_overlays(self, *, eye_index, mgl_fbo, vp_mat, view_mat, swapchain_size, mark_perf=None, controllers_only=False, skip_controllers=False):
         viewer = self.viewer
         sc_w, sc_h = swapchain_size
         quad_handles_2d = bool(getattr(viewer, "_overlay_quads_handle_2d_panels", True))
+        render_2d = (not controllers_only)
+        render_controllers = (not skip_controllers)
 
         def _try_aux_render(metric, label, callback):
             try:
@@ -29,38 +31,39 @@ class OverlayLayerPresenter:
         if mark_perf:
             mark_perf('keyboard')
 
-        if not quad_handles_2d and viewer._depth_osd_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._depth_osd_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'depth OSD', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_depth_osd(eye_index, mgl_fbo, vp_mat),
             ))
-        if not quad_handles_2d and viewer._screen_osd_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._screen_osd_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'screen OSD', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_screen_osd(eye_index, mgl_fbo, vp_mat),
             ))
-        if not quad_handles_2d and viewer._preset_osd_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._preset_osd_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'preset OSD', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_preset_osd(eye_index, mgl_fbo, vp_mat),
             ))
-        if viewer._brand_osd_tex is not None and viewer._grip_mat_r is not None:
+        if render_2d and viewer._brand_osd_tex is not None and viewer._grip_mat_r is not None:
             _try_aux_render('openxr_overlay_render_failed', 'brand OSD', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_brand_osd(eye_index, mgl_fbo, vp_mat),
             ))
-        if viewer._seat_adjust_osd_tex is not None:
+        if render_2d and viewer._seat_adjust_osd_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'seat OSD', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_seat_adjust_osd(eye_index, mgl_fbo, vp_mat),
             ))
 
-        _try_aux_render('openxr_laser_render_failed', 'laser beam', lambda: (
+        if render_controllers:
+            _try_aux_render('openxr_laser_render_failed', 'laser beam', lambda: (
             setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
-            viewer._render_lasers(mgl_fbo, vp_mat, blend=False),
-        ))
+                viewer._render_lasers(mgl_fbo, vp_mat, blend=False),
+            ))
 
-        if viewer._ctrl_prims_l or viewer._ctrl_prims_r:
+        if render_controllers and (viewer._ctrl_prims_l or viewer._ctrl_prims_r):
             _try_aux_render('openxr_controller_render_failed', 'controller', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer.ctx.disable(moderngl.BLEND),
@@ -69,39 +72,40 @@ class OverlayLayerPresenter:
                 viewer._render_controllers(mgl_fbo, vp_mat, view_mat),
             ))
 
-        _try_aux_render('openxr_laser_render_failed', 'laser hit circle', lambda: (
+        if render_controllers:
+            _try_aux_render('openxr_laser_render_failed', 'laser hit circle', lambda: (
             setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
             viewer.ctx.disable(moderngl.DEPTH_TEST),
             set_depth_mask(False),
             viewer.ctx.enable(moderngl.BLEND),
             setattr(viewer.ctx, 'blend_func', (moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA)),
-            viewer._render_lasers(mgl_fbo, vp_mat, blend=True),
-        ))
+                viewer._render_lasers(mgl_fbo, vp_mat, blend=True),
+            ))
         viewer.ctx.disable(moderngl.BLEND)
         set_depth_mask(True)
         viewer.ctx.enable(moderngl.DEPTH_TEST)
 
-        if not quad_handles_2d and viewer._hand_fps_visible and viewer._overlay_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._hand_fps_visible and viewer._overlay_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'FPS overlay', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_fps_overlay(eye_index, mgl_fbo, vp_mat),
             ))
-        if not quad_handles_2d and viewer._team_fps_visible and viewer._team_status_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._team_fps_visible and viewer._team_status_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'team status overlay', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_team_status_overlay(eye_index, mgl_fbo, vp_mat),
             ))
-        if viewer._calibration_mode:
+        if render_2d and viewer._calibration_mode:
             _try_aux_render('openxr_overlay_render_failed', 'calibration panel', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_calibration_panel(mgl_fbo, vp_mat),
             ))
-        if not quad_handles_2d and viewer._fps_overlay_visible and viewer._help_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._fps_overlay_visible and viewer._help_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'help panel', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_help_panel(mgl_fbo, vp_mat),
             ))
-        if not quad_handles_2d and viewer._team_status_visible and viewer._team_help_visible and viewer._team_help_tex is not None:
+        if render_2d and not quad_handles_2d and viewer._team_status_visible and viewer._team_help_visible and viewer._team_help_tex is not None:
             _try_aux_render('openxr_overlay_render_failed', 'team help panel', lambda: (
                 setattr(viewer.ctx, 'viewport', (0, 0, sc_w, sc_h)),
                 viewer._render_team_help_panel(mgl_fbo, vp_mat),

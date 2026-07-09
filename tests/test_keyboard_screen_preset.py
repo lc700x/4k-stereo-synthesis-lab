@@ -156,7 +156,8 @@ def test_laser_hit_circle_radius_uses_eye_to_hit_distance(monkeypatch):
 
     assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -4.0]), 1.0) == 4.0
     assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -0.5]), 4.0) == 0.5
-    assert viewer._cursor_ring_specs(0.5)[0][0] < viewer._cursor_ring_specs(4.0)[0][0]
+    assert viewer._cursor_ring_specs(0.5)[0][1] < viewer._cursor_ring_specs(4.0)[0][1]
+    assert [spec[0] for spec in viewer._cursor_ring_specs(1.0)] == ["ring", "disk"]
     laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
     cursor_func = laser_text.split("def _cursor_ring_distance_from_eye", 1)[1].split(
         "def _cursor_ring_model", 1
@@ -192,11 +193,18 @@ def test_laser_hit_circle_model_is_shared_by_screen_and_keyboard(monkeypatch):
     assert np.isclose(np.linalg.norm(keyboard_model[:3, 0]), 0.02)
 
     laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
-    render_block = laser_text.split("def _render_laser_hit_circles", 1)[1]
-    render_block = render_block.split("def _controller_anim_delta", 1)[0]
-    assert "model = self._cursor_ring_model(hit_target, hit_pos, radius)" in render_block
-    assert "if hit_target == 'screen':" not in render_block
-    assert "elif hit_target == 'keyboard':" not in render_block
+    draw_block = laser_text.split("def _laser_hit_circle_draws", 1)[1].split(
+        "def _render_laser_hit_circles", 1
+    )[0]
+    render_block = laser_text.split("def _render_laser_hit_circles", 1)[1].split(
+        "def _controller_anim_delta", 1
+    )[0]
+    assert "self._cursor_ring_model(hit_target, hit_pos, radius)" in draw_block
+    assert "if hit_target == 'screen':" not in draw_block
+    assert "elif hit_target == 'keyboard':" not in draw_block
+    assert 'shape == "ring"' in render_block
+    assert "moderngl.TRIANGLES" in render_block
+    assert "moderngl.TRIANGLE_FAN" in render_block
 
 
 def test_laser_hit_circles_render_without_depth_test_like_keyboard_cursor():

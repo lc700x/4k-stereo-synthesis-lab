@@ -11,7 +11,12 @@ from OpenGL.GL import GL_CCW, GL_CW, glFrontFace
 
 from .gl_state import set_depth_mask
 from .controller_lighting import CONTROLLER_HEAD_LIGHT_COLOR, CONTROLLER_TOP_LIGHT_INTENSITY
-from .laser_params import LASER_BASE_HALF_WIDTH_M, LASER_MAX_LENGTH_M
+from .laser_params import (
+    CURSOR_RING_INNER_RADIUS_M,
+    CURSOR_RING_OUTER_RADIUS_M,
+    LASER_BASE_HALF_WIDTH_M,
+    LASER_MAX_LENGTH_M,
+)
 
 
 def _set_optional_uniform(program, name, value):
@@ -25,8 +30,8 @@ class CoreLaserRenderMixin:
     def _cursor_ring_specs(self, distance_m):
         scale = float(np.clip(float(distance_m) / 2.0, 0.35, 50.0))
         return (
-            (0.0096 * scale, (0.2, 0.6, 1.0, 0.75)),
-            (0.0056 * scale, (1.0, 1.0, 1.0, 0.75)),
+            ("ring", CURSOR_RING_OUTER_RADIUS_M * scale, (0.2, 0.6, 1.0, 0.75)),
+            ("disk", CURSOR_RING_INNER_RADIUS_M * scale, (1.0, 1.0, 1.0, 0.75)),
         )
 
     def _cursor_ring_distance_from_eye(self, hit_pos, fallback_m):
@@ -304,8 +309,8 @@ class CoreLaserRenderMixin:
             self._beam_prog['u_time'].value = float(now)
             self._beam_vao.render(moderngl.TRIANGLE_STRIP)
 
-    def _render_laser_hit_circles(self, mgl_fbo, vp_mat, beams):
-        mgl_fbo.use()
+    def _laser_hit_circle_draws(self, beams):
+        draws = []
         for _now, ctrl_name, _aim_mat, ctrl_pos, fwd_w, _right2, _fwd, _up in beams:
             kb_dist = self._keyboard_laser_hit_dist(ctrl_pos, fwd_w)
             sc_dist = self._laser_screen_hit_dist(ctrl_pos, fwd_w)
@@ -340,12 +345,18 @@ class CoreLaserRenderMixin:
                     _kb_pos = np.array([self._keyboard_pan_x, self._keyboard_pan_y, -self._keyboard_distance], dtype='f8')
                     hit_pos = (_kb_pos + _kb_x * float(_smooth_pos[0]) + _kb_y * float(_smooth_pos[1])).astype('f4')
             ring_distance = self._cursor_ring_distance_from_eye(hit_pos, beam_len)
-            for radius, color in self._cursor_ring_specs(ring_distance):
-                model = self._cursor_ring_model(hit_target, hit_pos, radius)
-                circle_mvp = vp_mat @ model
-                self._border_prog['u_mvp'].write(circle_mvp.T.tobytes())
-                self._border_prog['u_color'].value = color
-                self._circle_vao.render(moderngl.TRIANGLE_FAN)
+            for shape, radius, color in self._cursor_ring_specs(ring_distance):
+                draws.append((shape, self._cursor_ring_model(hit_target, hit_pos, radius), color))
+        return draws
+
+    def _render_laser_hit_circles(self, mgl_fbo, vp_mat, beams):
+        mgl_fbo.use()
+        for shape, model, color in self._laser_hit_circle_draws(beams):
+            circle_mvp = vp_mat @ model
+            self._border_prog['u_mvp'].write(circle_mvp.T.tobytes())
+            self._border_prog['u_color'].value = color
+            vao = self._ring_vao if shape == "ring" else self._circle_vao
+            vao.render(moderngl.TRIANGLES if shape == "ring" else moderngl.TRIANGLE_FAN)
 
     def _controller_anim_delta(self, anim, amount):
         amount = max(-1.0, min(1.0, float(amount or 0.0)))

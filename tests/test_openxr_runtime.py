@@ -73,9 +73,13 @@ def test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path():
     overlay_quad = (SRC / "xr_viewer" / "overlay_quad_presenter.py").read_text(encoding="utf-8")
     core_keyboard = (SRC / "xr_viewer" / "core_keyboard.py").read_text(encoding="utf-8")
     overlay_textures = (SRC / "xr_viewer" / "overlay_textures.py").read_text(encoding="utf-8")
+    d3d_renderer = (SRC / "xr_viewer" / "d3d11_native_renderer.py").read_text(encoding="utf-8")
+    core_d3d11 = (SRC / "xr_viewer" / "core_openxr_d3d11.py").read_text(encoding="utf-8")
+    implementation = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
 
     assert "QuadOverlayPresenter" in frame_renderer
     assert "self.overlay_quad_presenter.prepare_layers()" in frame_renderer
+    assert "render_foreground" not in frame_renderer
     assert "if eye_layer_views:" in frame_renderer
     assert "class QuadOverlayPresenter" in overlay_quad
     assert "D3D11OverlayQuadPresenter" not in overlay_quad
@@ -101,6 +105,9 @@ def test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path():
     assert "build_team_status_rgba" in overlay_quad
     assert "from .overlay_textures import build_keyboard_rgba" in core_keyboard
     assert "build_keyboard_rgba(" in core_keyboard
+    assert "hover_indices=hover_indices" in core_keyboard
+    assert "held_indices=held_indices" in core_keyboard
+    assert "hover_points=hover_points" not in core_keyboard
     assert "def _refresh_keyboard_content" in core_keyboard
     assert "def _init_keyboard(self)" in core_keyboard
     assert "def _build_keyboard_texture" not in core_keyboard
@@ -108,12 +115,40 @@ def test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path():
     assert "_keyboard_tex" not in core_keyboard
     assert "np.flipud(spec" not in overlay_quad
     assert "rgba = spec[\"rgba\"]" in overlay_quad
+    assert 'content_keys = entry["content_keys"]' in overlay_quad
+    assert 'content_keys.get(int(img_index)) != spec["content_key"]' in overlay_quad
+    assert 'content_keys[int(img_index)] = spec["content_key"]' in overlay_quad
+    assert '"content_key": None' not in overlay_quad
     assert "np.flipud" not in overlay_textures
     assert "init_keyboard()" in overlay_quad
+    keyboard_spec = overlay_quad.split("def _keyboard_spec", 1)[1].split("def _keyboard_cursor_specs", 1)[0]
+    assert "_kb_smooth_l" not in keyboard_spec
+    assert "_kb_hover_l" in keyboard_spec
+    assert "hover_indices" in keyboard_spec
+    assert "hover_points" not in keyboard_spec
+    cursor_spec = overlay_quad.split("def _keyboard_cursor_specs", 1)[1].split("def _cached_rgba", 1)[0]
+    assert "_kb_smooth_l" in cursor_spec
+    assert "_kb_hover_l" in cursor_spec
+    assert "if getattr(v, hover_attr, None) is None:" in cursor_spec
+    assert '"content_key": ("keyboard_cursor", hand)' in cursor_spec
+    assert "build_cursor_rgba(64)" in cursor_spec
     assert "build_texture" not in overlay_quad
     assert "ImageDraw" not in overlay_quad
     assert "_KB_ROWS" not in overlay_quad
+    assert "v._cached_help_visible =" in overlay_quad
+    team_status_func = overlay_quad.split("def _team_status_spec", 1)[1].split("def _team_help_spec", 1)[0]
+    assert "self._refresh_fps_cache()" in team_status_func
+    assert "_cached_actual_fps" in team_status_func
+    assert "_cached_sbs_fps" in team_status_func
+    assert "_cached_latency" in team_status_func
+    assert 'getattr(v, "actual_fps"' not in team_status_func
+    assert 'getattr(v, "sbs_fps"' not in team_status_func
+    assert 'getattr(v, "total_latency"' not in team_status_func
     assert "def build_keyboard_rgba" in overlay_textures
+    assert "hover_indices=()" in overlay_textures
+    assert "hover_points=()" in overlay_textures
+    assert "key_index = len(keys)" in overlay_textures
+    assert "draw.ellipse([cx - r_outer" in overlay_textures
     assert "def build_short_osd_rgba" in overlay_textures
     assert "def build_fps_overlay_rgba" in overlay_textures
     assert "def build_team_status_rgba" in overlay_textures
@@ -127,6 +162,39 @@ def test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path():
     assert "not quad_handles_2d and viewer._team_fps_visible" in projection_overlay
     assert "not quad_handles_2d and viewer._fps_overlay_visible" in projection_overlay
     assert "not quad_handles_2d and viewer._team_status_visible" in projection_overlay
+    assert "controllers_only=False" in projection_overlay
+    assert "skip_controllers=False" in projection_overlay
+    assert "render_controllers = (not skip_controllers)" in projection_overlay
+    assert "render_2d and not quad_handles_2d" in projection_overlay
+    assert "skip_controllers=bool(getattr(self, '_overlay_quads_handle_2d_panels', True))" not in implementation
+    assert "self._projection_view_configs = view_configs" in core_d3d11
+    assert "self._projection_runtime_formats = runtime_fmts" in core_d3d11
+    assert "def render_foreground(self, swapchain_texture" not in d3d_renderer
+    assert "skip_controllers=False" not in d3d_renderer
+    assert "if not skip_controllers:" not in d3d_renderer
+    assert "self._draw_lasers(overlay_viewer, background_view_mat, background_proj_mat)" in d3d_renderer
+    assert "self._draw_controller_models(overlay_viewer, background_view_mat, background_proj_mat, color_srv)" in d3d_renderer
+    assert "self._draw_laser_hit_circles(overlay_viewer, background_view_mat, background_proj_mat)" in d3d_renderer
+    assert "def _draw_laser_hit_circles" in d3d_renderer
+    assert "_laser_hit_circle_draws" in d3d_renderer
+
+
+def test_keyboard_quad_hover_center_is_solid_disk():
+    from xr_viewer.laser_params import CURSOR_RING_INNER_RATIO
+    from xr_viewer.overlay_textures import build_keyboard_rgba
+
+    rgba, _keys = build_keyboard_rgba(False, 1.6, 0.45, hover_points=((0.0, 0.0),))
+    h, w = rgba.shape[:2]
+    cx, cy = w // 2, h // 2
+    center = rgba[cy, cx]
+    seam = rgba[cy, cx + int(round(11 * CURSOR_RING_INNER_RATIO)) + 1]
+
+    assert center[0] >= 240
+    assert center[1] >= 240
+    assert center[2] >= 240
+    assert center[3] >= 200
+    assert seam[2] >= 200
+    assert seam[3] >= 200
 
 
 def test_controller_material_preserves_gltf_double_sided_without_override():
@@ -3712,11 +3780,22 @@ def test_d3d11_projection_path_uses_native_renderer():
     ]
     laser_block = renderer[
         renderer.index("def _draw_lasers"):
-        renderer.index("    def _render_eye_with_srv", renderer.index("def _draw_lasers"))
+        renderer.index("    def _draw_laser_hit_circles", renderer.index("def _draw_lasers"))
+    ]
+    hit_circle_block = renderer[
+        renderer.index("def _draw_laser_hit_circles"):
+        renderer.index("    def _render_eye_with_srv", renderer.index("def _draw_laser_hit_circles"))
     ]
     assert laser_block.count("self._context_call(7, None") == 1
     assert laser_block.count("self._context_call(16, None") == 1
+    assert hit_circle_block.count("self._context_call(7, None") == 1
+    assert hit_circle_block.count("self._context_call(16, None") == 1
+    assert "_create_buffer(" not in hit_circle_block
+    assert "laser_hit_ring_vertex_buffer" in renderer
+    assert "laser_hit_disk_vertex_buffer" in renderer
     assert "_set_blend_disabled()" in laser_block
+    assert "_set_blend_alpha()" in hit_circle_block
+    assert "_laser_hit_circle_draws" in hit_circle_block
     assert "_set_blend_disabled()" in render_block
     assert "(ctypes.c_void_p * 7)" in render_block
     assert "self._draw_background(background_view_mat, background_proj_mat)" in render_block

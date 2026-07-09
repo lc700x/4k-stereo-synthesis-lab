@@ -251,8 +251,10 @@ def test_hidden_log_panel_does_not_contribute_to_window_width():
     fit_end = builders_text.index("def _on_page_resize", fit_start)
     fit_block = builders_text[fit_start:fit_end]
 
-    assert "log_panel.expand = bool(log_panel.visible)" in fit_block
-    assert "log_panel.width" not in fit_block
+    assert "log_panel.width = None" in fit_block
+    assert "log_panel.width = 0" in fit_block
+    assert "log_panel.expand = True" in fit_block
+    assert "log_panel.expand = False" in fit_block
 
     width_start = builders_text.index("def _estimate_window_width")
     width_end = builders_text.index("def _control_has_effective_content", width_start)
@@ -332,12 +334,14 @@ def test_gui_sets_vendored_flet_view_before_importing_flet():
 
     show_idx = setup_block.index("self.page.window.visible = True")
     update_idx = setup_block.index("self.page.update()", show_idx)
-    ready_idx = setup_block.index("self._signal_gui_ready()", update_idx)
+    post_visible_sleep_idx = setup_block.index("await asyncio.sleep(0)", update_idx)
+    post_visible_fit_idx = setup_block.index("self._fit_window_to_content(update=True, resize_window=True)", post_visible_sleep_idx)
+    ready_idx = setup_block.index("self._signal_gui_ready()", post_visible_fit_idx)
     task_idx = setup_block.index("asyncio.create_task(self._prepare_startup_after_window_visible())", ready_idx)
     populate_idx = setup_block.index("self.populate_monitors()")
     fit_idx = setup_block.index("self._fit_window_to_content(update=False)")
     log_visibility_idx = setup_block.index('self._set_log_panel_visible(self._config.get("Show Log Panel", DEFAULTS["Show Log Panel"]), update=False)')
-    assert populate_idx < log_visibility_idx < fit_idx < show_idx < update_idx < ready_idx < task_idx
+    assert populate_idx < log_visibility_idx < fit_idx < show_idx < update_idx < post_visible_sleep_idx < post_visible_fit_idx < ready_idx < task_idx
 
 def test_run_windows_waits_for_gui_ready_signal_before_closing_cmd():
     run_bat = Path(__file__).resolve().parents[1] / "run_windows.bat"
@@ -443,7 +447,8 @@ def test_gui_uses_single_rolling_log_for_gui_and_child_output():
     assert "def _estimate_main_panel_width" in builders_text
     assert "def _estimate_log_panel_width" not in builders_text
     assert "self._main_panel.width = main_width" in builders_text
-    assert "log_panel.width" not in builders_text
+    assert "log_panel.width = 0" in builders_text
+    assert "log_panel.width = None" in builders_text
     assert "def _fit_window_to_content(self, update=True, resize_window=False)" in builders_text
     assert "self._last_page_width" not in builders_text
     resize_block = builders_text[builders_text.index("def _on_page_resize"):builders_text.index("def _spacing_width")]

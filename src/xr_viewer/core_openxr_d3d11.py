@@ -129,6 +129,8 @@ class CoreOpenXRD3D11Mixin:
         )
         # Pick the best supported DXGI format
         runtime_fmts = list(xr.enumerate_swapchain_formats(self._xr_session))
+        self._projection_view_configs = view_configs
+        self._projection_runtime_formats = runtime_fmts
         print(f"[OpenXRViewer] D3D11 runtime swapchain formats: {runtime_fmts}")
         chosen_fmt = None
         for preferred in _D3D11_PREFERRED_FORMATS:

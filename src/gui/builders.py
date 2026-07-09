@@ -69,7 +69,12 @@ class GUIBuilderMixin:
             self._main_panel.expand = False
         log_panel = getattr(self, "log_panel", None)
         if log_panel is not None:
-            log_panel.expand = bool(log_panel.visible)
+            if log_panel.visible:
+                log_panel.width = None
+                log_panel.expand = True
+            else:
+                log_panel.width = 0
+                log_panel.expand = False
         width = self._estimate_window_width(main_width)
         self.page.window.min_width = main_width
         self.page.window.max_width = None

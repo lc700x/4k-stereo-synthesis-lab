@@ -11,14 +11,16 @@ from .baseline_shift import ShiftParams, compute_shift_px, shift_debug_info, war
 from .output import ensure_bchw, match_depth
 
 PaddingMode = Literal["zeros", "border", "reflection"]
+OpenXROutputMode = Literal["auto", "rgb_depth", "full_synthesis_eyes"]
 
 
 @dataclass(frozen=True)
 class OpenXRRenderConfig:
     depth_strength: float = 2.0
-    convergence: float = 0.0
+    convergence: float | torch.Tensor = 0.0
     max_disparity_px: float | None = None
     parallax_preset: str = "standard"
+    output_mode: OpenXROutputMode = "auto"
     foreground_shift_scale: float = 1.0
     midground_shift_scale: float = 1.0
     background_shift_scale: float = 1.0
@@ -91,8 +93,8 @@ def render_openxr_stereo(
     depth_matched = match_depth(depth, h, w)
     params = _shift_params(config)
     base_shift = compute_shift_px(depth_matched, w, params)
-    left = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=-1.0, config=config)
-    right = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=1.0, config=config)
+    left = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=-1.0, config=config, base_shift=base_shift)
+    right = _render_eye_from_matched(rgb_bchw, depth_matched, eye_sign=1.0, config=config, base_shift=base_shift)
     return OpenXRStereoResult(
         left_eye=left,
         right_eye=right,
@@ -125,6 +127,7 @@ def _render_eye_from_matched(
     *,
     eye_sign: float,
     config: OpenXRRenderConfig,
+    base_shift: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """Warp a single eye from a pre-matched depth map.
 
@@ -132,7 +135,8 @@ def _render_eye_from_matched(
     rgb's (h, w); both are computed once per frame and shared between eyes.
     """
     b, _, h, w = rgb.shape
-    base_shift = compute_shift_px(depth_matched, w, _shift_params(config))
+    if base_shift is None:
+        base_shift = compute_shift_px(depth_matched, w, _shift_params(config))
 
     if config.screen_roll == 0.0:
         return warp_horizontal(rgb, base_shift, eye_sign=float(eye_sign))

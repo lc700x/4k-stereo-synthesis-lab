@@ -69,6 +69,21 @@ class CoreCleanupMixin:
                 pass
         self._quad_fbo_cache.clear()
 
+        background_raw_ids = []
+        for mgl_fbo, raw_id, _w, _h in getattr(self, '_background_equirect_fbo_cache', {}).values():
+            try:
+                mgl_fbo.release()
+            except Exception:
+                pass
+            background_raw_ids.append(raw_id)
+        if background_raw_ids:
+            try:
+                glDeleteFramebuffers(len(background_raw_ids), background_raw_ids)
+            except Exception:
+                pass
+        if hasattr(self, '_background_equirect_fbo_cache'):
+            self._background_equirect_fbo_cache.clear()
+
         depth_rbs = list(self._depth_rb_cache.values())
         if depth_rbs:
             try:
@@ -76,13 +91,6 @@ class CoreCleanupMixin:
             except Exception:
                 pass
         self._depth_rb_cache.clear()
-
-        if self._d3d11_pbo_cache:
-            try:
-                glDeleteBuffers(len(self._d3d11_pbo_cache), [v[0] for v in self._d3d11_pbo_cache.values()])
-            except Exception:
-                pass
-            self._d3d11_pbo_cache.clear()
 
         offscreen_raw_ids = [entry[1] for entry in self._offscreen_fbo_cache.values()]
         if offscreen_raw_ids:
@@ -149,11 +157,27 @@ class CoreCleanupMixin:
             except Exception:
                 pass
         self._quad_swapchains.clear()
+        if getattr(self, '_background_equirect_swapchain', None) is not None:
+            try:
+                xr.destroy_swapchain(self._background_equirect_swapchain)
+            except Exception:
+                pass
+        self._background_equirect_swapchain = None
+        self._background_equirect_images = []
+        self._background_equirect_size = None
+        self._background_equirect_uploaded_key = None
+        self._background_equirect_failed_key = None
+        self._background_equirect_pending_tex = None
+        self._runtime_effect_downsample_failed_key = None
         self._quad_swapchain_images.clear()
         self._quad_swapchain_sizes.clear()
         self._quad_swapchain_array_size.clear()
+        self._quad_swapchain_formats = ()
+        self._quad_swapchain_presented_eyes = set()
         self._swapchain_images.clear()
         self._swapchain_sizes.clear()
+        self._projection_view_configs = ()
+        self._projection_runtime_formats = ()
 
         for attr in ("_xr_space", "_aim_space_l", "_aim_space_r", "_grip_space_l", "_grip_space_r"):
             sp = getattr(self, attr, None)

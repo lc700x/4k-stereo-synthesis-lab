@@ -134,18 +134,37 @@ def ensure_model_downloaded(
             raise FileNotFoundError(f"model weights resolved but model directory was not found: {model_dir}")
         return model_dir
 
-    from .depth_provider import _reachable_hf_endpoints
+    from .depth_provider import _download_hf_file_direct, _hf_download_progress_patch, _reachable_hf_endpoints
     from huggingface_hub import snapshot_download
 
-    _reachable_hf_endpoints(model_spec.model_id)
-    snapshot_download(
-        repo_id=model_spec.model_id,
-        cache_dir=str(cache_dir),
-        local_files_only=local_files_only,
-        force_download=force_download,
-    )
+    endpoints = _reachable_hf_endpoints(model_spec.model_id)
+    try:
+        with _hf_download_progress_patch():
+            snapshot_download(
+                repo_id=model_spec.model_id,
+                cache_dir=str(cache_dir),
+                local_files_only=local_files_only,
+                force_download=force_download,
+            )
+    except Exception:
+        if local_files_only:
+            raise
+    if find_local_model_weight(model_dir) is not None:
+        return model_dir
+    if local_files_only:
+        raise FileNotFoundError(f"local model weights are missing or empty: {model_dir}")
+    last_error: Exception | None = None
+    for endpoint in endpoints:
+        for filename in MODEL_WEIGHT_FILENAMES:
+            try:
+                _download_hf_file_direct(model_spec.model_id, filename, cache_dir, endpoint)
+                return model_dir
+            except Exception as exc:
+                last_error = exc
     if not model_dir.exists():
         raise FileNotFoundError(f"download completed but model directory was not found: {model_dir}")
+    if last_error is not None:
+        raise FileNotFoundError(f"download completed but no valid model weight was found: {model_dir}") from last_error
     return model_dir
 
 
@@ -155,10 +174,10 @@ def find_local_model_weight(model_dir: str | Path) -> Path | None:
         return None
     for filename in MODEL_WEIGHT_FILENAMES:
         direct = root / filename
-        if direct.exists():
+        if direct.is_file() and direct.stat().st_size > 0:
             return direct
         for path in root.rglob(filename):
-            if path.is_file():
+            if path.is_file() and path.stat().st_size > 0:
                 return path
     return None
 

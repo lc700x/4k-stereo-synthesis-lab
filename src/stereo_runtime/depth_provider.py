@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, asdict, field
 import importlib
+import importlib.util
 import os
 from pathlib import Path
 from typing import Any, Callable
@@ -12,7 +13,7 @@ import torch.nn.functional as F
 
 from .depth_upsample import DepthUpsampleMode, upsample_depth
 from .output import ensure_bchw, ensure_b1hw, match_depth
-from .progress import DownloadProgress, progress_write
+from .progress import DownloadProgress, progress_write, status_write
 from utils.network import huggingface_endpoint_candidates
 
 DISTILL_ANY_DEPTH_BASE_NAME = "Distill-Any-Depth-Base"
@@ -34,6 +35,9 @@ INFINIDEPTH_ENCODERS = {
 }
 _RESOLVED_HF_MODEL_FILES: dict[tuple[str, str], str] = {}
 _MODEL_WEIGHT_FILENAMES = ("model.safetensors", "model.pt", "model.ckpt")
+
+def _onnxruntime_available() -> bool:
+    return importlib.util.find_spec("onnxruntime") is not None
 
 
 @dataclass(frozen=True)
@@ -174,12 +178,52 @@ def _find_local_model_weight(model_dir: str | Path) -> str | None:
         return None
     for filename in _MODEL_WEIGHT_FILENAMES:
         direct = root / filename
-        if direct.exists():
+        if _is_valid_model_weight_file(direct):
             return str(direct)
         for path in root.rglob(filename):
-            if path.is_file():
+            if _is_valid_model_weight_file(path):
                 return str(path)
     return None
+
+
+def _is_valid_model_weight_file(path: str | Path) -> bool:
+    try:
+        p = Path(path)
+        return p.is_file() and p.stat().st_size > 0
+    except OSError:
+        return False
+
+
+def _remove_invalid_model_weight(path: str | Path) -> None:
+    try:
+        p = Path(path)
+        if p.exists() and p.stat().st_size <= 0:
+            p.unlink()
+    except OSError:
+        pass
+
+
+def _download_hf_file_direct(model_id: str, filename: str, cache_dir: str | Path, endpoint: str) -> str:
+    import requests
+    from .model_registry import resolve_model_dir
+
+    target_dir = resolve_model_dir(model_id, cache_dir)
+    target_dir.mkdir(parents=True, exist_ok=True)
+    target = target_dir / filename
+    tmp = target.with_suffix(target.suffix + ".tmp")
+    url = _hf_resolve_url(endpoint, model_id, filename)
+    _progress_print(f"[Main] Direct model download fallback: {url} -> {target}")
+    response = requests.get(url, headers=HF_DOWNLOAD_HEADERS, stream=True, timeout=30)
+    response.raise_for_status()
+    with open(tmp, "wb") as handle:
+        for chunk in response.iter_content(chunk_size=1024 * 1024):
+            if chunk:
+                handle.write(chunk)
+    if not _is_valid_model_weight_file(tmp):
+        _remove_invalid_model_weight(tmp)
+        raise FileNotFoundError(f"direct download produced empty model weight: {target}")
+    os.replace(tmp, target)
+    return str(target)
 
 
 def _progress_print(message):
@@ -190,15 +234,19 @@ def _progress_print(message):
 def _hf_download_progress_patch():
     originals = []
     try:
-        for module_name in ("huggingface_hub.utils.tqdm", "huggingface_hub.file_download"):
+        for module_name, attr in (
+            ("huggingface_hub.utils.tqdm", "tqdm"),
+            ("huggingface_hub.file_download", "tqdm"),
+            ("huggingface_hub._snapshot_download", "hf_tqdm"),
+        ):
             module = importlib.import_module(module_name)
-            originals.append((module, getattr(module, "tqdm", None)))
-            setattr(module, "tqdm", DownloadProgress)
+            originals.append((module, attr, getattr(module, attr, None)))
+            setattr(module, attr, DownloadProgress)
         yield
     finally:
-        for module, original in reversed(originals):
+        for module, attr, original in reversed(originals):
             if original is not None:
-                setattr(module, "tqdm", original)
+                setattr(module, attr, original)
 
 
 @contextmanager
@@ -318,8 +366,11 @@ def _resolve_hf_model_file(
     cache_key = (str(model_id), str(Path(cache_dir).resolve()))
     if not force_download:
         cached = _RESOLVED_HF_MODEL_FILES.get(cache_key)
-        if cached and Path(cached).exists():
+        if cached and _is_valid_model_weight_file(cached):
             return cached
+        if cached:
+            _remove_invalid_model_weight(cached)
+            _RESOLVED_HF_MODEL_FILES.pop(cache_key, None)
         from .model_registry import resolve_model_dir
 
         local_path = _find_local_model_weight(resolve_model_dir(model_id, cache_dir))
@@ -339,6 +390,9 @@ def _resolve_hf_model_file(
                     cache_dir=cache_dir_text,
                     local_files_only=True,
                 )
+                if not _is_valid_model_weight_file(path):
+                    _remove_invalid_model_weight(path)
+                    raise FileNotFoundError(f"cached model weight is empty: {path}")
                 _progress_print(f"[Main] Depth model cache hit: {path}")
                 _RESOLVED_HF_MODEL_FILES[cache_key] = path
                 return path
@@ -356,6 +410,9 @@ def _resolve_hf_model_file(
                         f"[Main] Preparing depth model download: {model_id}/{filename} "
                         f"to {cache_dir_text}. First download may take several minutes."
                     )
+                    status_write(
+                        f"正在下载深度模型权重：{model_id}/{filename}。首次下载可能需要几分钟，进度请看上方进度条。"
+                    )
                     download_url = _hf_resolve_url(endpoint, model_id, filename)
                     _progress_print(f"[Main] Model download URL: {download_url}")
                     _probe_download_url(download_url)
@@ -367,10 +424,30 @@ def _resolve_hf_model_file(
                         force_download=force_download,
                         tqdm_class=DownloadProgress,
                     )
+                    if not _is_valid_model_weight_file(path):
+                        _remove_invalid_model_weight(path)
+                        path = hf_hub_download(
+                            repo_id=model_id,
+                            filename=filename,
+                            cache_dir=cache_dir_text,
+                            force_download=True,
+                            tqdm_class=DownloadProgress,
+                        )
+                    if not _is_valid_model_weight_file(path):
+                        _remove_invalid_model_weight(path)
+                        path = _download_hf_file_direct(model_id, filename, cache_dir, endpoint)
+                    status_write("深度模型权重下载完成，正在准备下一步。")
                     _RESOLVED_HF_MODEL_FILES[cache_key] = path
                     return path
                 except Exception as exc:
                     last_error = exc
+                    try:
+                        path = _download_hf_file_direct(model_id, filename, cache_dir, endpoint)
+                        status_write("深度模型权重下载完成，正在准备下一步。")
+                        _RESOLVED_HF_MODEL_FILES[cache_key] = path
+                        return path
+                    except Exception as direct_exc:
+                        last_error = direct_exc
                     _progress_print(f"[Main] Depth model download failed from {endpoint}: {type(exc).__name__}: {exc}")
     _raise_model_resolution_error(model_id, last_error, local_only=False)
 
@@ -629,7 +706,7 @@ class InfiniDepthProvider:
         self.depth_upsample = depth_upsample
         self.depth_upsample_edge_strength = float(depth_upsample_edge_strength)
         self.info = DepthProviderInfo(
-            provider="models.InfiniDepth.api.InfiniDepthModel",
+            provider="stereo_runtime.model_impl.InfiniDepth.api.InfiniDepthModel",
             model_name=self.model_name,
             model_id=self.model_id,
             depth_resolution=self.depth_resolution,
@@ -644,7 +721,7 @@ class InfiniDepthProvider:
         if self._model is not None:
             return self._model
 
-        from models.InfiniDepth.api import InfiniDepthModel
+        from stereo_runtime.model_impl.InfiniDepth.api import InfiniDepthModel
 
         model_path = _resolve_hf_model_file(
             self.model_id,
@@ -881,42 +958,52 @@ def create_depth_provider(config: DepthProviderConfig | dict[str, Any] | None = 
             depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
         )
 
-    if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
-        from .providers.nvidia.tensorrt_ort import TensorRtOrtDepthProvider
+    ort_available = _onnxruntime_available()
 
-        return TensorRtOrtDepthProvider(
-            device=device,
-            cache_dir=cfg.cache_dir,
-            onnx_path=cfg.onnx_path,
-            onnx_dtype=cfg.onnx_dtype,
-            trt_cache_dir=cfg.trt_cache_dir,
-            local_files_only=cfg.local_files_only,
-            force_download=cfg.force_download,
-            model_id=cfg.model_id,
-            model_name=cfg.model_name,
-            depth_upsample=cfg.depth_upsample,
-            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
-        )
+    if backend in {"distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort"} and cfg.prefer_tensorrt:
+        if not ort_available:
+            if cfg.require_tensorrt or not cfg.allow_pytorch_fallback:
+                raise RuntimeError("ONNX Runtime is not installed; TensorRT ORT depth provider is unavailable")
+        else:
+            from .providers.nvidia.tensorrt_ort import TensorRtOrtDepthProvider
+
+            return TensorRtOrtDepthProvider(
+                device=device,
+                cache_dir=cfg.cache_dir,
+                onnx_path=cfg.onnx_path,
+                onnx_dtype=cfg.onnx_dtype,
+                trt_cache_dir=cfg.trt_cache_dir,
+                local_files_only=cfg.local_files_only,
+                force_download=cfg.force_download,
+                model_id=cfg.model_id,
+                model_name=cfg.model_name,
+                depth_upsample=cfg.depth_upsample,
+                depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
+            )
 
     if backend in {"distill_base_nvidia", "nvidia_chain", "onnx_cuda", "onnx_cuda_iobinding"} and cfg.prefer_onnx:
-        from .providers.nvidia.onnx_cuda import OnnxCudaDepthProvider
+        if not ort_available:
+            if not cfg.allow_pytorch_fallback:
+                raise RuntimeError("ONNX Runtime is not installed; ONNX CUDA depth provider is unavailable")
+        else:
+            from .providers.nvidia.onnx_cuda import OnnxCudaDepthProvider
 
-        return OnnxCudaDepthProvider(
-            device=device,
-            cache_dir=cfg.cache_dir,
-            onnx_path=cfg.onnx_path,
-            onnx_dtype=cfg.onnx_dtype,
-            model_id=cfg.model_id,
-            model_name=cfg.model_name,
-            use_iobinding=cfg.use_iobinding,
-            use_dlpack=cfg.use_dlpack,
-            local_files_only=cfg.local_files_only,
-            force_download=cfg.force_download,
-            depth_upsample=cfg.depth_upsample,
-            depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
-        )
+            return OnnxCudaDepthProvider(
+                device=device,
+                cache_dir=cfg.cache_dir,
+                onnx_path=cfg.onnx_path,
+                onnx_dtype=cfg.onnx_dtype,
+                model_id=cfg.model_id,
+                model_name=cfg.model_name,
+                use_iobinding=cfg.use_iobinding,
+                use_dlpack=cfg.use_dlpack,
+                local_files_only=cfg.local_files_only,
+                force_download=cfg.force_download,
+                depth_upsample=cfg.depth_upsample,
+                depth_upsample_edge_strength=cfg.depth_upsample_edge_strength,
+            )
 
-    if backend in {"distill_base_518", "pytorch_cuda", "pytorch"}:
+    if backend in {"distill_base_518", "distill_base_nvidia", "nvidia_chain", "tensorrt", "tensorrt_ort", "onnx_cuda", "onnx_cuda_iobinding", "pytorch_cuda", "pytorch"}:
         if cfg.model_id != DISTILL_ANY_DEPTH_BASE_MODEL_ID:
             if _is_infinidepth_model(cfg.model_id):
                 return InfiniDepthProvider(

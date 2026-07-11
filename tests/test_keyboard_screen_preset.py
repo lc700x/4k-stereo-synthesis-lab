@@ -40,7 +40,6 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     viewer._keyboard_visible = True
     viewer._keyboard_width = 1.0
     viewer._keyboard_height = 0.2
-    viewer._keyboard_tex = object()
     viewer._kb_last_build_width = 1.0
     viewer._screen_footprint_logged = set()
     viewer._border_alpha = 0.0
@@ -50,16 +49,16 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     viewer._preset_osd_last_key = (0, "Small  2.00 x 1.12 m")
     viewer._reset_orientation_offsets = lambda: None
     viewer._clear_screen_grab_anchors = lambda: None
-    viewer._build_keyboard_texture_called = False
+    viewer._refresh_keyboard_content_called = False
     viewer._anchor_keyboard_below_screen_called = False
 
-    def _build_keyboard_texture():
-        viewer._build_keyboard_texture_called = True
+    def _refresh_keyboard_content():
+        viewer._refresh_keyboard_content_called = True
 
     def _anchor_keyboard_below_screen():
         viewer._anchor_keyboard_below_screen_called = True
 
-    monkeypatch.setattr(viewer, "_build_keyboard_texture", _build_keyboard_texture)
+    monkeypatch.setattr(viewer, "_refresh_keyboard_content", _refresh_keyboard_content)
     monkeypatch.setattr(viewer, "_anchor_keyboard_below_screen", _anchor_keyboard_below_screen)
 
     assert viewer._apply_preset(1)
@@ -75,7 +74,7 @@ def test_keyboard_scales_with_screen_preset(monkeypatch):
     assert viewer._preset_osd_last_key is None
     assert viewer._keyboard_width == 2.0
     assert viewer._keyboard_height > 0.0
-    assert viewer._build_keyboard_texture_called
+    assert viewer._refresh_keyboard_content_called
     assert viewer._anchor_keyboard_below_screen_called
 
     viewer._head_pos_w = np.array([0.0, 1.0, -2.0], dtype=np.float32)
@@ -157,7 +156,13 @@ def test_laser_hit_circle_radius_uses_eye_to_hit_distance(monkeypatch):
 
     assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -4.0]), 1.0) == 4.0
     assert viewer._cursor_ring_distance_from_eye(np.array([0.0, 0.0, -0.5]), 4.0) == 0.5
-    assert viewer._cursor_ring_specs(0.5)[0][0] < viewer._cursor_ring_specs(4.0)[0][0]
+    assert viewer._cursor_ring_specs(0.5)[0][1] < viewer._cursor_ring_specs(4.0)[0][1]
+    assert [spec[0] for spec in viewer._cursor_ring_specs(1.0)] == ["ring", "disk"]
+    laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
+    cursor_func = laser_text.split("def _cursor_ring_distance_from_eye", 1)[1].split(
+        "def _cursor_ring_model", 1
+    )[0]
+    assert "np.linalg.inv(view_mat)" not in cursor_func
 
 
 def test_laser_hit_circle_model_is_shared_by_screen_and_keyboard(monkeypatch):
@@ -188,25 +193,44 @@ def test_laser_hit_circle_model_is_shared_by_screen_and_keyboard(monkeypatch):
     assert np.isclose(np.linalg.norm(keyboard_model[:3, 0]), 0.02)
 
     laser_text = (SRC / "xr_viewer" / "core_laser_render.py").read_text(encoding="utf-8")
-    render_block = laser_text.split("def _render_laser_hit_circles", 1)[1]
-    render_block = render_block.split("def _controller_anim_delta", 1)[0]
-    assert "model = self._cursor_ring_model(hit_target, hit_pos, radius)" in render_block
-    assert "if hit_target == 'screen':" not in render_block
-    assert "elif hit_target == 'keyboard':" not in render_block
+    draw_block = laser_text.split("def _laser_hit_circle_draws", 1)[1].split(
+        "def _render_laser_hit_circles", 1
+    )[0]
+    render_block = laser_text.split("def _render_laser_hit_circles", 1)[1].split(
+        "def _controller_anim_delta", 1
+    )[0]
+    assert "self._cursor_ring_model(hit_target, hit_pos, radius)" in draw_block
+    assert "if hit_target == 'screen':" not in draw_block
+    assert "elif hit_target == 'keyboard':" not in draw_block
+    assert 'shape == "ring"' in render_block
+    assert "moderngl.TRIANGLES" in render_block
+    assert "moderngl.TRIANGLE_FAN" in render_block
 
 
 def test_laser_hit_circles_render_without_depth_test_like_keyboard_cursor():
+    presenter_text = (SRC / "xr_viewer" / "overlay_layer_presenter.py").read_text(encoding="utf-8")
+    render_overlays = presenter_text.split("def render_projection_overlays", 1)[1]
+    hit_circle_block = render_overlays.split("'laser hit circle'", 1)[1]
+    hit_circle_block = hit_circle_block.split("viewer.ctx.disable(moderngl.BLEND)", 1)[0]
+
+    disable_depth = hit_circle_block.index("viewer.ctx.disable(moderngl.DEPTH_TEST)")
+    draw_hit_circles = hit_circle_block.index("viewer._render_lasers(mgl_fbo, vp_mat, blend=True)")
+    enable_blend = hit_circle_block.index("viewer.ctx.enable(moderngl.BLEND)")
+    assert disable_depth < enable_blend < draw_hit_circles
+    assert "set_depth_mask(False)" in hit_circle_block
+    assert "set_depth_mask(True)" in render_overlays
+
+
+def test_render_eye_delegates_projection_overlays_to_presenter():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
     render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    hit_circle_block = render_eye.split("# 9. Laser hit circles", 1)[1]
-    hit_circle_block = hit_circle_block.split("# 10. FPS/status overlays", 1)[0]
+    render_eye = render_eye.split("    # OpenXR event loop", 1)[0]
 
-    disable_depth = hit_circle_block.index("self.ctx.disable(moderngl.DEPTH_TEST)")
-    draw_hit_circles = hit_circle_block.index("self._render_lasers(mgl_fbo, vp_mat, blend=True)")
-    enable_depth = hit_circle_block.index("self.ctx.enable(moderngl.DEPTH_TEST)")
-    assert disable_depth < draw_hit_circles < enable_depth
-    assert "self.ctx.depth_mask = False" in hit_circle_block
-    assert "self.ctx.depth_mask = True" in hit_circle_block
+    assert "OverlayLayerPresenter(self)" in render_eye
+    assert "render_projection_overlays(" in render_eye
+    assert "self._render_keyboard(mgl_fbo, vp_mat)" not in render_eye
+    assert "def _render_keyboard" not in (SRC / "xr_viewer" / "core_keyboard.py").read_text(encoding="utf-8")
+    assert "self._render_lasers(mgl_fbo, vp_mat, blend=True)" not in render_eye
 
 
 def test_openxr_keyboard_hover_pulses_controller_haptics_on_key_changes():
@@ -433,13 +457,15 @@ def test_screen_border_hides_when_idle_alpha_reaches_zero():
     assert "border_prog['u_border_uv'].value" in impl_text
 
 
-def test_openxr_startup_seed_frame_does_not_mark_fresh_source():
-    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    startup_block = impl_text.split("# Upload the first frame supplied by main.py", 1)[1].split("# Default fallback projection", 1)[0]
+def test_openxr_startup_seed_frame_marks_fresh_only_after_renderable_source():
+    pipeline_text = (SRC / "xr_viewer" / "openxr_frame_pipeline.py").read_text(encoding="utf-8")
+    startup_block = pipeline_text.split("def seed_first_frame", 1)[1].split("def begin_loop_frame", 1)[0]
 
-    assert "self._update_runtime_frame(first_runtime_result)" in startup_block
-    assert "self._update_frame(first_rgb, first_depth)" in startup_block
-    assert "self._mark_source_frame_received()" not in startup_block
+    assert "viewer._update_runtime_frame(first_runtime_result)" in startup_block
+    assert "viewer._update_frame(first_rgb, first_depth)" in startup_block
+    assert "bridge.latest_frame = first_source_frame" in startup_block
+    assert "bridge.mark_presented(first_source_frame)" not in startup_block
+    assert startup_block.count("viewer._mark_source_frame_received()") == 1
 
 
 def test_shader_sources_live_in_glsl_module():
@@ -482,54 +508,6 @@ def test_a_short_press_toggles_curved_screen_only_when_unlocked():
     assert "self._preset_name_overlay = 'Curved Screen' if self._screen_curved else 'Flat Screen'" in impl_text
 
 
-def test_curved_screen_uses_same_fragment_path_as_flat_screen():
-    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-
-    assert "elif self._screen_curved and self._curved_prog is not None and not self._runtime_direct_source" not in impl_text
-    assert "if self._screen_curved and self._curved_prog is not None:" in impl_text
-    assert "screen_tex = self._prepare_screen_quality_texture(" in impl_text
-    curved_block = impl_text.split("if self._screen_curved and self._curved_prog is not None:", 1)[1]
-    curved_block = curved_block.split("else:", 1)[0]
-    assert "self._curved_copy_prog" not in curved_block
-    assert "self._curved_copy_vao" not in curved_block
-    assert "screen_tex.use(location=0)" in curved_block
-    assert "screen_depth_tex.use(location=1)" in curved_block
-    assert "self._curved_prog['u_roll'].value = 0.0 if self._runtime_direct_source else self.screen_roll" in curved_block
-    assert "self._curved_prog['u_eye_offset'].value = screen_eye_offset" in curved_block
-    assert "self._curved_prog['u_depth_strength'].value = screen_depth_strength" in curved_block
-    for uniform in ("u_resolution", "u_feather_enabled", "u_feather_width", "u_viewport"):
-        assert f"self._curved_prog['{uniform}']" in curved_block
-
-
-def test_openxr_screen_shader_uniforms_are_initialized_for_flat_and_curved_paths():
-    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
-
-    assert "screen_source_size = (" in render_eye
-    assert "runtime_rgb_depth_max_disparity_px = (" in render_eye
-    assert "runtime_rgb_depth_render_width = (" in render_eye
-    assert "screen_disparity_uv = max(0.0, runtime_rgb_depth_max_disparity_px) / float(runtime_rgb_depth_render_width)" in render_eye
-    assert "screen_depth_strength = (" in render_eye
-    assert "if self._runtime_direct_source" in render_eye
-    assert "_runtime_rgb_depth_depth_strength" in render_eye
-    assert "screen_eye_offset = 0.0 if self._runtime_direct_source else eye_sign * screen_disparity_uv / 2.0" in render_eye
-    assert "runtime_rgb_depth_stereo_scale" not in render_eye
-    assert "runtime_rgb_depth_max_shift_ratio" not in render_eye
-    assert "screen_ipd_uv" not in render_eye
-    assert "shader_resolution_mode = str(getattr(self, '_openxr_rgb_depth_shader_resolution', 'source') or 'source')" in render_eye
-    assert "elif shader_resolution_mode == 'swapchain':" in render_eye
-    assert "shader_resolution = None" in render_eye
-    assert "f\" max_disparity_px={runtime_rgb_depth_max_disparity_px:.3f}\"" in render_eye
-    assert "f\" render_width={runtime_rgb_depth_render_width}\"" in render_eye
-    assert "f\" disparity_uv={screen_disparity_uv:.6f}\"" in render_eye
-    assert "feather_enabled = bool(runtime_rgb_depth and self._openxr_rgb_depth_feather)" in render_eye
-    for program_name in ("self.prog", "self._curved_prog"):
-        assert f"{program_name}['u_eye_offset'].value = screen_eye_offset" in render_eye
-        assert f"{program_name}['u_depth_strength'].value = screen_depth_strength" in render_eye
-        for uniform in ("u_resolution", "u_feather_enabled", "u_feather_width", "u_viewport"):
-            assert f"{program_name}['{uniform}']" in render_eye
-
 
 def test_viewer_shader_uses_beta_subpixel_screen_edge_clip():
     shader_text = (SRC / "viewer" / "viewer.py").read_text(encoding="utf-8")
@@ -557,31 +535,48 @@ def test_curved_screen_grip_drag_uses_curved_uv_hit_point_not_flat_plane():
     assert "np.dot(screen_normal, ray_dir)" not in curved_branch
 
 
-def test_curved_border_is_rendered_behind_screen_not_over_image():
+
+def test_screen_presenter_draws_projection_screen_body():
     impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-    render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    before_main, after_main = render_eye.split("# Main screen", 1)
-    after_main = after_main.split("# Optional screen effects on/around", 1)[0]
+    quad_text = (SRC / "xr_viewer" / "core_quad_layer.py").read_text(encoding="utf-8")
 
-    assert "if self._screen_curved:" in before_main
-    assert "self._render_border(mgl_fbo, vp_mat)" in before_main
-    assert "if not self._screen_curved:" in after_main
-    assert "self._render_border(mgl_fbo, vp_mat)" in after_main
+    quad_reason = quad_text.split("def _quad_layer_unavailable_reason(self):", 1)[1]
+    quad_reason = quad_reason.split("def _quad_layer_screen_presentable", 1)[0]
+    make_quad = quad_text.split("def _make_quad_layer", 1)[1]
+    update_quad = quad_text.split("def _update_quad_layer_swapchain", 1)[1].split(
+        "def _update_quad_layer_swapchains", 1
+    )[0]
+    update_quad_finally = update_quad.split("finally:", 1)[1]
+    update_quads = quad_text.split("def _update_quad_layer_swapchains", 1)[1].split(
+        "def _screen_pose_quat_xyzw", 1
+    )[0]
+    update_quads_finally = update_quads.split("finally:", 1)[1]
+    assert "return \"disabled\"" not in quad_reason
+    assert "return \"inactive\"" in quad_reason
+    assert "return \"not_runtime_direct\"" in quad_reason
+    assert "return \"curved_screen\"" in quad_reason
+    assert "return \"missing_swapchain\"" in quad_reason
+    assert "return \"missing_source_texture\"" in quad_reason
+    assert "_quad_layer_can_replace_projection_screen" not in quad_text
+    assert "def _quad_layer_screen_presentable" in quad_text
+    assert "reason is None or" in quad_text
+    assert "reason == 'missing_source_texture' and self._quad_layer_has_presented_frame()" in quad_text
+    assert "_quad_layer_pose_state()" in make_quad
+    assert "_screen_pose_quat_xyzw()" not in make_quad
+    for finally_block in (update_quad_finally, update_quads_finally):
+        assert "self.ctx.viewport = prev_viewport" in finally_block
+        assert "self.ctx.enable(moderngl.DEPTH_TEST)" in finally_block
 
-
-def test_quad_layer_is_disabled_and_projection_screen_is_always_drawn():
-    impl_text = (SRC / "xr_viewer" / "implementation.py").read_text(encoding="utf-8")
-
-    quad_gate = impl_text.split("def _quad_layer_can_replace_projection_screen(self):", 1)[1]
-    quad_gate = quad_gate.split("def _update_quad_layer_swapchain", 1)[0]
-    assert "return False" in quad_gate
-    assert "self._xr_quad_layer_active" not in quad_gate
-
-    render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye = render_eye.split("# Flat border is a foreground guide", 1)[0]
-    assert "draw_projection_screen" not in render_eye
-    assert "_quad_layer_can_replace_projection_screen" not in render_eye
-    assert "screen_depth_tex = self._runtime_depth_texture" in render_eye
+    presenter_text = (SRC / "xr_viewer" / "screen_layer_presenter.py").read_text(encoding="utf-8")
+    assert "def render_projection_screen" in presenter_text
+    render_overlay = presenter_text.split("def render_projection_screen", 1)[1].split(
+        "def projection_layer_needed", 1
+    )[0]
+    assert "openxr_projection_screen_render" in render_overlay
+    assert "vertex_array.render(moderngl.TRIANGLE_STRIP" in render_overlay
+    assert "screen_depth_tex = viewer._runtime_depth_texture" in render_overlay
+    assert "viewer._render_border(mgl_fbo, vp_mat)" in render_overlay
+    assert "openxr_projection_screen_skipped" not in presenter_text
 
 
 def test_curved_screen_geometry_uses_beta_fixed_angle_arc_and_gl_state_reset():
@@ -608,14 +603,6 @@ def test_curved_screen_geometry_uses_beta_fixed_angle_arc_and_gl_state_reset():
     assert "radius = half_w / max(half_ang, 1e-6)" in laser_hit
     assert "origin = np.array([self.screen_pan_x, self.screen_pan_y, -self.screen_distance]" in laser_hit
     assert "radius = max(self.screen_distance" not in laser_hit
-
-    render_eye = impl_text.split("def _render_eye(self, eye_index, mgl_fbo, view_mat, proj_mat, flip_y=False):", 1)[1]
-    render_eye = render_eye.split("if self._screen_curved and self._curved_prog is not None:", 1)[0]
-    assert "self.ctx.enable(moderngl.DEPTH_TEST)" in render_eye
-    assert "self.ctx.depth_mask = True" in render_eye
-    assert "self.ctx.disable(moderngl.BLEND)" in render_eye
-    assert "self.ctx.disable(moderngl.CULL_FACE)" in render_eye
-    assert "glFrontFace(GL_CCW)" in render_eye
 
 
 def test_x_long_press_cycles_default_glow_and_y_no_longer_uses_grip_glow():

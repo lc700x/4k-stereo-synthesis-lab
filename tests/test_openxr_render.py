@@ -8,6 +8,7 @@ import torch.nn.functional as F
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
+import stereo_runtime.openxr_render as openxr_render_module
 from stereo_runtime.baseline_shift import ShiftParams, compute_shift_px, warp_horizontal
 from stereo_runtime.openxr_render import (
     OpenXREyeView,
@@ -92,6 +93,23 @@ def test_openxr_stereo_result_shapes_and_debug():
     assert result.debug_info["screen_roll"] == 0.25
     assert result.debug_info["parallax_budget_preset"] == "standard"
     assert result.debug_info["parallax_resolver_version"] == 1
+
+
+def test_openxr_stereo_reuses_single_shift_field(monkeypatch):
+    rgb, depth = make_inputs(width=33, height=21)
+    calls = 0
+    original = openxr_render_module.compute_shift_px
+
+    def wrapped_compute_shift_px(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(openxr_render_module, "compute_shift_px", wrapped_compute_shift_px)
+
+    render_openxr_stereo(rgb, depth, OpenXRRenderConfig(screen_roll=0.25))
+
+    assert calls == 1
 
 
 def test_openxr_screen_model_matrix_uses_screen_pose():

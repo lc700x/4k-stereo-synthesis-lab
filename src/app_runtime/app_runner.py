@@ -54,6 +54,8 @@ class AppModeCallbacks:
     shutdown_is_set: Callable
     breakdown_inc: Callable
     breakdown_add_time: Callable
+    breakdown_add_value: Callable
+    breakdown_set_latest: Callable
     log_fps_breakdown: Callable
     is_window_visible_on_screen: Callable
     set_rtmp_thread: Callable
@@ -204,6 +206,8 @@ def build_app_mode_callbacks(
     shutdown_is_set,
     breakdown_inc,
     breakdown_add_time,
+    breakdown_add_value,
+    breakdown_set_latest,
     log_fps_breakdown,
     is_window_visible_on_screen,
     set_rtmp_thread,
@@ -223,6 +227,8 @@ def build_app_mode_callbacks(
         shutdown_is_set=shutdown_is_set,
         breakdown_inc=breakdown_inc,
         breakdown_add_time=breakdown_add_time,
+        breakdown_add_value=breakdown_add_value,
+        breakdown_set_latest=breakdown_set_latest,
         log_fps_breakdown=log_fps_breakdown,
         is_window_visible_on_screen=is_window_visible_on_screen,
         set_rtmp_thread=set_rtmp_thread,
@@ -327,6 +333,11 @@ def run_app_mode(mode, *, runtime_q, thread_latencies, settings: AppModeSettings
             bootstrap_done_set=callbacks.bootstrap_done_set,
             breakdown_inc=callbacks.breakdown_inc,
             breakdown_add_time=callbacks.breakdown_add_time,
+            breakdown_add_value=callbacks.breakdown_add_value,
+            breakdown_set_latest=callbacks.breakdown_set_latest,
+            render_active_event=callbacks.render_active_event,
+            source_active_event=callbacks.source_active_event,
+            idle_active_event=callbacks.idle_active_event,
         )
         return AppRunResult(
             stats=stats,

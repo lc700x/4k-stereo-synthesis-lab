@@ -8,6 +8,13 @@ def clamp01(value):
         return 0.0
 
 
+def _cpu_scalar_buffer(torch, tensor):
+    try:
+        return torch.empty((), dtype=torch.float32, device="cpu", pin_memory=bool(getattr(tensor, "is_cuda", False)))
+    except Exception:
+        return torch.empty((), dtype=torch.float32, device="cpu")
+
+
 class RuntimeMotionSampler:
     def __init__(self):
         self.last_motion_frame = None
@@ -21,7 +28,7 @@ class RuntimeMotionSampler:
 
             if self.pending_motion is not None:
                 if self.pending_motion_event is None or self.pending_motion_event.query():
-                    self.last_motion_score = clamp01(float(self.pending_motion.item()) * 4.0)
+                    self.last_motion_score = clamp01(float(self.pending_motion.detach()) * 4.0)
                     self.pending_motion = None
                     self.pending_motion_event = None
 
@@ -43,16 +50,18 @@ class RuntimeMotionSampler:
             if self.last_motion_frame is None:
                 self.last_motion_frame = frame.detach()
                 return self.last_motion_score
-            motion_tensor = (frame - self.last_motion_frame).abs().mean()
+            motion_tensor = (frame - self.last_motion_frame).abs().mean().detach().float()
             self.last_motion_frame = frame.detach()
             if motion_tensor.is_cuda:
                 if self.pending_motion is None:
+                    pending = _cpu_scalar_buffer(torch, motion_tensor)
+                    pending.copy_(motion_tensor, non_blocking=True)
                     event = torch.cuda.Event()
                     event.record(torch.cuda.current_stream(motion_tensor.device))
-                    self.pending_motion = motion_tensor.detach()
+                    self.pending_motion = pending
                     self.pending_motion_event = event
             else:
-                self.last_motion_score = clamp01(float(motion_tensor.item()) * 4.0)
+                self.last_motion_score = clamp01(float(motion_tensor) * 4.0)
                 self.pending_motion = None
                 self.pending_motion_event = None
             return self.last_motion_score

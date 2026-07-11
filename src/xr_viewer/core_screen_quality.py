@@ -2,6 +2,7 @@ import os
 import math
 
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 import numpy as np
 
 
@@ -126,28 +127,34 @@ class CoreScreenQualityMixin:
         out_w, out_h = target_size
 
         prev_viewport = self.ctx.viewport
-        prev_depth_mask = self.ctx.depth_mask
-        self.ctx.disable(moderngl.DEPTH_TEST)
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = False
+        prev_depth_mask = get_depth_mask()
+        try:
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.ctx.disable(moderngl.BLEND)
+            set_depth_mask(False)
 
-        self._screen_ds_fbo.use()
-        self.ctx.viewport = (0, 0, out_w, out_h)
-        source_tex.use(location=0)
-        self._screen_ds_prog['u_input_size'].value = (float(src_w), float(src_h))
-        self._screen_ds_vao.render(moderngl.TRIANGLE_STRIP)
+            self._screen_ds_fbo.use()
+            self.ctx.viewport = (0, 0, out_w, out_h)
+            source_tex.use(location=0)
+            self._screen_ds_prog['u_input_size'].value = (float(src_w), float(src_h))
+            self._screen_ds_vao.render(moderngl.TRIANGLE_STRIP)
 
-        self._screen_rcas_fbo.use()
-        self.ctx.viewport = (0, 0, out_w, out_h)
-        self._screen_ds_tex.use(location=0)
-        self._screen_rcas_prog['u_output_size'].value = (float(out_w), float(out_h))
-        self._screen_rcas_prog['u_sharpness'].value = float(self._screen_quality_sharpness)
-        self._screen_rcas_vao.render(moderngl.TRIANGLE_STRIP)
-
-        self.ctx.viewport = prev_viewport
-        self.ctx.depth_mask = prev_depth_mask
-        self.ctx.enable(moderngl.DEPTH_TEST)
-        return self._screen_rcas_tex
+            self._screen_rcas_fbo.use()
+            self.ctx.viewport = (0, 0, out_w, out_h)
+            self._screen_ds_tex.use(location=0)
+            self._screen_rcas_prog['u_output_size'].value = (float(out_w), float(out_h))
+            self._screen_rcas_prog['u_sharpness'].value = float(self._screen_quality_sharpness)
+            self._screen_rcas_vao.render(moderngl.TRIANGLE_STRIP)
+            return self._screen_rcas_tex
+        except Exception as exc:
+            print(f"[OpenXRViewer] screen quality render failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_screen_quality_failed")
+            return None
+        finally:
+            self.ctx.viewport = prev_viewport
+            set_depth_mask(prev_depth_mask)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+            self.ctx.disable(moderngl.BLEND)
 
     def _ensure_glow_downsample_resources(self, size):
         if self._glow_ds_size == tuple(size) and self._glow_ds_tex is not None and self._glow_ds_fbo is not None:
@@ -166,43 +173,80 @@ class CoreScreenQualityMixin:
         self._glow_ds_fbo = self.ctx.framebuffer(color_attachments=[self._glow_ds_tex])
         self._glow_ds_size = (w, h)
 
-    def _prepare_glow_downsample_texture(self, source_tex, source_size):
+    def _glow_downsample_key_and_size(self, source_tex, source_size, target_size=None):
         if source_tex is None or source_size is None:
             return None
         src_w, src_h = int(source_size[0]), int(source_size[1])
         if src_w <= 0 or src_h <= 0:
             return None
-        out_w = max(32, min(192, src_w // 20))
-        out_h = max(18, min(108, src_h // 20))
-        out_w = max(2, out_w & ~1)
-        out_h = max(2, out_h & ~1)
-        self._ensure_glow_downsample_resources((out_w, out_h))
+        if target_size is None:
+            out_w = max(32, min(192, src_w // 20))
+            out_h = max(18, min(108, src_h // 20))
+            out_w = max(2, out_w & ~1)
+            out_h = max(2, out_h & ~1)
+        else:
+            out_w = max(1, int(target_size[0]))
+            out_h = max(1, int(target_size[1]))
+        source_frame_id = None
+        scheduler_factory = getattr(self, '_runtime_effect_submit_scheduler', None)
+        if getattr(self, '_runtime_direct_source', False) and callable(scheduler_factory):
+            safe_tex, _safe_size, safe_frame_id = scheduler_factory().latest_safe()
+            if source_tex is safe_tex:
+                source_frame_id = int(safe_frame_id or 0)
         cache_key = (
-            int(getattr(self, '_frame_count', 0)),
-            int(getattr(self, '_current_eye_index', 0) or 0),
+            int(source_frame_id if source_frame_id is not None else getattr(self, '_frame_count', 0)),
             int(getattr(source_tex, 'glo', 0) or 0),
             src_w,
             src_h,
             out_w,
             out_h,
         )
-        if getattr(self, '_glow_ds_cache_key', None) == cache_key:
+        return cache_key, (out_w, out_h), (src_w, src_h)
+
+    def _cached_glow_downsample_texture(self, source_tex, source_size, target_size=None):
+        info = self._glow_downsample_key_and_size(source_tex, source_size, target_size=target_size)
+        if info is None:
+            return None
+        cache_key, _out_size, _source_size = info
+        if (
+            getattr(self, '_glow_ds_cache_key', None) == cache_key
+            and getattr(self, '_glow_ds_tex', None) is not None
+        ):
+            self._breakdown_inc("openxr_glow_downsample_reuse")
             return self._glow_ds_tex
+        return None
+
+    def _prepare_glow_downsample_texture(self, source_tex, source_size, target_size=None):
+        info = self._glow_downsample_key_and_size(source_tex, source_size, target_size=target_size)
+        if info is None:
+            return None
+        cache_key, (out_w, out_h), (src_w, src_h) = info
+        cached = self._cached_glow_downsample_texture(source_tex, source_size, target_size=target_size)
+        if cached is not None:
+            return cached
+        self._ensure_glow_downsample_resources((out_w, out_h))
 
         prev_viewport = self.ctx.viewport
-        prev_depth_mask = self.ctx.depth_mask
-        self.ctx.disable(moderngl.DEPTH_TEST)
-        self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = False
+        prev_depth_mask = get_depth_mask()
+        try:
+            self.ctx.disable(moderngl.DEPTH_TEST)
+            self.ctx.disable(moderngl.BLEND)
+            set_depth_mask(False)
 
-        self._glow_ds_fbo.use()
-        self.ctx.viewport = (0, 0, out_w, out_h)
-        source_tex.use(location=0)
-        self._glow_ds_prog['u_input_size'].value = (float(src_w), float(src_h))
-        self._glow_ds_vao.render(moderngl.TRIANGLE_STRIP)
-        self._glow_ds_cache_key = cache_key
-
-        self.ctx.viewport = prev_viewport
-        self.ctx.depth_mask = prev_depth_mask
-        self.ctx.enable(moderngl.DEPTH_TEST)
+            self._glow_ds_fbo.use()
+            self.ctx.viewport = (0, 0, out_w, out_h)
+            source_tex.use(location=0)
+            self._glow_ds_prog['u_input_size'].value = (float(src_w), float(src_h))
+            self._glow_ds_vao.render(moderngl.TRIANGLE_STRIP)
+            self._glow_ds_cache_key = cache_key
+            self._breakdown_inc("openxr_glow_downsample_render")
+        except Exception as exc:
+            print(f"[OpenXRViewer] Glow downsample render failed: {type(exc).__name__}: {exc}")
+            self._breakdown_inc("openxr_glow_downsample_failed")
+            return None
+        finally:
+            self.ctx.viewport = prev_viewport
+            set_depth_mask(prev_depth_mask)
+            self.ctx.enable(moderngl.DEPTH_TEST)
+            self.ctx.disable(moderngl.BLEND)
         return self._glow_ds_tex

@@ -8,10 +8,12 @@ import warnings
 
 import torch
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_operation
+
 OnnxDtypeMode = Literal["auto", "fp16", "fp32"]
 
 from .model_capabilities import FORCE_FP32_KEYWORDS
-from .progress import activity_progress
+from .progress import activity_progress, status_write
 
 
 @dataclass(frozen=True)
@@ -74,6 +76,12 @@ def probe_model_dtype(model, *, device, dtype, height: int, width: int) -> tuple
         depth = _extract_depth_output(output).detach().float()
         if depth.numel() == 0:
             return False, "empty output"
+        warn_cpu_operation(
+            "stereo_runtime.probe_model_dtype",
+            "depth validity/range .item() sync",
+            detail=describe_tensor(depth),
+            key=f"stereo_runtime_probe_model_dtype_cpu_stats_{dtype}",
+        )
         if not torch.isfinite(depth).all().item():
             return False, "output contains NaN or Inf"
         abs_max = float(depth.abs().max().item())
@@ -138,7 +146,7 @@ def load_model_for_dtype(
     import torch
 
     if _is_infinidepth_model(model_id):
-        from models.InfiniDepth.api import InfiniDepthModel
+        from stereo_runtime.model_impl.InfiniDepth.api import InfiniDepthModel
 
         from .depth_provider import _infinidepth_encoder_for_model, _resolve_hf_model_file
 
@@ -231,6 +239,7 @@ def export_depth_model_onnx(
 
     dummy_input = torch.randn(1, 3, height, width, device=device_obj, dtype=dtype_obj)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    status_write(f"正在导出 ONNX：{output_path.name}。这个步骤可能需要一段时间，进度请看上方进度条。")
     with activity_progress(f"Exporting ONNX: {output_path.name}"):
         with torch.no_grad(), _quiet_onnx_export_warnings():
             torch.onnx.export(
@@ -245,6 +254,7 @@ def export_depth_model_onnx(
                 training=torch.onnx.TrainingMode.EVAL,
                 dynamo=False,
             )
+    status_write(f"ONNX 导出完成：{output_path.name}。")
 
     return OnnxExportResult(
         output_path=output_path,

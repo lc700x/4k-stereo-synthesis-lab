@@ -216,7 +216,10 @@ class OpenXRRuntimeResult:
     cuda_timing_events: dict[str, Any] = field(default_factory=dict)
 
 
-def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> OpenXRRuntimeResult:
+def openxr_result_from_stereo_result(
+    stereo_result: StereoRuntimeResult,
+    source_rgb: torch.Tensor | None = None,
+) -> OpenXRRuntimeResult:
     debug = dict(stereo_result.debug_info or {})
     left_eye = stereo_result.left_eye
     right_eye = stereo_result.right_eye
@@ -262,7 +265,7 @@ def openxr_result_from_stereo_result(stereo_result: StereoRuntimeResult) -> Open
         depth=stereo_result.depth,
         left_eye=left_eye,
         right_eye=right_eye,
-        source_rgb=None,
+        source_rgb=source_rgb,
         output_eye_size=output_eye_size,
         output_display_size=output_display_size,
         output_format="openxr_full_synthesis_eyes",
@@ -571,13 +574,24 @@ def _add_runtime_config_debug_info(debug: dict[str, Any], config: StereoConfig) 
     debug.setdefault("runtime_quality_mode", str(config.backend))
     debug.setdefault("output_format", str(config.output_format))
     debug.setdefault("stereo_synthesis_mode", "packed_synthesis")
+    debug.setdefault("depth_strength", float(config.depth_strength))
     debug.setdefault("max_disparity_px", None if config.max_disparity_px is None else float(config.max_disparity_px))
     debug.setdefault("parallax_preset", str(config.parallax_preset))
-    debug.setdefault("convergence", float(config.convergence))
+    debug.setdefault("convergence", _debug_scalar_no_sync(config.convergence))
     debug.setdefault("foreground_shift_scale", float(getattr(config, "foreground_shift_scale", 1.0)))
     debug.setdefault("midground_shift_scale", float(getattr(config, "midground_shift_scale", 1.0)))
     debug.setdefault("background_shift_scale", float(getattr(config, "background_shift_scale", 1.0)))
     debug.setdefault("dynamic_convergence_enabled", bool(getattr(config, "dynamic_convergence_enabled", False)))
+
+
+def _debug_scalar_no_sync(value: Any) -> float | str | None:
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.is_cuda:
+            return "cuda_tensor"
+        return float(value.detach())
+    return float(value)
 
 
 def _add_depth_contract_debug_info(
@@ -598,23 +612,55 @@ def _layered_parallax_enabled(config: Any) -> bool:
     )
 
 
-def _dynamic_convergence_config_for_depth(runtime: Any, depth: torch.Tensor, stereo_config: Any) -> tuple[Any, dict[str, Any]]:
+def _dynamic_convergence_config_for_depth(
+    runtime: Any,
+    depth: torch.Tensor,
+    stereo_config: Any,
+    *,
+    prefer_gpu_tensor: bool = True,
+) -> tuple[Any, dict[str, Any]]:
     enabled = bool(getattr(stereo_config, "dynamic_convergence_enabled", False))
     strength = max(0.0, min(1.0, float(getattr(stereo_config, "dynamic_convergence_strength", 0.0))))
     manual = float(getattr(stereo_config, "convergence", 0.0))
     if not enabled or strength <= 0.0:
         runtime._dynamic_convergence_value = None
+        runtime._dynamic_convergence_last_measured = None
+        runtime._dynamic_convergence_pending_measurement = None
+        runtime._dynamic_convergence_pending_event = None
         return stereo_config, {"dynamic_convergence_effective": manual}
     target = max(0.0, min(1.0, float(getattr(stereo_config, "dynamic_convergence_target", 0.5))))
     alpha = max(0.0, min(0.98, float(getattr(stereo_config, "dynamic_convergence_alpha", 0.85))))
-    measured = _sample_depth_quantile(depth, target)
-    desired = manual + (measured - manual) * strength
+    measured = _dynamic_convergence_measurement(runtime, depth, target, prefer_gpu_tensor=prefer_gpu_tensor)
     previous = getattr(runtime, "_dynamic_convergence_value", None)
-    effective = desired if previous is None else float(previous) * alpha + desired * (1.0 - alpha)
+    if isinstance(measured, torch.Tensor):
+        manual_tensor = measured.new_tensor(manual)
+        desired = manual_tensor + (measured - manual_tensor) * strength
+        if isinstance(previous, torch.Tensor) and previous.device == desired.device:
+            effective = previous.to(dtype=desired.dtype) * alpha + desired * (1.0 - alpha)
+        else:
+            effective = desired
+        effective = effective.detach()
+        runtime._dynamic_convergence_value = effective
+        runtime._dynamic_convergence_last_measured = measured.detach()
+        return replace(stereo_config, convergence=effective), {
+            "dynamic_convergence_effective": _debug_scalar_no_sync(effective),
+            "dynamic_convergence_measured": _debug_scalar_no_sync(measured),
+            "dynamic_convergence_manual": float(manual),
+            "dynamic_convergence_strength": float(strength),
+            "dynamic_convergence_target": float(target),
+            "dynamic_convergence_alpha": float(alpha),
+        }
+    previous_float = _dynamic_convergence_previous_float(previous)
+    if measured is None:
+        effective = manual if previous_float is None else previous_float
+    else:
+        desired = manual + (measured - manual) * strength
+        effective = desired if previous_float is None else previous_float * alpha + desired * (1.0 - alpha)
     runtime._dynamic_convergence_value = float(effective)
+    runtime._dynamic_convergence_last_measured = measured
     return replace(stereo_config, convergence=float(effective)), {
         "dynamic_convergence_effective": float(effective),
-        "dynamic_convergence_measured": float(measured),
+        "dynamic_convergence_measured": None if measured is None else float(measured),
         "dynamic_convergence_manual": float(manual),
         "dynamic_convergence_strength": float(strength),
         "dynamic_convergence_target": float(target),
@@ -622,16 +668,66 @@ def _dynamic_convergence_config_for_depth(runtime: Any, depth: torch.Tensor, ste
     }
 
 
-def _sample_depth_quantile(depth: torch.Tensor, quantile: float, *, max_samples: int = 8192) -> float:
+def _dynamic_convergence_previous_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        if value.is_cuda:
+            return None
+        return float(value.detach())
+    return float(value)
+
+
+def _dynamic_convergence_measurement(
+    runtime: Any,
+    depth: torch.Tensor,
+    quantile: float,
+    *,
+    prefer_gpu_tensor: bool = True,
+) -> float | torch.Tensor | None:
+    tensor = _depth_quantile_tensor(depth, quantile).detach().float()
+    if not tensor.is_cuda:
+        runtime._dynamic_convergence_pending_measurement = None
+        runtime._dynamic_convergence_pending_event = None
+        return float(tensor)
+    if prefer_gpu_tensor:
+        runtime._dynamic_convergence_pending_measurement = None
+        runtime._dynamic_convergence_pending_event = None
+        return tensor
+
+    pending = getattr(runtime, "_dynamic_convergence_pending_measurement", None)
+    event = getattr(runtime, "_dynamic_convergence_pending_event", None)
+    if pending is not None and event is not None and event.query():
+        runtime._dynamic_convergence_last_measured = float(pending.detach())
+        runtime._dynamic_convergence_pending_measurement = None
+        runtime._dynamic_convergence_pending_event = None
+    if getattr(runtime, "_dynamic_convergence_pending_measurement", None) is None:
+        pending = _cpu_scalar_buffer(tensor)
+        pending.copy_(tensor, non_blocking=True)
+        event = torch.cuda.Event()
+        event.record(torch.cuda.current_stream(tensor.device))
+        runtime._dynamic_convergence_pending_measurement = pending
+        runtime._dynamic_convergence_pending_event = event
+    return getattr(runtime, "_dynamic_convergence_last_measured", None)
+
+
+def _cpu_scalar_buffer(tensor: torch.Tensor) -> torch.Tensor:
+    try:
+        return torch.empty((), dtype=torch.float32, device="cpu", pin_memory=bool(getattr(tensor, "is_cuda", False)))
+    except Exception:
+        return torch.empty((), dtype=torch.float32, device="cpu")
+
+
+def _depth_quantile_tensor(depth: torch.Tensor, quantile: float, *, max_samples: int = 8192) -> torch.Tensor:
     tensor = depth.detach().float().clamp(0.0, 1.0).flatten()
     if tensor.numel() == 0:
-        return 0.0
+        return depth.new_tensor(0.0, dtype=torch.float32)
     if tensor.numel() > max_samples:
         stride = max(1, int(tensor.numel() // max_samples))
         tensor = tensor[::stride]
     count = int(tensor.numel())
     index = min(count - 1, max(0, int(round(float(quantile) * float(count - 1)))))
-    return float(torch.sort(tensor).values[index].item())
+    return torch.sort(tensor).values[index]
 
 
 def _provider_size_label(provider_info: dict[str, Any]) -> str | None:
@@ -693,6 +789,9 @@ class StereoRuntime:
         self._last_runtime_perf_log_ts = 0.0
         self._runtime_frame_refresh_log_count = 0
         self._dynamic_convergence_value: float | None = None
+        self._dynamic_convergence_last_measured: float | None = None
+        self._dynamic_convergence_pending_measurement: torch.Tensor | None = None
+        self._dynamic_convergence_pending_event: Any | None = None
         self.stats = RollingRuntimeStats(maxlen=stats_window)
         self.collect_memory_stats = bool(collect_memory_stats)
 
@@ -1042,11 +1141,24 @@ class StereoRuntime:
         profile = self._predict_depth_profile(rgb_frame)
         depth_total_ms = (time.perf_counter() - depth_start) * 1000.0
         depth = profile.depth
-        stereo_config, convergence_debug = _dynamic_convergence_config_for_depth(self, depth, self.stereo_config)
+        output_mode = str(getattr(openxr_config, "output_mode", "auto") or "auto")
+        if output_mode == "rgb_depth":
+            prewarp_eyes = False
+        elif output_mode == "full_synthesis_eyes":
+            prewarp_eyes = True
+        else:
+            prewarp_eyes = _openxr_prewarp_eyes_enabled()
+        stereo_config, convergence_debug = _dynamic_convergence_config_for_depth(
+            self,
+            depth,
+            self.stereo_config,
+            prefer_gpu_tensor=prewarp_eyes,
+        )
+        convergence = stereo_config.convergence
         if openxr_config is not None:
             openxr_config_for_frame = replace(
                 openxr_config,
-                convergence=float(stereo_config.convergence),
+                convergence=convergence,
                 foreground_shift_scale=float(getattr(stereo_config, "foreground_shift_scale", 1.0)),
                 midground_shift_scale=float(getattr(stereo_config, "midground_shift_scale", 1.0)),
                 background_shift_scale=float(getattr(stereo_config, "background_shift_scale", 1.0)),
@@ -1054,7 +1166,7 @@ class StereoRuntime:
         else:
             openxr_config_for_frame = OpenXRRenderConfig(
                 depth_strength=float(stereo_config.depth_strength),
-                convergence=float(stereo_config.convergence),
+                convergence=convergence,
                 max_disparity_px=stereo_config.max_disparity_px,
                 parallax_preset=str(stereo_config.parallax_preset),
                 foreground_shift_scale=float(getattr(stereo_config, "foreground_shift_scale", 1.0)),
@@ -1063,7 +1175,6 @@ class StereoRuntime:
             )
         _record_cuda_event(cuda_events, "depth", rgb_frame)
 
-        prewarp_eyes = _openxr_prewarp_eyes_enabled()
         openxr_render_ms = 0.0
         pack_ms = 0.0
         pack_backend = "none"
@@ -1078,6 +1189,8 @@ class StereoRuntime:
             pack_start = time.perf_counter()
             left_eye = openxr.left_eye
             right_eye = openxr.right_eye
+            if bool(getattr(stereo_config, "cross_eyed", False)):
+                left_eye, right_eye = right_eye, left_eye
             _record_cuda_event(cuda_events, "openxr_pack_start", left_eye)
             if _openxr_runtime_output_uint8_enabled():
                 packed_left, left_pack_backend = _pack_openxr_eye_rgba_u8_with_backend(left_eye)
@@ -1123,6 +1236,7 @@ class StereoRuntime:
         debug["packing_format"] = "none"
         debug["active_settings_version"] = int(self.active_settings_version)
         debug["runtime_output_dtype"] = _runtime_eye_dtype(left_eye, right_eye)
+        debug["cross_eyed"] = int(bool(getattr(stereo_config, "cross_eyed", False)))
         debug["hot_reload_class"] = self.last_settings_change_class
         debug["hot_reload_changed_fields"] = list(self.last_settings_changed_fields)
         _consume_pending_temporal_reset_reasons(self, debug)
@@ -1206,9 +1320,9 @@ class StereoRuntime:
 
             out_dir = Path(dump_dir)
             out_dir.mkdir(parents=True, exist_ok=True)
-            save_rgb(source_rgb.detach().float().clamp(0.0, 1.0).cpu(), out_dir / "source_rgb.png")
-            save_depth(raw_depth.detach().float().clamp(0.0, 1.0).cpu(), out_dir / "raw_depth.png")
-            save_depth(prepared_depth.detach().float().clamp(0.0, 1.0).cpu(), out_dir / "prepared_depth.png")
+            save_rgb(source_rgb.detach().float().clamp(0.0, 1.0), out_dir / "source_rgb.png")
+            save_depth(raw_depth.detach().float().clamp(0.0, 1.0), out_dir / "raw_depth.png")
+            save_depth(prepared_depth.detach().float().clamp(0.0, 1.0), out_dir / "prepared_depth.png")
             print(f"[StereoRuntime] OpenXR rgb_depth dump saved: {out_dir}", flush=True)
             self._openxr_rgb_depth_dumped = True
         except Exception as exc:
@@ -1264,6 +1378,8 @@ class StereoRuntime:
             return None, "debug_output"
         if _layered_parallax_enabled(stereo_config):
             return None, "layered_parallax"
+        if isinstance(getattr(stereo_config, "convergence", None), torch.Tensor):
+            return None, "dynamic_convergence_tensor"
         try:
             from .fast_plus_fused_triton import can_use_fast_plus_fused_half_sbs_uint8, make_fast_plus_fused_half_sbs_uint8
             from .output import match_depth

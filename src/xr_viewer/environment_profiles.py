@@ -2,6 +2,7 @@
 
 from .implementation import *
 from .constants import _BG_COLORS
+from .background_bake import BackgroundBakeService
 
 _PANORAMA_IMAGE_EXTS = ('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tif', '.tiff', '.hdr')
 _PANORAMA_IMAGE_NAMES = (
@@ -63,6 +64,7 @@ class EnvironmentProfileMixin:
         if not is_panorama:
             return False, None, {}
 
+        path = None
         image = (
             cfg.get('image')
             or cfg.get('path')
@@ -78,6 +80,12 @@ class EnvironmentProfileMixin:
             path = self._find_panorama_image_file(room_dir)
             if path:
                 cfg['image'] = os.path.basename(path)
+        if str(cfg.get('wall_light_mask', '')).strip().lower() == 'auto':
+            cfg['wall_light_mask'] = BackgroundBakeService().bake_wall_light_mask(
+                room_dir=room_dir,
+                panorama_path=path,
+                settings=cfg,
+            )
         return True, path, cfg
 
 
@@ -130,9 +138,6 @@ class EnvironmentProfileMixin:
         self._env_perf_log = bool(base.get('perf_log', False))
         self._xr_render_scale = float(base['xr_render_scale'])
         self._screen_light_intensity = float(base.get('screen_light_intensity', self._screen_light_intensity))
-        self._screen_light_dynamic = bool(base.get('screen_light_dynamic', False))
-        self._screen_light_sample_interval = max(1, int(base.get('screen_light_sample_interval', 15)))
-        self._screen_light_lerp = max(0.0, min(1.0, float(base.get('screen_light_lerp', 0.14))))
         self._controller_hdr_lighting = bool(base.get('controller_hdr_lighting', True))
         self._panorama_background_path = None
         self._panorama_background_settings = {}
@@ -170,6 +175,8 @@ class EnvironmentProfileMixin:
         else:
             glb_name = str(glb_value)
             glb_path = glb_name if os.path.isabs(glb_name) else os.path.join(room_dir, glb_name)
+        if getattr(self, '_openxr_panorama_background_enabled', False) and not is_panorama:
+            glb_path = None
         if not is_panorama and (glb_path is None or not os.path.isfile(glb_path)):
             auto_panorama_path = self._find_panorama_image_file(room_dir)
             if auto_panorama_path:
@@ -268,9 +275,6 @@ class EnvironmentProfileMixin:
                 self._screen_quality_oversample = max(0.75, min(1.5, float(quality_oversample)))
             except (TypeError, ValueError):
                 pass
-        quad_layer = profile.get('xr_quad_layer_enabled', profile.get('screen_quad_layer'))
-        if quad_layer is not None:
-            self._xr_quad_layer_enabled = bool(quad_layer)
         quad_debug_offset = profile.get('xr_quad_layer_debug_offset')
         if quad_debug_offset is not None:
             try:
@@ -280,19 +284,6 @@ class EnvironmentProfileMixin:
         if 'screen_light_intensity' in profile:
             try:
                 self._screen_light_intensity = float(profile['screen_light_intensity'])
-            except (TypeError, ValueError):
-                pass
-        dynamic_light = profile.get('screen_light_dynamic', profile.get('dynamic_screen_light'))
-        if dynamic_light is not None:
-            self._screen_light_dynamic = bool(dynamic_light)
-        if 'screen_light_sample_interval' in profile:
-            try:
-                self._screen_light_sample_interval = max(1, int(profile['screen_light_sample_interval']))
-            except (TypeError, ValueError):
-                pass
-        if 'screen_light_lerp' in profile:
-            try:
-                self._screen_light_lerp = max(0.0, min(1.0, float(profile['screen_light_lerp'])))
             except (TypeError, ValueError):
                 pass
         hdr_lighting = profile.get('controller_hdr_lighting', profile.get('controller_hdr_reflection'))
@@ -550,7 +541,7 @@ class EnvironmentProfileMixin:
 
 
     def _builtin_profile_path(self):
-        return os.path.join(self._environment_root, '.builtin_default.json')
+        return os.path.join(self._environment_root, 'Default', 'profile.json')
 
 
     def _persist_screen_state(self):
@@ -701,7 +692,7 @@ class EnvironmentProfileMixin:
 
 
     def _save_glow_to_builtin_profile(self):
-        """Write glow settings into .builtin_default.json for the Default env."""
+        """Write glow settings into Default/profile.json for the Default env."""
         builtin_path = self._builtin_profile_path()
         try:
             profile = {}

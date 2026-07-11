@@ -1,4 +1,5 @@
-from stereo_runtime.progress import DownloadProgress, file_size_progress, progress_write, write_bytes_with_progress
+from stereo_runtime.progress import DownloadProgress, file_size_progress, progress_write, status_write, write_bytes_with_progress
+from tqdm.contrib.concurrent import thread_map
 
 
 def test_write_bytes_with_progress_writes_file_and_reports_total(tmp_path, capsys):
@@ -42,3 +43,42 @@ def test_progress_write_keeps_long_messages_single_line(capsys):
     progress_write(message)
 
     assert capsys.readouterr().out == message + "\n"
+
+
+def test_status_write_emits_status_marker(capsys):
+    status_write("Downloading weights")
+
+    assert capsys.readouterr().out == "[D2S_STATUS] Downloading weights\n"
+
+
+def test_download_progress_exposes_tqdm_lock():
+    with DownloadProgress.get_lock():
+        pass
+
+
+def test_download_progress_allows_tqdm_lock_replacement():
+    original = DownloadProgress.get_lock()
+    replacement = type(original)()
+    try:
+        DownloadProgress.set_lock(replacement)
+        assert DownloadProgress.get_lock() is replacement
+    finally:
+        DownloadProgress.set_lock(original)
+
+
+def test_download_progress_wraps_iterables(capsys):
+    assert list(DownloadProgress([1, 2], total=2, desc="files", mininterval=0)) == [1, 2]
+
+    out = capsys.readouterr().out
+    assert '"desc":"files"' in out
+    assert '"percent":100.0' in out
+    assert '"unit":"steps"' in out
+
+
+def test_download_progress_works_with_thread_map(capsys):
+    assert thread_map(lambda value: value + 1, [1, 2], tqdm_class=DownloadProgress, desc="files") == [2, 3]
+
+    out = capsys.readouterr().out
+    assert '"desc":"files"' in out
+    assert '"percent":100.0' in out
+    assert '"unit":"steps"' in out

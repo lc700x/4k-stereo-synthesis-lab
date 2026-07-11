@@ -150,9 +150,22 @@ in vec2 uv;
 out vec4 frag_color;
 uniform sampler2D tex_source;
 uniform int u_flip_y;
+uniform int u_linearize_srgb;
+
+vec3 srgb_to_linear(vec3 c) {
+    bvec3 cutoff = lessThanEqual(c, vec3(0.04045));
+    vec3 low = c / 12.92;
+    vec3 high = pow((c + 0.055) / 1.055, vec3(2.4));
+    return mix(high, low, cutoff);
+}
+
 void main() {
     vec2 p = (u_flip_y == 1) ? vec2(uv.x, 1.0 - uv.y) : uv;
-    frag_color = texture(tex_source, p);
+    vec4 color = texture(tex_source, p);
+    if (u_linearize_srgb == 1) {
+        color.rgb = srgb_to_linear(color.rgb);
+    }
+    frag_color = color;
 }
 """
 
@@ -169,15 +182,38 @@ void main() {
 _PANORAMA_FRAG = """
 #version 330
 uniform sampler2D u_tex;
+uniform sampler2D u_screen_light_tex;
+uniform sampler2D u_wall_light_mask_tex;
 uniform mat4 u_inv_proj;
 uniform mat4 u_inv_view_rot;
 uniform float u_yaw_offset;
 uniform float u_exposure;
 uniform int u_flip_y;
+uniform int u_stereo_layout;
+uniform int u_eye_index;
+uniform int u_screen_light_enabled;
+uniform int u_wall_light_mask_enabled;
+uniform float u_screen_light_intensity;
+uniform vec2 u_screen_light_uv;
+uniform vec2 u_screen_light_radius;
 in vec2 v_ndc;
 out vec4 fragColor;
 
 const float PI = 3.14159265358979323846;
+
+vec3 screen_light_probe_color() {
+    vec3 color = vec3(0.0);
+    color += textureLod(u_screen_light_tex, vec2(0.25, 0.25), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.50, 0.25), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.75, 0.25), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.25, 0.50), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.50, 0.50), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.75, 0.50), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.25, 0.75), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.50, 0.75), 0.0).rgb;
+    color += textureLod(u_screen_light_tex, vec2(0.75, 0.75), 0.0).rgb;
+    return color * (1.0 / 9.0);
+}
 
 void main() {
     vec4 view_h = u_inv_proj * vec4(v_ndc, 1.0, 1.0);
@@ -190,7 +226,21 @@ void main() {
         v = 1.0 - v;
     }
 
-    vec3 color = texture(u_tex, vec2(fract(u), clamp(v, 0.0, 1.0))).rgb;
+    vec2 pano_uv = vec2(fract(u), clamp(v, 0.0, 1.0));
+    vec2 sample_uv = pano_uv;
+    if (u_stereo_layout == 1) {
+        sample_uv.x = pano_uv.x * 0.5 + (u_eye_index == 1 ? 0.5 : 0.0);
+    }
+    vec3 color = texture(u_tex, sample_uv).rgb;
+    if (u_screen_light_enabled == 1) {
+        vec2 d = (pano_uv - u_screen_light_uv) / max(u_screen_light_radius, vec2(0.001));
+        float mask = exp(-dot(d, d));
+        if (u_wall_light_mask_enabled == 1) {
+            mask *= textureLod(u_wall_light_mask_tex, pano_uv, 0.0).r;
+        }
+        vec3 screen_col = screen_light_probe_color();
+        color += screen_col * mask * u_screen_light_intensity;
+    }
     fragColor = vec4(color * u_exposure, 1.0);
 }
 """
@@ -387,9 +437,12 @@ uniform sampler2D u_screen_light_tex;
 uniform vec3 u_base_color_factor; // Base color factor
 uniform int u_use_texture;     // 0: use solid color, 1: sample texture
 uniform int u_use_env_tex;
+uniform int u_env_stereo_layout;
+uniform int u_env_eye_index;
 uniform int u_screen_light_enabled;
 uniform float u_env_intensity;
 uniform float u_screen_light_intensity;
+uniform float u_top_light_intensity;
 uniform vec3 u_camera_pos;     // Camera world coordinates (= headset position)
 uniform vec3 u_screen_light_pos;
 uniform vec3 u_screen_light_normal;
@@ -402,6 +455,14 @@ vec2 env_uv(vec3 dir) {
     float u = atan(dir.x, dir.z) / 6.28318530718 + 0.5;
     float v = asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265359 + 0.5;
     return vec2(u, 1.0 - v);
+}
+
+vec2 env_sample_uv(vec3 dir) {
+    vec2 uv = env_uv(dir);
+    if (u_env_stereo_layout == 1) {
+        uv.x = uv.x * 0.5 + (u_env_eye_index == 1 ? 0.5 : 0.0);
+    }
+    return uv;
 }
 
 void main() {
@@ -421,8 +482,8 @@ void main() {
     vec3 color = baseColor * 0.30;
     vec3 R = reflect(-V, N);
     if (u_use_env_tex == 1) {
-        vec3 env_spec = textureLod(u_env_tex, env_uv(R), 3.0).rgb;
-        vec3 env_diff = textureLod(u_env_tex, env_uv(N), 5.0).rgb;
+        vec3 env_spec = textureLod(u_env_tex, env_sample_uv(R), 3.0).rgb;
+        vec3 env_diff = textureLod(u_env_tex, env_sample_uv(N), 5.0).rgb;
         float view_facing = smoothstep(-0.25, 0.65, dot(N, V));
         color = baseColor * mix(vec3(0.32), env_diff, 0.36) * u_env_intensity + env_spec * (0.30 * u_env_intensity * view_facing);
     }
@@ -430,7 +491,7 @@ void main() {
     vec3 top_light_dir = normalize(top_light_pos - v_position);
     float top_facing = max(dot(N, top_light_dir), 0.0);
     float top_fill = pow(top_facing, 1.25) * smoothstep(-0.20, 0.65, dot(N, V));
-    color += baseColor * vec3(0.95, 0.97, 1.0) * (0.40 * top_fill);
+    color += baseColor * vec3(0.95, 0.97, 1.0) * (u_top_light_intensity * top_fill);
 
     if (u_screen_light_enabled == 1) {
         vec3 screen_tint = (
@@ -527,6 +588,7 @@ uniform vec3 u_emissive_factor;
 uniform int u_unlit;             // KHR_materials_unlit: skip lighting
 uniform float u_alpha_cutoff;    // alphaMode=MASK discard threshold
 uniform int u_alpha_mode;        // 0=OPAQUE, 1=MASK, 2=BLEND
+uniform int u_double_sided;      // glTF doubleSided
 uniform int u_use_mr_tex;        // 0: use uniform factors, 1: sample mr texture
 uniform int u_use_emissive_tex;  // 0: use factor only, 1: sample emissive texture
 uniform int u_normal_texcoord;
@@ -638,6 +700,7 @@ void main() {
         if (materialAlpha < u_alpha_cutoff) discard;
     }
 
+    if (!gl_FrontFacing && u_double_sided == 0) discard;
     vec3 N = normalize(v_normal);
     if (!gl_FrontFacing) N = -N;
 
@@ -814,8 +877,7 @@ void main() {
 """
 
 # Fullscreen swizzle blit: copies an RGBA texture into a target that the
-# compositor reads as BGRA. Used by the EXT_memory_object interop path when the
-# OpenXR runtime hands us a BGRA swapchain.
+# compositor reads as BGRA.
 _BLIT_FRAG = """
 #version 330
 uniform sampler2D u_src;
@@ -1012,42 +1074,10 @@ vec3 sample_border_color(vec2 p) {
     }
     float x = clamp(p.x, 0.0, 1.0);
     float y = clamp(1.0 - p.y, 0.0, 1.0);
-    vec3 top_col = vec3(0.0);
-    vec3 bottom_col = vec3(0.0);
-    vec3 left_col = vec3(0.0);
-    vec3 right_col = vec3(0.0);
-    float top_sum = 0.0;
-    float side_sum = 0.0;
-    for (int i = -3; i <= 3; ++i) {
-        float lateral = float(i) * 0.075;
-        float sx = clamp(x + lateral, 0.0, 1.0);
-        float lateral_w = exp(-abs(float(i)) * 0.22);
-        for (int d = 0; d < 5; ++d) {
-            float edge_band_depth = 0.030 + float(d) * 0.045;
-            float depth_w = exp(-float(d) * 0.48);
-            float w = lateral_w * depth_w;
-            top_col += textureLod(u_glow_tex, vec2(sx, edge_band_depth), 0.0).rgb * w;
-            bottom_col += textureLod(u_glow_tex, vec2(sx, 1.0 - edge_band_depth), 0.0).rgb * w;
-            top_sum += w;
-        }
-    }
-    for (int j = -3; j <= 3; ++j) {
-        float lateral = float(j) * 0.095;
-        float sy = clamp(y + lateral, 0.0, 1.0);
-        float lateral_w = exp(-abs(float(j)) * 0.20);
-        for (int d = 0; d < 5; ++d) {
-            float edge_band_depth = 0.030 + float(d) * 0.050;
-            float depth_w = exp(-float(d) * 0.44);
-            float w = lateral_w * depth_w;
-            left_col += textureLod(u_glow_tex, vec2(edge_band_depth, sy), 0.0).rgb * w;
-            right_col += textureLod(u_glow_tex, vec2(1.0 - edge_band_depth, sy), 0.0).rgb * w;
-            side_sum += w;
-        }
-    }
-    top_col /= max(top_sum, 0.001);
-    bottom_col /= max(top_sum, 0.001);
-    left_col /= max(side_sum, 0.001);
-    right_col /= max(side_sum, 0.001);
+    vec3 top_col = textureLod(u_glow_tex, vec2(x, 0.055), 0.0).rgb;
+    vec3 bottom_col = textureLod(u_glow_tex, vec2(x, 0.945), 0.0).rgb;
+    vec3 left_col = textureLod(u_glow_tex, vec2(0.055, y), 0.0).rgb;
+    vec3 right_col = textureLod(u_glow_tex, vec2(0.945, y), 0.0).rgb;
     float top_weight = smoothstep(0.50, 0.95, p.y);
     float bottom_weight = smoothstep(0.50, 0.95, 1.0 - p.y);
     float left_weight = smoothstep(0.35, 0.95, 1.0 - p.x);
@@ -1065,23 +1095,10 @@ vec3 sample_region_reflection(vec2 p) {
     if (u_glow_use_tex != 1) {
         return u_glow_color;
     }
-    vec2 grid = vec2(16.0, 9.0);
+    vec2 grid = vec2(4.0, 3.0);
     vec2 q = (floor(clamp(p, vec2(0.0), vec2(0.999)) * grid) + vec2(0.5)) / grid;
     q.y = 1.0 - q.y;
-    vec2 cell = 1.0 / grid;
-    vec3 acc = vec3(0.0);
-    float wsum = 0.0;
-    for (int y = -2; y <= 2; ++y) {
-        for (int x = -2; x <= 2; ++x) {
-            vec2 off = vec2(float(x), float(y));
-            float d = dot(off, off);
-            float w = exp(-d * 0.42);
-            vec2 sp = clamp(q + off * cell, vec2(0.0), vec2(1.0));
-            acc += textureLod(u_glow_tex, sp, 0.0).rgb * w;
-            wsum += w;
-        }
-    }
-    vec3 region = acc / max(wsum, 0.001);
+    vec3 region = textureLod(u_glow_tex, q, 0.0).rgb;
     return mix(u_glow_color, region, 0.92);
 }
 

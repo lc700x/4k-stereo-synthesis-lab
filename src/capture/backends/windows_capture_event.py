@@ -10,6 +10,9 @@ from capture.types import FrameCopyMode, capture_frame_from_raw
 
 
 CAPTURE_CURSOR_DELAY_S = 0.2
+_PENDING_CAPTURE_GAP_LOGS = []
+_PENDING_CAPTURE_GAP_LOCK = threading.Lock()
+_CAPTURE_GAP_DEFER_RELEASED = False
 
 
 def _env_bool(name):
@@ -26,6 +29,40 @@ def _env_int(name):
     return int(value)
 
 
+def _emit_capture_gap_log(line: str) -> None:
+    print(line, flush=True)
+
+
+def flush_pending_capture_gap_logs() -> None:
+    global _CAPTURE_GAP_DEFER_RELEASED
+    with _PENDING_CAPTURE_GAP_LOCK:
+        pending = list(_PENDING_CAPTURE_GAP_LOGS)
+        _PENDING_CAPTURE_GAP_LOGS.clear()
+        _CAPTURE_GAP_DEFER_RELEASED = True
+    for line in pending:
+        _emit_capture_gap_log(line)
+
+
+def _defer_capture_gap_log(line: str) -> bool:
+    if not _env_bool("D2S_DEFER_CAPTURE_GAP_UNTIL_OPENXR_PROJECTION"):
+        return False
+    with _PENDING_CAPTURE_GAP_LOCK:
+        if _CAPTURE_GAP_DEFER_RELEASED:
+            return False
+        _PENDING_CAPTURE_GAP_LOGS.append(line)
+    return True
+
+
+def _fps_to_minimum_update_interval_ms(fps):
+    try:
+        fps_value = int(fps)
+    except (TypeError, ValueError):
+        return None
+    if fps_value <= 0:
+        return None
+    return max(1, int(round(1000.0 / fps_value)))
+
+
 def _windows_capture_kwargs(config, capture_tool):
     if config.capture_mode == "Window":
         kwargs = {"window_name": config.window_title}
@@ -33,6 +70,7 @@ def _windows_capture_kwargs(config, capture_tool):
         kwargs = {"monitor_index": config.monitor_index}
     if capture_tool == "WindowsCaptureCUDA":
         optional = {
+            "minimum_update_interval": _fps_to_minimum_update_interval_ms(getattr(config, "fps", None)),
             "reuse_output_buffer": _env_bool("D2S_WGC_REUSE_OUTPUT_BUFFER"),
             "output_buffer_count": _env_int("D2S_WGC_OUTPUT_BUFFER_COUNT"),
         }
@@ -61,6 +99,8 @@ def _event_capture_device(capture_tool):
 
 def _copy_frame_buffer(frame_buffer, capture_tool):
     device = _event_capture_device(capture_tool)
+    if device in ("cuda", "rocm") and not _env_bool("D2S_WGC_COPY_FRAME_BUFFER"):
+        return frame_buffer, FrameCopyMode.GPU_TENSOR, device
     prefer_clone = device in ("cuda", "rocm")
     if prefer_clone and hasattr(frame_buffer, "clone"):
         return frame_buffer.clone(), FrameCopyMode.CLONE, device
@@ -89,6 +129,7 @@ class WindowsCaptureEventRunner:
         self._fps_copy_seconds = 0.0
         self._fps_enqueue_seconds = 0.0
         self._fps_handler_seconds = 0.0
+        self._last_frame_ts = 0.0
 
     @property
     def session(self):
@@ -141,6 +182,21 @@ class WindowsCaptureEventRunner:
         self._fps_copy_seconds += copy_seconds
         self._fps_enqueue_seconds += enqueue_seconds
         self._fps_handler_seconds += handler_seconds
+
+    def _log_capture_gap(self, now: float, capture_kwargs: dict) -> None:
+        if self.capture_tool != "WindowsCaptureCUDA":
+            self._last_frame_ts = now
+            return
+        gap = now - self._last_frame_ts if self._last_frame_ts > 0.0 else 0.0
+        self._last_frame_ts = now
+        if gap < 0.5:
+            return
+        line = (
+            f"[CaptureGap] tool={self.capture_tool} mode={self.config.capture_mode} "
+            f"monitor={self.config.monitor_index} gap={gap:.2f}s kwargs={capture_kwargs}"
+        )
+        if not _defer_capture_gap_log(line):
+            _emit_capture_gap_log(line)
 
     def _start_keyboard_worker(self, shutdown_event):
         user32 = ctypes.windll.user32
@@ -234,6 +290,7 @@ class WindowsCaptureEventRunner:
                     if on_paused is not None:
                         on_paused("paused")
                     return
+                self._log_capture_gap(capture_start_time, capture_kwargs)
                 self._log_capture_fps(capture_start_time)
                 copy_start_time = time.perf_counter()
                 raw, copy_mode, frame_raw_device = _copy_frame_buffer(frame.frame_buffer, self.capture_tool)
@@ -249,7 +306,7 @@ class WindowsCaptureEventRunner:
                         frame_raw_device=frame_raw_device,
                         metadata={
                             "backend": "windows_capture_event",
-                            "zero_copy": False,
+                            "zero_copy": copy_mode is FrameCopyMode.GPU_TENSOR,
                         },
                     )
                 )

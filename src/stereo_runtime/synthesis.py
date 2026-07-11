@@ -37,7 +37,7 @@ class StereoConfig:
     output_format: OutputFormat = "half_sbs"
     debug_output: bool = False
     depth_strength: float = 2.0
-    convergence: float = 0.0
+    convergence: float | torch.Tensor = 0.0
     max_disparity_px: float | None = None
     parallax_preset: str = "standard"
     foreground_shift_scale: float = 1.0

@@ -2,8 +2,104 @@
 
 import queue as _queue
 import time
+from dataclasses import dataclass
+from typing import Any, Optional
 
 from OpenGL.GL import glDeleteBuffers
+
+from .effect_scheduler import EffectScheduler
+
+
+@dataclass
+class ScreenFramePoll:
+    frame: Optional[Any]
+    frame_id: int
+    source_timestamp: Optional[float] = None
+    dequeued: int = 0
+    dropped: int = 0
+    is_new: bool = False
+    reused: bool = False
+
+
+class ScreenFrameBridge:
+    """Non-blocking latest-frame bridge for OpenXR screen presentation."""
+
+    def __init__(self, source_q=None):
+        self.source_q = source_q
+        self.latest_frame = None
+        self.last_presented_frame = None
+        self.frame_id = 0
+        self.latest_frame_id = 0
+        self.last_presented_frame_id = 0
+        self.source_timestamp = None
+        self.last_presented_source_timestamp = None
+
+    @staticmethod
+    def _source_timestamp(frame):
+        if isinstance(frame, tuple):
+            if len(frame) == 2 and hasattr(frame[0], "left_eye"):
+                return frame[1]
+            if len(frame) == 3:
+                return frame[2]
+        return None
+
+    def drain_latest(self):
+        latest = None
+        dequeued = 0
+        if self.source_q is None:
+            return ScreenFramePoll(None, self.latest_frame_id)
+        try:
+            while True:
+                latest = self.source_q.get_nowait()
+                dequeued += 1
+        except _queue.Empty:
+            pass
+
+        if latest is None:
+            return ScreenFramePoll(None, self.latest_frame_id, dequeued=dequeued)
+
+        self.latest_frame = latest
+        self.frame_id += max(1, dequeued)
+        self.latest_frame_id = self.frame_id
+        self.source_timestamp = self._source_timestamp(latest)
+        return ScreenFramePoll(
+            latest,
+            self.latest_frame_id,
+            source_timestamp=self.source_timestamp,
+            dequeued=dequeued,
+            dropped=max(0, dequeued - 1),
+            is_new=True,
+        )
+
+    def has_unpresented_frame(self):
+        return self.latest_frame is not None and self.last_presented_frame_id != self.latest_frame_id
+
+    def mark_presented(self, frame=None):
+        if frame is None:
+            frame = self.latest_frame
+        if frame is None:
+            return ScreenFramePoll(None, self.last_presented_frame_id)
+        is_new = self.last_presented_frame_id != self.latest_frame_id
+        self.last_presented_frame = frame
+        self.last_presented_frame_id = self.latest_frame_id
+        self.last_presented_source_timestamp = self.source_timestamp
+        return ScreenFramePoll(
+            frame,
+            self.last_presented_frame_id,
+            source_timestamp=self.last_presented_source_timestamp,
+            is_new=is_new,
+            reused=not is_new,
+        )
+
+    def reuse_presented(self):
+        if self.last_presented_frame is None:
+            return ScreenFramePoll(None, self.last_presented_frame_id)
+        return ScreenFramePoll(
+            self.last_presented_frame,
+            self.last_presented_frame_id,
+            source_timestamp=self.last_presented_source_timestamp,
+            reused=True,
+        )
 
 
 class CoreSourceStateMixin:
@@ -33,6 +129,12 @@ class CoreSourceStateMixin:
 
     def _release_idle_gpu_resources(self):
         self._release_runtime_eye_pbos()
+        if getattr(self, '_gl_tensor_pbo_uploader', None) is not None:
+            try:
+                self._gl_tensor_pbo_uploader.release()
+            except Exception:
+                pass
+            self._gl_tensor_pbo_uploader = None
         if self._pbo_color is not None and self._cuda_gl:
             try:
                 self._cuda_gl.unregister_resource(self._cuda_res_color)
@@ -192,9 +294,10 @@ class CoreSourceStateMixin:
                 queued = self.depth_q.qsize()
             except Exception:
                 queued = -1
-            if getattr(self, "_openxr_debug", False):
+            if getattr(self, "_openxr_debug", False) and getattr(self, "_source_stale_debug_log_count", 0) < 1:
+                self._source_stale_debug_log_count = getattr(self, "_source_stale_debug_log_count", 0) + 1
                 print(
-                    "[OpenXRViewer][debug] Source stale: "
+                    "[DEBUG] [OpenXRViewer][debug] Source stale: "
                     f"age={age:.2f}s timeout={self._source_frame_timeout:.2f}s "
                     f"q={queued} count={self._source_stall_count}; keeping previous frame"
                 )
@@ -230,55 +333,99 @@ class CoreSourceStateMixin:
         except Exception:
             pass
 
-    def _poll_source_frame(self, upload=False):
-        poll_start = time.perf_counter()
-        latest = None
-        dequeued = 0
+    def _breakdown_add_value(self, name, value):
+        callback = getattr(self, "_fps_breakdown_add_value", None)
+        if not callable(callback):
+            return
         try:
-            while True:
-                latest = self.depth_q.get_nowait()
-                dequeued += 1
-        except _queue.Empty:
+            callback(name, value)
+        except Exception:
             pass
+
+    def _screen_frame_bridge(self):
+        bridge = getattr(self, "_openxr_screen_frame_bridge", None)
+        if bridge is None or bridge.source_q is not self.depth_q:
+            bridge = ScreenFrameBridge(self.depth_q)
+            self._openxr_screen_frame_bridge = bridge
+        return bridge
+
+    def _record_screen_frame_bridge_age(self, bridge):
+        age = max(0, int(bridge.latest_frame_id) - int(bridge.last_presented_frame_id))
+        self._breakdown_add_value("openxr_screen_frame_age_frames", float(age))
+
+    def _record_screen_frame_source_latency(self, source_timestamp):
+        if source_timestamp is None:
+            return
+        self._breakdown_add_time("openxr_source_latency", time.perf_counter() - float(source_timestamp))
+
+    def _set_pending_projection_screen_present(self, poll):
+        self._pending_projection_screen_present = poll
+
+    def _record_projection_screen_presented(self):
+        poll = getattr(self, "_pending_projection_screen_present", None)
+        if poll is None:
+            return
+        self._pending_projection_screen_present = None
+        bridge = self._screen_frame_bridge()
+        if getattr(poll, "is_new", False):
+            presented = bridge.mark_presented(getattr(poll, "frame", None))
+            self._breakdown_inc("openxr_new_screen_frame")
+        else:
+            presented = poll
+            self._breakdown_inc("openxr_reused_screen_frame")
+        self._record_screen_frame_bridge_age(bridge)
+        self._record_screen_frame_source_latency(getattr(presented, "source_timestamp", None))
+
+    def _runtime_effect_submit_scheduler(self):
+        scheduler_factory = getattr(self, "_runtime_effect_scheduler", None)
+        if callable(scheduler_factory):
+            return scheduler_factory()
+        scheduler = getattr(self, "_openxr_effect_submit_scheduler", None)
+        if scheduler is None:
+            scheduler = EffectScheduler()
+            self._openxr_effect_submit_scheduler = scheduler
+        return scheduler
+
+    def _queue_runtime_effect_submit(self, effect_source_rgb):
+        if effect_source_rgb is None:
+            return
+        needs_effect_source = getattr(self, "_runtime_effects_need_source_texture", None)
+        if callable(needs_effect_source):
+            try:
+                if not needs_effect_source():
+                    release_effect_source = getattr(self, "_release_runtime_effect_source_texture", None)
+                    if callable(release_effect_source):
+                        release_effect_source()
+                    self._runtime_effect_submit_scheduler().clear_pending_source()
+                    return
+            except Exception:
+                pass
+        scheduler = self._runtime_effect_submit_scheduler()
+        if scheduler.queue_source(effect_source_rgb):
+            self._breakdown_inc("openxr_effect_submit_overwrite")
+
+    def _poll_source_frame(self, upload=False):
+        if upload:
+            from .screen_layer_presenter import ScreenLayerPresenter
+
+            return ScreenLayerPresenter(self).poll_screen_frame()
+
+        poll_start = time.perf_counter()
+        bridge = self._screen_frame_bridge()
+        poll = bridge.drain_latest()
+        latest = poll.frame
+        dequeued = poll.dequeued
 
         if dequeued:
             self._breakdown_inc("viewer_get", dequeued)
-            if dequeued > 1:
-                self._breakdown_inc("viewer_drop", dequeued - 1)
+            if poll.dropped:
+                self._breakdown_inc("viewer_drop", poll.dropped)
 
         if latest is not None:
-            self._pending_source_frame = latest
             self._mark_source_frame_received()
 
-        if not upload:
-            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-            return latest is not None
-
-        if self._pending_source_frame is None:
-            self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-            return False
-
-        source_frame, frame_ts = self._normalize_source_frame(self._pending_source_frame)
-        self._pending_source_frame = None
-
-        upload_start = time.perf_counter()
-        if self._is_runtime_result(source_frame):
-            self._update_runtime_frame(source_frame)
-        else:
-            rgb, depth = source_frame
-            self._update_frame(rgb, depth)
-        self._breakdown_add_time("openxr_upload", time.perf_counter() - upload_start)
-        if frame_ts is not None:
-            self.total_latency = (time.perf_counter() - frame_ts) * 1000.0
-        sbs_now = time.perf_counter()
-        self._sbs_ts_ring.append(sbs_now)
-        m = len(self._sbs_ts_ring)
-        if m >= 2:
-            sbs_span = sbs_now - self._sbs_ts_ring[0]
-            if sbs_span > 0:
-                self.sbs_fps = (m - 1) / sbs_span
         self._breakdown_add_time("openxr_poll", time.perf_counter() - poll_start)
-        return True
+        return latest is not None
 
     def _normalize_source_frame(self, item):
         if self._is_runtime_result(item):
@@ -306,8 +453,6 @@ class CoreSourceStateMixin:
             payload = {"screen_roll": self.screen_roll}
             if include_stereo:
                 depth_strength = float(self.depth_strength)
-                if self._quad_layer_can_replace_projection_screen():
-                    depth_strength *= float(getattr(self, '_xr_quad_layer_stereo_boost', 1.0))
                 payload.update(
                     depth_strength=depth_strength,
                     convergence=self.convergence,
@@ -317,9 +462,13 @@ class CoreSourceStateMixin:
             pass
 
     def _has_renderable_source_frame(self):
-        if self._runtime_direct_source:
-            return all(self._runtime_eye_textures) and self._runtime_depth_texture is not None
-        return self.color_tex is not None and self.depth_tex is not None
+        if getattr(self, '_runtime_direct_source', False):
+            if getattr(self, '_use_d3d11', False):
+                renderer = getattr(self, '_d3d11_native_renderer', None)
+                if renderer is not None and renderer.has_frame:
+                    return True
+            return bool(getattr(self, '_runtime_eye_has_frame', False)) and all(getattr(self, '_runtime_eye_textures', ()))
+        return getattr(self, 'color_tex', None) is not None and getattr(self, 'depth_tex', None) is not None
 
     def _should_show_source_border(self, now=None):
         if getattr(self, "_hard_idle_active", False):

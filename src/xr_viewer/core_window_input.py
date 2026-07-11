@@ -104,20 +104,17 @@ class CoreWindowInputMixin:
         return _cb
 
     def _toggle_quad_layer_compare(self):
-        if not self._xr_quad_layer_enabled:
-            self._preset_name_overlay = 'Projection Screen (Quad disabled)'
-        elif self._xr_quad_layer_failed or not self._quad_swapchains:
+        if self._xr_quad_layer_failed or not self._quad_swapchains:
             self._xr_quad_layer_active = False
-            self._preset_name_overlay = 'Projection Screen (Quad unavailable)'
+            self._preset_name_overlay = 'Quad Layer unavailable'
         else:
-            self._xr_quad_layer_active = not self._xr_quad_layer_active
-            self._preset_name_overlay = 'Quad Layer Screen' if self._xr_quad_layer_active else 'Projection Screen'
+            self._xr_quad_layer_active = True
+            self._preset_name_overlay = 'Quad Layer Screen'
         self._preset_osd_show_t = time.perf_counter()
         self._publish_runtime_config()
         print(
-            "[OpenXRViewer] Screen compare mode: "
+            "[OpenXRViewer] Screen layer status: "
             f"{self._preset_name_overlay} "
-            f"enabled={self._xr_quad_layer_enabled} "
             f"active={self._xr_quad_layer_active} "
             f"swapchains={len(self._quad_swapchains)} "
             f"array_size={int(self._quad_swapchain_array_size.get(0, 0) or 0)} "

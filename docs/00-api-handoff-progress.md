@@ -17,19 +17,21 @@ https://github.com/laiyangli001/4k-stereo-synthesis-lab
 Current focus:
 
 ```text
-Desktop2Stereo GUI stereo-parameter cleanup, OpenXR comfort defaults, and engineering-spec refactor follow-ups
+OpenXR projection-main stereo presentation, Traditional/Cinema runtime output contracts, GUI/runtime progress visibility, render-size defaults, and real-device presentation/runtime handoff follow-ups
 ```
 
 Latest pushed task commit:
 
 ```text
-599981e feat: add GUI log panel controls and progress
+c03f61a fix: improve OpenXR quad stereo diagnostics
 ```
 
 Canonical specs for current work:
 
 - `docs/01-Realtime-2d-to-3d-specification.md` - official final runtime process spec; `docs/25` is obsolete.
-- `docs/01-desktop2stereo-engineering-design-specification.md` - engineering implementation, migration, compatibility cleanup, and compliance status.
+- `docs/02-desktop2stereo-engineering-design-specification.md` - engineering implementation, migration, compatibility cleanup, and compliance status.
+- `docs/35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md` - target OpenXR asynchronous decoupled rendering architecture.
+- `docs/36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md` - implementation plan for the OpenXR asynchronous refactor; use it as the current plan for projection-layer main-screen presentation, optional Quad diagnostics/overlays, panorama background, GPU Glow, and wall reflection work.
 - `prompts/codex-refactor-prompt.md`
 - This file: `docs/00-api-handoff-progress.md`
 
@@ -38,25 +40,29 @@ Canonical specs for current work:
 - Treat `docs/01-Realtime-2d-to-3d-specification.md` as canonical when Parallax Budget, render_size, OpenXR, or output contract details differ from the prompt or historical docs.
 - Keep `stereo_runtime` responsible for depth inference, stereo synthesis, OpenXR render-core config, output tensors, timings, and provider/debug contracts.
 - Keep capture/session/window lifecycle, GUI settings persistence, OpenXR session/swapchain timing, and final display/submit outside `stereo_runtime`.
+- For OpenXR rendering, treat the virtual screen as the hard-realtime path. Background, Glow, and wall reflection are soft-realtime paths that must consume already-safe GPU results and must not block `xrEndFrame`.
+- Real-device VDXR validation showed Quad layer submission can carry distinct left/right runtime textures but still appear mono in the headset. Do not rely on Quad layer as the main stereo presentation path under VDXR; the main virtual screen now belongs on projection-layer rendering, with Quad kept only as an experimental/diagnostic or overlay path.
 - Keep compatibility paths where recent tasks introduced new contracts: `RuntimeSettingsSnapshot`, normalized parallax budgets, and `CapturedFrame` metadata.
 - Do not commit or upload runtime artifacts: `models/`, `outputs/`, `python3/`, `python-cu13/`, `downloads/`, `.codegraph/`, or `4K.jpg`.
 
 ## Current Known Issues
 
-- D3D11 native OpenXR direct shader still needs a follow-up to match the OpenGL RGB+depth direct shader's core DIBR semantics. Current D3D11 already applies `screen_roll` to parallax direction, but still lacks the OpenGL shader's 3-tap depth smoothing, non-linear depth shaping, edge falloff, soft disocclusion confidence, push-pull inpaint, alpha edge fade, feather controls, corner radius, and `u_resolution` / `u_viewport` semantics. Estimated AI time for the focused direct-shader parity pass is about 60-90 minutes excluding headset validation; full OpenGL `_render_eye()` experience parity is a larger 3-5 hour follow-up.
+- D3D11 native OpenXR direct shader now includes the core OpenGL RGB+depth DIBR semantics: 3-tap depth smoothing, edge falloff, soft disocclusion confidence, and directional inpaint. Remaining work is VDXR visual/performance validation plus optional polish parity such as rounded-corner alpha, feather controls, and full OpenGL `_render_eye()` experience parity.
 - Runtime scheduling/backpressure must stay latest-frame first. The recent high-refresh capture diagnosis showed direct `wc_cuda` capture can reach high cadence, but a full CUDA runtime frame without a GPU completion boundary can build an async GPU queue and backpressure WGC / CUDA interop down to roughly 50-60 FPS. This is a runtime scheduling issue, not an OpenXR-only presentation issue.
 - The remaining "SBS only around 20 FPS" symptom is not explained by `StereoRuntime` compute time in the latest log. Runtime refresh shows `total_ms=3.4-3.7`, `depth_total_ms=1.7`, `synthesis_ms=1.7-2.0`, `stage_sbs=0.1`, and `pack_ms=0.0`, while `WindowsCaptureCUDA` reports about 72-82 FPS. Next investigation should check the outer loop after runtime compute: `RuntimePipelineLoop`, `runtime_q`, viewer/OpenXR submit, texture upload, present/vsync, or the FPS counter source.
 - TensorRT ORT depth provider still has a serious GPU zero-copy violation: input is converted from CUDA tensor to CPU numpy before `OrtValue.ortvalue_from_numpy`, and output uses `OrtValue.numpy()` followed by `torch.from_numpy()`, putting the depth result back on CPU before later GPU work. This is now logged as a red CPU transfer/fallback, but the next optimization should remove the CPU round trip entirely.
 - CUDA/GL image texture upload must remain image-texture-first. PBO is an acceptable GPU fallback, but it must be logged as fallback and must not hide the original image texture failure. Any CPU upload fallback in OpenXR, local viewer, stream/debug realtime display, or depth provider hot path must print a red console warning and record the reason.
+- OpenXR Quad layer is not a reliable VDXR main stereo display path. The latest logs prove runtime left/right eye tensors differ, OpenGL shared-array Quad swapchains are created, and Quad headers submit `eye0 array=0` / `eye1 array=1`; however the headset still shows no useful 3D. Projection layer remains the known-good OpenXR stereo path because it uses standard per-eye projection views. Current code should keep the main screen off the Quad path.
+- OpenXR Glow / screen-light sampling must follow `docs/20-openxr-gpu-glow-guide.md`: use GPU source texture, low-resolution glow texture, shader/compute sampling, or future D3D/Vulkan GPU passes. Do not reintroduce realtime `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` as screen-light sampling sources.
 
 ## Future Work
 
-Detailed engineering and migration rules live in `docs/01-desktop2stereo-engineering-design-specification.md`. This handoff file only tracks the current task queue and verification status.
+Detailed engineering and migration rules live in `docs/02-desktop2stereo-engineering-design-specification.md`. This handoff file only tracks the current task queue and verification status.
 
 Current task queue:
 
 1. Complete GUI live hot-save direct emission of `RuntimeSettingsSnapshot`; keep settings.yaml polling as an explicit compatibility path.
-2. Bring D3D11 native OpenXR RGB+depth direct shader to parity with the OpenGL direct shader's core DIBR quality semantics.
+2. Validate D3D11 native OpenXR projection + RGB+depth direct shader on VDXR, then decide whether optional visual polish parity is still needed.
 3. Validate CUDA/ROCm capture zero-copy on real hardware before any path reports `zero_copy=True`.
 4. Keep runtime scheduling/backpressure covered: CUDA runtime should default to `D2S_RUNTIME_SYNC_AFTER_FRAME=auto`, latest-frame overwrite/drop is expected, and non-CUDA backends must not be accidentally forced into the CUDA sync policy.
 5. Trace the remaining SBS/display FPS gap outside `StereoRuntime.process_*()`: add or inspect timing around raw dequeue, runtime call, runtime_q put/drop, viewer dequeue, texture upload, OpenXR/local submit, present/vsync, and FPS reporting.
@@ -64,9 +70,347 @@ Current task queue:
 7. Optimize TensorRT ORT depth provider for real GPU zero-copy: replace CPU numpy input binding with CUDA/DLPack or direct CUDA OrtValue binding, keep iobinding output on CUDA, and return a CUDA torch tensor without `OrtValue.numpy()` / `torch.from_numpy()` CPU staging.
 8. Remove remaining compatibility redundancy after all consumers use the docs/01 contract: old snapshot/API aliases and debug-only fallback keys. Legacy parallax multiplier fields and historical render-scale numeric thresholds have been cleaned from the current runtime/config path and should now be guarded against regressions.
 9. Continue network_stream encoder transport work, especially RTMP / low-latency paths, without redefining stereo synthesis semantics.
-10. Keep `docs/01-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
+10. Keep `docs/02-desktop2stereo-engineering-design-specification.md` aligned to the `docs/01-Realtime-2d-to-3d-specification.md` eleven-step runtime flow.
+11. Continue `docs/36` phase 2: harden the OpenXR frame loop so the headset presenter keeps refreshing from the last good Projection screen frame when runtime/capture/effects are slow, without backpressuring capture/runtime.
 
 ## Current Status
+
+### 2026-07-08 Projection Main Path, Output Modes, Progress Logs, and Render Align Default
+
+Implemented locally in the current worktree:
+
+- Switched the OpenXR main virtual screen path off Quad layer. `ScreenLayerPresenter.prepare_frame_layers()` now leaves Quad updates/headers empty for the main screen, while projection layer remains the required presentation path.
+- Added the D3D11 native projection-layer main-screen branch. When the D3D11 native renderer has a runtime-eye or RGB+depth frame, `ProjectionLayerPresenter` now renders the virtual screen directly into the OpenXR D3D11 projection swapchain instead of skipping projection when NV_DX interop is absent.
+- Closed Phase 1 control-state contract for the D3D11 projection main screen: the projection model matrix now goes through the shared screen pose helper, while OpenXR frame input continues to call the existing controller/raycast/screen-adjust/hot-parameter path before rendering. This keeps visual screen placement and laser/controller hit logic tied to the same screen pose/size state.
+- Added D3D11 projection screen-present accounting. A successful two-eye D3D11 projection render now increments `openxr_projection_screen_present`, and `[FPSBreakdown]` reports it as `screen_proj=...`; `validate_openxr_async()` counts this as a valid main-screen present signal alongside the legacy Quad screen counters.
+- Fixed the OpenXR async validation gate for disabled effects. When `D2S_OPENXR_ASYNC_EFFECTS=0` / `Async effects enabled=False`, `validate_openxr_async()` no longer requires `effect_submit_or_safe_reuse`; when effects are enabled, the original effect-submit/safe-reuse requirement remains.
+- Hardened all model weight resolution against empty files. Local cache hits, `hf_hub_download`, and generic `snapshot_download` results must resolve to a non-empty weight file; empty/failed Hugging Face downloads fall back to direct HTTP streaming into `model.safetensors.tmp` followed by atomic replace.
+- Brought the D3D11 native RGB+depth direct shader up to the core OpenGL DIBR path: 3-tap depth smoothing, parallax edge falloff, soft disocclusion confidence, and directional inpaint. Runtime-eye/full-synthesis input still takes the cheap color-only path because it is already prewarped.
+- Changed the default OpenXR backend from OpenGL-first to D3D11-first. `D2S_OPENXR_BACKEND=opengl` still forces OpenGL, and `auto` still means OpenGL with D3D11 fallback.
+- Removed READY/init-time Quad prewarm calls from OpenXR input/OpenGL startup. Low-level Quad support remains for explicit diagnostics/overlay/legacy experiments.
+- Added an explicit OpenXR runtime output-mode contract: Traditional uses `rgb_depth`, Cinema uses `full_synthesis_eyes`, and `auto` remains the compatibility fallback. Traditional therefore keeps the RGB+depth shader path while sharing the normalized parallax/disparity parameter system with Cinema.
+- Fixed prewarped full-synthesis eye-order handling so Cross Eyed swaps generated left/right eye tensors on that path.
+- Real-device Phase 1 control validation passed on the D3D11 projection main screen: controller laser hits line up with the visible screen, left/right grip dragging moves the Projection screen, distance/size/rotation changes apply immediately to the main screen, and Depth Strength / 2D-3D hot switching still publishes runtime config.
+- Started `docs/36` Phase 2 hard-realtime closure by locking the frame-gate contract: source stale with an existing renderable last-good Projection screen frame must continue into renderer instead of submitting an empty frame. This preserves controller/head pose refresh and `xrEndFrame` cadence while `openxr_no_fresh` records the stale source condition.
+- Updated async validation coverage so `openxr_no_fresh` plus active `screen_proj` is accepted as a valid last-good-frame reuse state, not an async failure, when effect submit/safe reuse is satisfied.
+- Moved OpenXR screen new/reuse accounting from `poll_screen_frame()` to successful Projection render completion. Upload or budget-skip now only creates a pending present record; `openxr_new_screen_frame`, `openxr_reused_screen_frame`, screen age, and source latency are recorded only after the Projection main screen actually renders successfully.
+- Fixed the reused runtime-eye accounting edge case. If a new runtime result is dequeued but the upload path reuses the previous renderable eye texture, the Projection presenter now records an explicit reuse present instead of losing the present record and inflating screen age/source latency.
+- Reduced noisy runtime logs: `[FPSBreakdown]` is capped to the requested limited debug count and OpenXR controller-render debug is capped separately.
+- Improved GUI/status progress reporting for weight download, ONNX export, and TensorRT build. Long TensorRT builds should emit `[INFO] [status]` user-facing state instead of leaving the GUI looking stuck behind verbose builder output.
+- Changed reset/default `Render Align` from `8` to `1`. `1` means no implicit output-size cropping; `8`, `16`, and `32` remain manual compatibility choices.
+
+Verification run during this pass:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\stereo_runtime\openxr_render.py src\stereo_runtime\presets.py src\stereo_runtime\runtime.py src\xr_viewer\core_openxr_input.py src\xr_viewer\core_openxr_opengl.py src\xr_viewer\screen_layer_presenter.py tests\test_runtime_openxr.py tests\test_presets.py tests\test_openxr_runtime.py tests\test_environment_fast_path.py src\gui\config.py src\stereo_runtime\render_size.py tests\test_render_size.py tests\test_gui_config.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py -q -p no:cacheprovider
+.\src\python3\python.exe -m pytest tests\test_runtime_openxr.py tests\test_render_size.py tests\test_presets.py::test_openxr_presets_map_shared_stereo_params tests\test_gui_config.py::test_gui_render_size_controls_expose_only_fixed_4k_scale_tiers -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\projection_layer_presenter.py src\xr_viewer\core_openxr_d3d11.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains tests/test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests/test_openxr_runtime.py::test_screen_layer_presenter_does_not_build_quad_layers_for_main_screen -q
+.\src\python3\python.exe -m py_compile src\xr_viewer\d3d11_native_renderer.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests/test_openxr_runtime.py::test_d3d11_direct_shader_keeps_core_dibr_parity -q
+.\src\python3\python.exe -m py_compile src\xr_viewer\core_screen_state.py src\xr_viewer\implementation.py src\xr_viewer\projection_layer_presenter.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests/test_openxr_runtime.py::test_screen_model_matrix_uses_shared_screen_pose_state -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\openxr_frame_gate.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_openxr_runtime.py::test_openxr_frame_gate_keeps_rendering_last_good_frame_when_source_stale -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\utils\breakdown.py src\xr_viewer\openxr_frame_gate.py tests\test_breakdown.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests/test_breakdown.py::test_fps_breakdown_validates_openxr_async_contract tests/test_openxr_runtime.py::test_openxr_frame_gate_keeps_rendering_last_good_frame_when_source_stale -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+OpenXR runtime tests passed: 111 passed, 2 warnings
+Runtime OpenXR / render-size / preset / GUI targeted tests passed
+D3D11 native projection-path static tests passed
+D3D11 direct shader core parity static tests passed
+D3D11 projection screen-state contract tests passed
+Real-device D3D11 projection control validation passed
+OpenXR Phase 2 stale-source last-good-frame gate test passed
+OpenXR async validation accepts stale-source screen_proj reuse
+```
+
+Next validation target:
+
+- Continue `docs/36` phase 2: verify OpenXR presenter pacing and last-good-frame reuse when runtime/capture/effects are slow, without dropping controller/head pose refresh or blocking `xrEndFrame`.
+- In the real-device `[FPSBreakdown]` line, confirm `screen_proj>0`, `openxr_async_ok=1`, `openxr_async_missing=none`, and `openxr_async_failed=none` after projection rendering is active.
+- If async effects are intentionally disabled, confirm `fx_enabled=0`; in that case missing `effect_submit_or_safe_reuse` is no longer expected.
+- Confirm reset/default render alignment shows `1` and does not silently crop common sizes such as 1920x1080 to a 16-aligned height.
+
+Phase 3 start:
+
+- Added native panorama/equirect background safe-result diagnostics. `BackgroundLayerRenderer` now records `openxr_background_safe_age_frames` and `openxr_background_reuse` when an already-uploaded equirect background is reused, so real-device logs can prove background reuse/age is separate from Projection screen submit cadence.
+- Real-device HDR validation showed the active D3D11 OpenXR session was reaching the Projection path but not preparing any panorama background resource: `[FPSBreakdown]` reported `bg_path=layer:0.0,upload:0.0,...fallback:0.0,panorama:0.0` and no `Panorama background loaded` line.
+- Fixed the background preparation gap by adding `ScreenLayerPresenter.ensure_panorama_background_ready()` and calling it before background layer/fallback decisions. After that change, real-device logs showed `Panorama background loaded: ...\hdr_universe\universe.hdr (10000x5000)` and `Projection layer active: reason=background_projection_fallback`.
+- Fixed the D3D11 native Projection fallback visibility gap. Before this pass, `D3D11NativeRenderer` only drew the virtual screen into the projection swapchain, so an active projection-background fallback still produced no visible HDR room/background. It now loads the panorama image into a D3D11 SRV, draws a full-screen background pass, then draws the virtual screen on top.
+- Current Phase 3 limitation: the D3D11 panorama path is a visibility/stability fallback, not the final head-pose-correct equirect/cubemap background renderer. The final `docs/36` target is still an async-safe room/background texture path with correct sampling and old-frame consumption.
+
+Verification run during this Phase 3 update:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\xr_viewer\d3d11_native_renderer.py src\xr_viewer\projection_layer_presenter.py src\xr_viewer\screen_layer_presenter.py src\xr_viewer\background_layer_renderer.py tests\test_openxr_runtime.py tests\test_environment_fast_path.py
+.\src\python3\python.exe -m pytest tests/test_breakdown.py tests/test_environment_fast_path.py tests/test_openxr_runtime.py -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+197 passed, 2 skipped, 2 warnings
+```
+
+Next validation target:
+
+- Re-run real-device OpenXR D3D11 with an HDR environment selected and confirm `D3D11 panorama background active: ... universe.hdr` appears before or near Projection rendering, with HDR background visible behind the virtual screen.
+- Continue Phase 3 toward the final async projection-background design: replace the minimal D3D11 full-screen fallback with head-pose-correct equirect/cubemap sampling and safe reusable background textures.
+
+### 2026-07-09 OpenXR D3D11 Controller, Laser, and Color-Space Follow-up
+
+Implemented locally in the current worktree:
+
+- Added shared controller glTF material preparation so OpenGL and D3D11 consume the same semantic fields for base color, alpha mode, `doubleSided`, sampler/texture transform, texcoord index, sRGB-vs-linear texture role, normal, metallic-roughness, occlusion, and emissive maps. This is shared material-field preparation, not a claim of complete glTF 2.0 compliance.
+- Added `src/xr_viewer/controllers/common.json` as the shared controller material/diagnostic config. `diagnostics.materialMode: "opaque_unlit"` or `D2S_OPENXR_CONTROLLER_MATERIAL_DIAG=opaque_unlit` can temporarily force opaque unlit controller materials for texture/alpha diagnosis.
+- Fixed D3D11 HP / Index controller texture transparency by matching glTF/OpenGL front-face winding with `FrontCounterClockwise=1` and using WRAP sampling for controller UVs that exceed `0..1`.
+- Extended the D3D11 controller path to bind the prepared base/normal/occlusion/metallic-roughness/emissive material textures and to support `TEXCOORD0` / `TEXCOORD1`.
+- Set the controller surface lighting policy: controller models ignore environment profile punctual/fill lights and are affected by screen light/reflection, head/top light, HDR environment lighting when enabled, and base ambient only. Environment `profile.json` lights still belong to the room/environment path.
+- Moved laser beam dimensions into shared `laser_params.py`: controller-end total width is 6 mm, tip total width is 2 mm. OpenGL and D3D11 now use their own renderer-specific crossed tapered quad geometry for a colored light-column appearance while sharing the same dimensions.
+- Fixed the D3D11 projection screen darkening path by keeping the intermediate desktop color texture as `DXGI_FORMAT_R8G8B8A8_UNORM`; this avoids unintended sRGB decode without a matching encode when the final RTV is UNORM. OpenXR swapchain selection may still prefer sRGB where the runtime exposes it.
+- Documented the GLB CPU/GPU boundary: glTF/GLB parse, image decode, and first texture upload use CPU-side work, while per-frame controller rendering samples already-created GPU textures.
+- Added a separate shared overlay Quad presenter for virtual keyboard and short OSD panels. It owns independent overlay Quad swapchains, uploads small RGBA UI textures only when their content changes, appends the Quad layers after the Projection main screen, and does not re-enable Quad as the main stereo screen path. OpenGL uploads into OpenXR GL swapchain textures; D3D11 uploads into D3D11 swapchain textures.
+- Moved the virtual keyboard texture and short OSD RGBA generation into shared `overlay_textures.py`. OpenGL keeps the previously validated keyboard layout/render semantics and D3D11 consumes the same RGBA/key-rect builder; backend-specific code only performs API upload and Quad layer submit. Future keyboard/OSD functional changes must land in the shared builder first, not in backend-specific duplicate drawing code.
+- Reverted the always-on foreground Projection layer experiment. Controller models, laser beams, and the screen hit circle are rendered again in the main Projection path; virtual keyboard, short OSD/FPS/help panels remain Quad overlays.
+- Added an independent keyboard cursor Quad overlay. The keyboard panel texture still handles key hover/held highlighting through the shared builder, but the cursor ring uses a small static RGBA texture and only changes Quad pose/size. It is submitted only while the matching controller still has a keyboard hover target, so it disappears when the laser leaves the keyboard.
+
+Verification run during this pass:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\xr_viewer\controller_materials.py src\xr_viewer\controller_models.py src\xr_viewer\core_laser_render.py src\xr_viewer\d3d11_native_renderer.py src\xr_viewer\environment_renderer.py src\xr_viewer\glsl.py src\xr_viewer\implementation.py src\xr_viewer\overlay_textures.py src\xr_viewer\overlay_quad_presenter.py src\xr_viewer\openxr_frame_renderer.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_controller_material_preserves_gltf_double_sided_without_override tests\test_openxr_runtime.py::test_d3d11_projection_path_uses_native_renderer tests\test_openxr_runtime.py::test_controller_render_debug_logs_once_as_debug tests\test_openxr_runtime.py::test_laser_width_is_shared_between_opengl_and_d3d11 tests\test_openxr_runtime.py::test_controller_lighting_ignores_environment_profile_lights tests\test_openxr_runtime.py::test_d3d11_fallback_uses_unorm_intermediate_color_texture tests\test_openxr_runtime.py::test_d3d11_overlay_quads_are_separate_from_main_screen_quad_path -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\core_keyboard.py src\xr_viewer\overlay_quad_presenter.py src\xr_viewer\overlay_textures.py src\xr_viewer\d3d11_native_renderer.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py tests\test_keyboard_screen_preset.py
+```
+
+Result:
+
+```text
+py_compile passed
+Targeted OpenXR controller/D3D11 tests passed
+HLSL compile probes passed: controller_hlsl_ok, laser_hlsl_ok, projection_hlsl_ok
+OpenXR keyboard/Quad overlay regression tests passed: 149 passed
+User real-device visual check: D3D11 HP and Index controller textures no longer appear transparent
+```
+
+Next validation target:
+
+- Re-run real-device D3D11 after the UNORM intermediate color fix and compare projection screen brightness against OpenGL.
+- Visually confirm the controller lighting policy across several environments: screen reflection, top/head light, HDR environment, and no environment profile punctual/fill light affecting controller material.
+- Keep `diagnostics.materialMode` as a temporary diagnosis aid only; remove or leave disabled once controller material validation is stable.
+
+### 2026-07-07 OpenXR Runtime Preparation Before Capture
+
+Implemented locally in the current worktree:
+
+- Fixed the OpenXR startup order that allowed `WindowsCaptureCUDA` capture to run while TensorRT / CUDA runtime preparation was still building the engine.
+- Added `RuntimePipelineLoop.prepare()`, an idempotent wrapper around the existing `stereo_runtime.load()` path. This reuses the provider/artifact preparation flow instead of adding a second model-build path.
+- `src/main.py` now starts the OpenXR runtime pipeline first, waits for runtime preparation / TensorRT build to finish, and only then starts `CaptureLoop`.
+- If OpenXR runtime preparation fails, the runtime thread sets `shutdown_event`, unblocks the main thread, and capture is not started.
+- Non-OpenXR modes keep the previous startup order.
+
+Reason:
+
+```text
+Starting capture during TensorRT build let WindowsCaptureCUDA and TensorRT/PyTorch CUDA initialization/build work touch CUDA concurrently, which produced errors such as:
+CUDA error: operation would make the legacy stream depend on a capturing blocking stream
+```
+
+Verification:
+
+```powershell
+src\python3\python.exe -m py_compile src\main.py src\stereo_runtime\pipeline.py tests\test_runtime_pipeline.py
+src\python3\python.exe -m pytest tests\test_runtime_pipeline.py -q
+git diff --check
+```
+
+Result:
+
+```text
+py_compile passed
+37 runtime pipeline tests passed
+git diff --check reported only existing LF/CRLF warnings, no whitespace errors
+```
+
+Next validation target:
+
+- Re-run OpenXR with a missing/outdated TensorRT engine and confirm the log order is `Building TensorRT engine...` -> `native engine ready` -> `CaptureGap` / capture startup, with no `capture_loop` CUDA stream error during build.
+
+### 2026-07-07 OpenXR Quad/Projection Real-Device Finding
+
+Implemented and pushed:
+
+```text
+c03f61a fix: improve OpenXR quad stereo diagnostics
+```
+
+Findings from VDXR headset validation:
+
+- Runtime full-synthesis eyes are genuinely different; diagnostic logs showed `runtime eye diff mean=4.580/255 max=255/255` during the shared-array run.
+- The OpenGL Quad path can create a shared-array swapchain by default and submit per-eye Quad headers with `eye0 array=0` and `eye1 array=1`.
+- VDXR still presented the Quad screen without useful 3D depth. This means the remaining failure is not runtime synthesis and not D2S failing to submit two eyes; it is the runtime/compositor treatment of Quad overlay stereo.
+- Projection layer remains the reliable 3D path because OpenXR projection views are explicitly per-eye and VDXR handles them as the normal VR stereo render path.
+- Fixed two OpenGL state issues discovered while validating: removed unnecessary Quad `glDepthMask` calls and drained stale GL errors before projection FBO/render entry points.
+
+Verification:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\stereo_runtime\pipeline.py src\stereo_runtime\runtime.py src\utils\breakdown.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_quad_layer.py src\xr_viewer\implementation.py src\xr_viewer\screen_layer_presenter.py tests\test_breakdown.py tests\test_openxr_runtime.py tests\test_runtime_pipeline.py
+.\src\python3\python.exe -m pytest tests\test_breakdown.py tests\test_runtime_pipeline.py::test_runtime_pipeline_waits_briefly_for_pending_cuda_before_dropping tests\test_runtime_pipeline.py::test_runtime_pending_cuda_wait_defaults_to_zero_in_openxr tests\test_runtime_pipeline.py::test_runtime_pipeline_publishes_newest_ready_pending_cuda_result -q -p no:cacheprovider
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_quad_layer_shared_array_swapchain_flag_uses_one_swapchain tests\test_openxr_runtime.py::test_quad_layer_shared_array_swapchain_is_default tests\test_openxr_runtime.py::test_quad_layer_update_requires_both_eyes_for_quad_submit tests\test_openxr_runtime.py::test_quad_layer_reuses_presented_frame_on_partial_update tests\test_openxr_runtime.py::test_quad_layer_shared_swapchain_reuses_presented_frame_when_source_missing tests\test_openxr_runtime.py::test_screen_layer_presenter_updates_or_reuses_and_builds_quad_layers -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+7 runtime/breakdown tests passed
+6 OpenXR Quad tests passed
+```
+
+Next validation target:
+
+- Switch the main virtual screen back to projection-layer stereo rendering for VDXR, using the runtime-produced left/right eye textures or equivalent per-eye projection shader path. Keep Quad layer as optional diagnostics/overlay only.
+
+### 2026-07-06 OpenXR Phase 6 Validation Diagnostic Follow-up
+
+Implemented locally in the current worktree:
+
+- Continued from the existing `docs/36` phase 6 state; this is not a restart of phase 1/2.
+- Fixed a validation/diagnostic gap at the existing `ScreenFrameBridge` boundary: `drain_latest()` now advances `frame_id` by the number of dequeued producer frames, so `openxr_screen_frame_age_frames` reflects real latest-frame overwrite/drain distance when `runtime_q` accumulates multiple frames between OpenXR presents.
+- Added coverage for the screen upload budget path where the presenter drains multiple queued runtime frames, keeps only the latest pending frame, skips upload for the current present, and reuses the last presented screen texture without dropping the pending latest frame.
+- This improves phase 6 acceptance evidence: producer fast -> drain latest and count drops; presenter over budget -> reuse old screen; latest pending frame remains available for the next no-wait upload attempt.
+
+Verification run during this pass:
+
+```powershell
+src\python3\python.exe -m py_compile src\xr_viewer\core_source_state.py src\xr_viewer\screen_layer_presenter.py tests\test_openxr_runtime.py tests\test_breakdown.py
+src\python3\python.exe -m pytest tests\test_openxr_runtime.py -q -p no:cacheprovider
+src\python3\python.exe -m pytest tests\test_breakdown.py -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+85 OpenXR runtime tests passed, 2 existing mss deprecation warnings
+4 breakdown tests passed
+```
+
+Next validation target:
+
+- On headset, enable FPS breakdown and confirm `screen_age` rises above 1 when runtime produces multiple frames between OpenXR presents, while `openxr_reused_screen_frame`, `openxr_screen_upload_budget_skip`, `viewer_drop`, `openxr_async_ok/missing/failed`, `xr_submit`, and `xr_end` remain explainable.
+
+### 2026-07-06 OpenXR Async Validation Summary
+
+Implemented and pushed:
+
+```text
+ed078ff feat(openxr): add async validation summary
+01bc75b refactor(openxr): lock d3d11 quad layer boundary
+```
+
+Current state:
+
+- At the time of this 2026-07-06 summary, OpenXR async code structure was estimated at about 80% complete with Quad Layer as the screen main path. 2026-07-07 VDXR validation supersedes that main-path assumption; projection-layer stereo rendering is now the reliable main-screen target. The screen/background/effect/submit separation, panorama/HDR/SBS/light-probe paths, and D3D11/PBO legacy boundary tests remain useful.
+- Final completion is not proven yet. Runtime/headset validation is still required to show complex background cost does not drag down screen present, slow runtime frames reuse the last good projection screen source instead of blocking, and slow/failing effect workers do not affect `xrEndFrame` cadence.
+- `FPSBreakdown.validate_openxr_async()` and the log fields `openxr_async_ok`, `openxr_async_missing`, and `openxr_async_failed` are now the primary quick health signal for OpenXR async acceptance. A passing real-device run should report `openxr_async_ok=1`, `openxr_async_missing=none`, and `openxr_async_failed=none` after the scene is actively presenting.
+- D3D11 native is explicitly scoped to runtime-eye -> Quad Layer swapchain upload. Projection overlays use OpenGL or NV_DX interop; the display body must not return to a D3D11 projection swapchain/PBO path.
+
+Verification run during this pass:
+
+```powershell
+.\src\python3\python.exe -m py_compile src\utils\breakdown.py tests\test_breakdown.py
+.\src\python3\python.exe -m pytest tests\test_breakdown.py -q -p no:cacheprovider
+.\src\python3\python.exe -m py_compile src\xr_viewer\core_openxr_d3d11.py tests\test_openxr_runtime.py
+.\src\python3\python.exe -m pytest tests\test_openxr_runtime.py::test_d3d11_quad_layer_path_uses_native_renderer_and_swapchains -q -p no:cacheprovider
+```
+
+Result:
+
+```text
+py_compile passed
+4 breakdown tests passed
+D3D11 Quad boundary test passed
+```
+
+Next validation target:
+
+- Run OpenXR on a headset with FPS breakdown enabled and inspect `openxr_async_ok/missing/failed`, `screen_new`, `screen_reuse`, `quad_reuse`, `fx_age`, `bg_path`, `xr_submit`, and `xr_end` under normal, slow-runtime, slow-effect, and complex-background scenarios.
+
+### 2026-07-04 OpenXR Asynchronous Decoupled Rendering Plan
+
+Implemented locally in the current worktree:
+
+- Added `docs/36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md` as the implementation plan for the architecture in `docs/35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md`.
+- The plan treats the virtual display as the hard-realtime OpenXR path and treats room background, Glow, and wall reflection as soft-realtime effects that consume previously completed GPU results.
+- The plan intentionally uses the target architecture from docs/35 as the north star instead of letting current partial implementation limits define the goal.
+- The plan explicitly requires GPU-only screen-light sampling based on `docs/20-openxr-gpu-glow-guide.md`; realtime CPU sampling via `.cpu()`, `.numpy()`, `glReadPixels()`, or `tex.read()` is forbidden for Glow / screen-light color.
+- First implementation milestone was originally flags + diagnostics, `ScreenFrameBridge`, and Quad-layer screen presenter. 2026-07-07 VDXR validation supersedes the Quad-main assumption: the hard-realtime display path should now be proven through projection-layer stereo rendering.
+
+Verification for this doc pass:
+
+```powershell
+Get-Content -Encoding UTF8 docs\35-OpenXR_Asynchronous_Decoupled_Rendering_Architecture_Report.md
+Get-Content -Encoding UTF8 docs\20-openxr-gpu-glow-guide.md
+Get-Content -Encoding UTF8 docs\36-OpenXR_Asynchronous_Decoupled_Rendering_Implementation_Plan.md
+```
+
+Result:
+
+```text
+Documentation-only update; no code tests required.
+```
+
+Handoff notes:
+
+- This 2026-07-04 note originally treated Quad layer screen presentation as the intended hard-realtime OpenXR display path. 2026-07-07 VDXR validation supersedes that assumption: projection-layer stereo rendering is the reliable main-screen path; Quad remains optional diagnostics/overlay.
+- Do not rewrite Glow around CPU average-color sampling. Existing GPU glow/downsample/shader technology remains the baseline and should be moved behind an async result-pool contract.
+- OpenXR async work should preserve latest-frame queue semantics: runtime producer and viewer presenter must not block each other.
+
+### 2026-07-03 Realtime No-Sync Scalar Cleanup and Engineering Spec Rename
+
+Implemented locally in the current worktree:
+
+- Renamed the engineering design spec from `docs/01-desktop2stereo-engineering-design-specification.md` to `docs/02-desktop2stereo-engineering-design-specification.md`. `docs/01-Realtime-2d-to-3d-specification.md` remains the canonical runtime process spec; `docs/02` is the engineering implementation/status spec.
+- Removed realtime CUDA `.item()` hard-sync points from the current per-frame paths in `src/stereo_runtime/runtime.py`, `motion_signal.py`, `baseline_shift.py`, `synthesis.py`, `openxr_render.py`, `parallax.py`, `src/xr_viewer/core_runtime_eye.py`, and `core_frame_upload.py`.
+- Dynamic convergence no longer has to pull the measured depth scalar back to CPU. `resolve_parallax_budget(...).depth_response()` accepts tensor `convergence` and keeps the math on the depth tensor's device/dtype; `ShiftParams`, `StereoConfig`, and `OpenXRRenderConfig` now allow `convergence` to be either `float` or `torch.Tensor`.
+- When dynamic convergence is represented as a CUDA scalar tensor, the runtime skips the TRT/Triton `fast_plus_fused` half-SBS path because that fast path still expects a Python float convergence value. The fallback stays on the general GPU synthesis path instead of forcing `.item()`.
+- CPU-only consumers now use asynchronous scalar staging instead of hard sync: the motion sampler copies the CUDA scalar into a pinned CPU buffer guarded by a CUDA event, and the OpenXR shader-uniform path consumes the latest ready CPU scalar value without blocking on the current frame.
+- OpenXR runtime-eye diagnostics no longer compute tensor min/max/mean/diff via `.item()` in the realtime tensor path. Tensor diagnostics log shape/dtype/device/no-sync metadata; CPU/numpy diagnostics may still compute numeric stats.
+- Removed CPU tensor glow sampling from `core_frame_upload.py` so runtime glow must use the GPU source texture path instead of per-frame tensor `.cpu()` / `.item()` sampling.
+
+Verification run during this pass:
+
+```powershell
+src\python3\python.exe -m py_compile src\stereo_runtime\runtime.py src\stereo_runtime\motion_signal.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\parallax.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_frame_upload.py tests\test_gui_config.py
+rg -n "\.item\(" src\stereo_runtime\runtime.py src\stereo_runtime\motion_signal.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\parallax.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_frame_upload.py
+src\python3\python.exe -m pytest tests\test_runtime.py tests\test_motion_signal.py tests\test_gui_config.py tests\test_runtime_openxr.py tests\test_openxr_render.py tests\test_parallax.py tests\test_synthesis.py -q
+git diff --check -- src\stereo_runtime\runtime.py src\stereo_runtime\motion_signal.py src\stereo_runtime\baseline_shift.py src\stereo_runtime\synthesis.py src\stereo_runtime\openxr_render.py src\stereo_runtime\parallax.py src\xr_viewer\core_runtime_eye.py src\xr_viewer\core_frame_upload.py
+```
+
+Result:
+
+```text
+py_compile passed
+no .item() matches in the checked realtime files
+187 passed; only a Windows .pytest_cache cleanup warning was reported
+git diff --check passed for the checked realtime files
+```
+
+Handoff notes:
+
+- Do not claim every repository `.item()` was removed. Offline/export/report/visual-regression code may still use `.item()` where it is not on the per-frame realtime path.
+- Realtime dynamic convergence should prefer GPU tensor scalars. If a consumer cannot use a CUDA scalar directly, use async staging and the previous ready scalar instead of synchronizing the current frame.
+- Runtime diagnostics must not introduce hidden GPU->CPU sync just to print min/max/mean. Any deliberate realtime CPU transfer must keep the existing red CPU warning policy.
 
 ### 2026-07-02 Stereo Parameter GUI, Dynamic Convergence, and Depth Separation Pass
 

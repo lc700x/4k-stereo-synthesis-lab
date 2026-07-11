@@ -371,11 +371,104 @@ def _cuda_event_ready(event) -> bool:
 
 
 def _runtime_pending_depth_limit() -> int:
-    value = str(os.environ.get("D2S_RUNTIME_PENDING_CUDA_DEPTH", "2") or "2").strip()
+    value = str(os.environ.get("D2S_RUNTIME_PENDING_CUDA_DEPTH", "1") or "1").strip()
     try:
         return max(1, int(value))
     except ValueError:
-        return 2
+        return 1
+
+
+def _runtime_pending_cuda_wait_s(ctx) -> float:
+    raw = os.environ.get("D2S_RUNTIME_PENDING_CUDA_WAIT_MS")
+    if raw is None:
+        raw = "0"
+    try:
+        return max(0.0, float(str(raw).strip()) / 1000.0)
+    except ValueError:
+        return 0.0
+
+
+def _runtime_max_algorithm_fps(ctx: RuntimePipelineContext) -> float:
+    default = "30" if ctx.run_mode == "OpenXR" else "0"
+    raw = os.environ.get("D2S_RUNTIME_MAX_ALGO_FPS", default)
+    try:
+        return max(0.0, float(str(raw).strip()))
+    except ValueError:
+        return 0.0
+
+
+def _runtime_motion_gate_enabled(ctx: RuntimePipelineContext) -> bool:
+    default = "0"
+    return str(os.environ.get("D2S_RUNTIME_MOTION_GATE", default) or default).strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _runtime_motion_threshold(name: str, default: float) -> float:
+    try:
+        return max(0.0, float(str(os.environ.get(name, default)).strip()))
+    except ValueError:
+        return default
+
+
+def _motion_sample(frame_rgb):
+    shape = tuple(getattr(frame_rgb, "shape", ()))
+    if len(shape) < 2:
+        return None
+    try:
+        import torch
+        if isinstance(frame_rgb, torch.Tensor):
+            sample = frame_rgb.detach()
+            if sample.ndim == 4:
+                sample = sample[0]
+            if sample.ndim == 3 and sample.shape[0] in (3, 4):
+                h, w = int(sample.shape[1]), int(sample.shape[2])
+                sample = sample[:, ::max(1, h // 18), ::max(1, w // 32)]
+            elif sample.ndim >= 2:
+                h, w = int(sample.shape[0]), int(sample.shape[1])
+                sample = sample[::max(1, h // 18), ::max(1, w // 32)]
+            is_integer = not torch.is_floating_point(sample)
+            sample = sample.to(dtype=torch.float32)
+            return sample / 255.0 if is_integer else sample
+    except Exception:
+        pass
+    try:
+        import numpy as np
+        sample = np.asarray(frame_rgb)
+        if sample.ndim == 4:
+            sample = sample[0]
+        if sample.ndim == 3 and sample.shape[0] in (3, 4):
+            h, w = int(sample.shape[1]), int(sample.shape[2])
+            sample = sample[:, ::max(1, h // 18), ::max(1, w // 32)]
+        elif sample.ndim >= 2:
+            h, w = int(sample.shape[0]), int(sample.shape[1])
+            sample = sample[::max(1, h // 18), ::max(1, w // 32)]
+        is_integer = np.issubdtype(sample.dtype, np.integer)
+        sample = sample.astype("float32", copy=False)
+        return sample / 255.0 if is_integer else sample
+    except Exception:
+        return None
+
+
+def _motion_score(previous, current) -> float | None:
+    if previous is None or current is None:
+        return None
+    if tuple(getattr(previous, "shape", ())) != tuple(getattr(current, "shape", ())):
+        return None
+    try:
+        import torch
+        if isinstance(current, torch.Tensor):
+            return float((current - previous).abs().mean().item())
+    except Exception:
+        pass
+    try:
+        import numpy as np
+        return float(np.mean(np.abs(current - previous)))
+    except Exception:
+        return None
 
 
 def _is_fatal_runtime_preparation_error(exc: Exception) -> bool:
@@ -449,6 +542,17 @@ class RuntimePipelineLoop:
         self._has_source_target_key = False
         self._last_cuda_ready_event = None
         self._pending_runtime_items = []
+        self._last_runtime_motion_sample = None
+        self._last_algorithm_output_time = 0.0
+        self._prepared = False
+
+    def prepare(self) -> None:
+        if self._prepared:
+            return
+        load = getattr(self.context.stereo_runtime, "load", None)
+        if callable(load):
+            load()
+        self._prepared = True
 
     def _publish_runtime_item(self, item) -> None:
         ctx = self.context
@@ -466,6 +570,7 @@ class RuntimePipelineLoop:
         ctx.breakdown_add_time("rt_put", time.perf_counter() - queue_put_start_time)
         if pending_since is not None:
             ctx.breakdown_add_time("rt_pending_age", time.perf_counter() - pending_since)
+        self._last_algorithm_output_time = time.perf_counter()
         ctx.source_stat_inc(
             "runtime_frames",
             last_runtime_ts=time.perf_counter(),
@@ -475,15 +580,50 @@ class RuntimePipelineLoop:
         ctx.breakdown_inc("runtime")
 
     def _publish_ready_pending_items(self) -> int:
-        published = 0
-        while self._pending_runtime_items:
-            pending_result = self._pending_runtime_items[0][0]
-            if not _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
+        if not self._pending_runtime_items:
+            return 0
+        ready_index = None
+        for index in range(len(self._pending_runtime_items) - 1, -1, -1):
+            pending_result = self._pending_runtime_items[index][0]
+            if _cuda_event_ready(getattr(pending_result, "cuda_ready_event", None)):
+                ready_index = index
                 break
-            item = self._pending_runtime_items.pop(0)
-            self._publish_runtime_item(item)
-            published += 1
-        return published
+        if ready_index is None:
+            pending_limit = _runtime_pending_depth_limit()
+            if len(self._pending_runtime_items) > pending_limit:
+                self._pending_runtime_items[:] = self._pending_runtime_items[-pending_limit:]
+            return 0
+        item = self._pending_runtime_items[ready_index]
+        self._pending_runtime_items[:] = self._pending_runtime_items[ready_index + 1:]
+        self._publish_runtime_item(item)
+        return 1
+
+    def _publish_ready_pending_items_until(self, timeout_s: float) -> int:
+        published = self._publish_ready_pending_items()
+        if published:
+            ctx = self.context
+            ctx.source_stat_inc("runtime_pending_cuda_wait")
+            ctx.breakdown_inc("runtime_pending_cuda_wait")
+            ctx.breakdown_add_time("rt_pending_wait", 0.0)
+            return published
+        if timeout_s <= 0.0 or not self._pending_runtime_items:
+            return published
+        ctx = self.context
+        wait_start = time.perf_counter()
+        deadline = wait_start + timeout_s
+        while self._pending_runtime_items and not ctx.shutdown_event.is_set():
+            remaining = deadline - time.perf_counter()
+            if remaining <= 0.0:
+                break
+            time.sleep(min(max(remaining, 0.0), max(float(ctx.time_sleep), 0.0005), 0.0005))
+            published = self._publish_ready_pending_items()
+            if published:
+                ctx.source_stat_inc("runtime_pending_cuda_wait")
+                ctx.breakdown_inc("runtime_pending_cuda_wait")
+                ctx.breakdown_add_time("rt_pending_wait", time.perf_counter() - wait_start)
+                return published
+        ctx.breakdown_add_time("rt_pending_wait", time.perf_counter() - wait_start)
+        return 0
 
     def run(self) -> None:
         ctx = self.context
@@ -510,6 +650,8 @@ class RuntimePipelineLoop:
                     continue
                 self._publish_ready_pending_items()
                 if len(self._pending_runtime_items) >= _runtime_pending_depth_limit():
+                    if self._publish_ready_pending_items_until(_runtime_pending_cuda_wait_s(ctx)):
+                        continue
                     try:
                         ctx.queue_drain_latest(ctx.raw_q, ctx.raw_q.get_nowait())
                         ctx.source_stat_inc("raw_get", last_raw_get_ts=time.perf_counter())
@@ -541,14 +683,6 @@ class RuntimePipelineLoop:
                     ctx.breakdown_inc("runtime_diag_raw")
                     continue
 
-                try:
-                    runtime_backpressured = ctx.runtime_q.full()
-                except Exception:
-                    runtime_backpressured = False
-                if runtime_backpressured:
-                    ctx.source_stat_inc("runtime_drop_backpressure")
-                    ctx.breakdown_inc("runtime_drop_backpressure")
-                    continue
                 if len(self._pending_runtime_items) >= _runtime_pending_depth_limit() and not _cuda_event_ready(self._last_cuda_ready_event):
                     ctx.source_stat_inc("runtime_drop_cuda_inflight")
                     ctx.breakdown_inc("runtime_drop_cuda_inflight")
@@ -617,6 +751,22 @@ class RuntimePipelineLoop:
                 prepare_start_time = time.perf_counter()
                 runtime_rgb = ctx.prepare_rgb_for_stereo_runtime(frame_rgb, device=ctx.device)
                 ctx.breakdown_add_time("rt_prepare", time.perf_counter() - prepare_start_time)
+                if ctx.run_mode == "OpenXR" and _runtime_motion_gate_enabled(ctx):
+                    motion_sample = _motion_sample(runtime_rgb)
+                    motion = _motion_score(self._last_runtime_motion_sample, motion_sample)
+                    now_for_gate = time.perf_counter()
+                    max_fps = _runtime_max_algorithm_fps(ctx)
+                    min_interval = 1.0 / max_fps if max_fps > 0.0 else 0.0
+                    small_threshold = _runtime_motion_threshold("D2S_RUNTIME_MOTION_SMALL_THRESHOLD", 0.003)
+                    force_threshold = _runtime_motion_threshold("D2S_RUNTIME_MOTION_FORCE_THRESHOLD", 0.02)
+                    too_soon = min_interval > 0.0 and (now_for_gate - self._last_algorithm_output_time) < min_interval
+                    weak_motion = motion is not None and motion < small_threshold
+                    strong_motion = motion is not None and motion >= force_threshold
+                    if self._last_runtime_motion_sample is not None and (weak_motion or (too_soon and not strong_motion)):
+                        ctx.source_stat_inc("runtime_motion_skip")
+                        ctx.breakdown_inc("runtime_motion_skip")
+                        continue
+                    self._last_runtime_motion_sample = motion_sample
                 if diag_stage == "prepare":
                     ctx.source_stat_inc("runtime_diag_prepare")
                     ctx.breakdown_inc("runtime_diag_prepare")
@@ -655,7 +805,7 @@ class RuntimePipelineLoop:
                         if original_stereo_config is not None:
                             ctx.stereo_runtime.stereo_config = original_stereo_config
                     if ctx.run_mode == "OpenXR":
-                        runtime_result = openxr_result_from_stereo_result(runtime_result)
+                        runtime_result = openxr_result_from_stereo_result(runtime_result, source_rgb=runtime_rgb)
                 ctx.breakdown_add_time("rt_call", time.perf_counter() - runtime_call_start_time)
                 _attach_pipeline_debug(
                     runtime_result,
@@ -703,6 +853,9 @@ class RuntimePipelineLoop:
                     self._pending_runtime_items.append(
                         (runtime_result, capture_start_time, process_latency, runtime_latency, time.perf_counter())
                     )
+                    pending_limit = _runtime_pending_depth_limit()
+                    if len(self._pending_runtime_items) > pending_limit:
+                        self._pending_runtime_items[:] = self._pending_runtime_items[-pending_limit:]
                     ctx.breakdown_inc("runtime_pending_cuda")
                     ctx.source_stat_inc("runtime_pending_cuda")
                     ctx.breakdown_add_time("rt_loop", time.perf_counter() - loop_start_time)

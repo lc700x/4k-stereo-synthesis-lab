@@ -9,16 +9,7 @@ class CoreOpenXRLifecycleMixin:
 
     def _init_openxr(self, quiet=False, opengl_probe_attempts=None, opengl_probe_interval=None):
         """Try OpenGL first; fall back to D3D11 on Windows if OpenGL fails."""
-        if self._xr_backend is None and self._forced_xr_backend in ('opengl', 'd3d11'):
-            self._xr_backend = self._forced_xr_backend
-        if self._xr_backend == 'opengl':
-            self._init_openxr_opengl_with_retry(
-                quiet=quiet,
-                attempts=opengl_probe_attempts,
-                interval=opengl_probe_interval,
-            )
-            return
-        if self._xr_backend == 'd3d11':
+        if self._forced_xr_backend == 'd3d11' or self._xr_backend == 'd3d11':
             self._init_openxr_d3d11(quiet=quiet)
             self._use_d3d11 = True
             return
@@ -35,11 +26,13 @@ class CoreOpenXRLifecycleMixin:
             if sys.platform != "win32":
                 raise
             if not quiet:
-                print("[OpenXRViewer] OpenGL init failed, fallback to D3D11")
+                print(f"[OpenXRViewer] OpenGL init failed, fallback to D3D11: {type(e).__name__}: {e}")
             self._cleanup_partial_openxr(destroy_instance=True)
 
         self._init_openxr_d3d11(quiet=quiet)
         self._use_d3d11 = True
+        if not quiet:
+            print("[OpenXRViewer] D3D11 fallback active after OpenGL init failure")
 
     def _init_openxr_opengl_with_retry(self, quiet=False, attempts=None, interval=None):
         attempts = self._openxr_opengl_probe_attempts if attempts is None else max(1, int(attempts))
@@ -59,7 +52,7 @@ class CoreOpenXRLifecycleMixin:
                 if not quiet:
                     print(
                         f"[OpenXRViewer] OpenGL probe retry {attempt}/{attempts} "
-                        f"in {interval:.1f}s"
+                        f"in {interval:.1f}s after {type(exc).__name__}: {exc}"
                     )
                 time.sleep(interval)
         raise last_exc
@@ -121,6 +114,9 @@ class CoreOpenXRLifecycleMixin:
         if should_render:
             if self._session_idle_since > 0.0 and self._session_idle_notice_emitted:
                 print("[OpenXRViewer] Headset online : render resumed")
+                if self._hard_idle_active or self._headset_wait_inference_paused:
+                    self._resume_source_inference()
+                    self._source_resume_grace_until = now + self._source_resume_grace
             self._session_idle_since = 0.0
             self._session_idle_notice_emitted = False
             return False

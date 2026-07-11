@@ -1,0 +1,36 @@
+import time
+
+from OpenGL.GL import GL_DEPTH_BUFFER_BIT, glClear
+
+from .background_layer_renderer import BackgroundLayerRenderer
+
+
+class BackgroundPresenter:
+    def __init__(self, viewer):
+        self.viewer = viewer
+
+    def projection_fallback_needed(self):
+        renderer = getattr(self.viewer, '_background_layer_renderer', None)
+        if renderer is None:
+            renderer = BackgroundLayerRenderer(self.viewer)
+            self.viewer._background_layer_renderer = renderer
+        panorama_ready = renderer.panorama_ready()
+        return panorama_ready and not renderer.native_background_available(panorama_ready=panorama_ready)
+
+    def render_projection_background(self, mgl_fbo, view_mat, proj_mat, vp_mat, *, eye_index, projection_fallback_needed=None):
+        viewer = self.viewer
+        start = time.perf_counter()
+        rendered = False
+        if projection_fallback_needed is None:
+            projection_fallback_needed = self.projection_fallback_needed()
+        if projection_fallback_needed:
+            if viewer._render_panorama_background(mgl_fbo, view_mat, proj_mat):
+                if eye_index == 0:
+                    viewer._breakdown_inc('openxr_background_panorama')
+                rendered = True
+                mgl_fbo.use()
+                glClear(GL_DEPTH_BUFFER_BIT)
+        if not rendered and eye_index == 0:
+            viewer._breakdown_inc('openxr_background_idle')
+        viewer._breakdown_add_time('openxr_background', time.perf_counter() - start)
+        return rendered

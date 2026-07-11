@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_SOURCE_STATS = {
@@ -60,6 +63,8 @@ class SourceHealth:
         self.lock = threading.Lock()
         self.stats = dict(DEFAULT_SOURCE_STATS)
         self.last_log = 0.0
+        self.log_count = 0
+        self.log_limit = 5
 
     def inc(self, name: str, amount: int | float = 1, **values) -> None:
         with self.lock:
@@ -75,10 +80,13 @@ class SourceHealth:
             return
         if not self.enabled:
             return
+        if self.log_count >= self.log_limit:
+            return
         now = time.perf_counter() if now is None else now
         if not force and (now - self.last_log) < 5.0:
             return
         self.last_log = now
+        self.log_count += 1
         with self.lock:
             stats = dict(self.stats)
 
@@ -87,7 +95,7 @@ class SourceHealth:
         raw_age = now - last_capture if last_capture > 0.0 else -1.0
         runtime_age = now - last_runtime if last_runtime > 0.0 else -1.0
         last_error = stats.get("last_error") or "none"
-        print(
+        logger.debug(
             "[Main] Source health: "
             f"cap={stats.get('capture_frames', 0)} raw_put={stats.get('raw_put', 0)} "
             f"raw_get={stats.get('raw_get', 0)} runtime={stats.get('runtime_frames', 0)} "
@@ -98,6 +106,5 @@ class SourceHealth:
             f"resize_ms={stats.get('last_process_latency', 0.0) * 1000.0:.1f} "
             f"runtime_ms={stats.get('last_runtime_latency', 0.0) * 1000.0:.1f} "
             f"source={self.source_active()} render={self.render_active()} "
-            f"idle={self.idle_active()} err={last_error}",
-            flush=True,
+            f"idle={self.idle_active()} err={last_error}"
         )

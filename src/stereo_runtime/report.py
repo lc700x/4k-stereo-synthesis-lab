@@ -5,6 +5,8 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from utils.cpu_warnings import describe_tensor, warn_cpu_operation, warn_cpu_transfer
+
 from .layers import depth_edges
 from .output import ensure_b1hw, ensure_bchw
 
@@ -21,6 +23,12 @@ def absdiff(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
 
 def basic_image_metrics(a: torch.Tensor, b: torch.Tensor) -> dict[str, float]:
     diff = absdiff(a, b)
+    warn_cpu_operation(
+        "stereo_runtime.basic_image_metrics",
+        "tensor stats .item() sync",
+        detail=describe_tensor(diff),
+        key="stereo_runtime_basic_image_metrics_cpu_stats",
+    )
     mse = float((diff * diff).mean().item())
     mae = float(diff.mean().item())
     psnr = 99.0 if mse <= 1e-12 else float(10.0 * torch.log10(torch.tensor(1.0 / mse)).item())
@@ -30,6 +38,18 @@ def basic_image_metrics(a: torch.Tensor, b: torch.Tensor) -> dict[str, float]:
 def depth_metrics(depth: torch.Tensor, bins: int = 16, edge_threshold: float = 0.04) -> dict[str, float | list[float]]:
     depth = ensure_b1hw(depth).float().clamp(0, 1)
     flat = depth.flatten()
+    warn_cpu_transfer(
+        "stereo_runtime.depth_metrics",
+        "histogram flat.cpu()",
+        detail=describe_tensor(flat),
+        key="stereo_runtime_depth_metrics_histogram_cpu",
+    )
+    warn_cpu_operation(
+        "stereo_runtime.depth_metrics",
+        "tensor stats .item()/tolist() sync",
+        detail=describe_tensor(depth),
+        key="stereo_runtime_depth_metrics_cpu_stats",
+    )
     histogram = torch.histc(flat.cpu(), bins=bins, min=0.0, max=1.0)
     histogram = histogram / histogram.sum().clamp_min(1.0)
 
@@ -60,6 +80,12 @@ def depth_comparison_metrics(reference: torch.Tensor, candidate: torch.Tensor) -
     if candidate.shape[-2:] != reference.shape[-2:]:
         candidate = F.interpolate(candidate, size=reference.shape[-2:], mode="bilinear", align_corners=False)
 
+    warn_cpu_operation(
+        "stereo_runtime.depth_comparison_metrics",
+        "tensor stats .item() sync",
+        detail=f"reference={describe_tensor(reference)} candidate={describe_tensor(candidate)}",
+        key="stereo_runtime_depth_comparison_cpu_stats",
+    )
     image_metrics = basic_image_metrics(reference.repeat(1, 3, 1, 1), candidate.repeat(1, 3, 1, 1))
     ref_edges = depth_edges(reference)
     cand_edges = depth_edges(candidate)
@@ -88,6 +114,12 @@ def make_contact_sheet(images: list[torch.Tensor], columns: int = 2, pad: int = 
         y = row * (max_h + pad)
         x = col * (max_w + pad)
         h, w = image.shape[-2:]
+        warn_cpu_transfer(
+            "stereo_runtime.make_contact_sheet",
+            "image.cpu() canvas copy",
+            detail=describe_tensor(image),
+            key="stereo_runtime_contact_sheet_image_cpu",
+        )
         canvas[:, :, y : y + h, x : x + w] = image.cpu()
     return canvas
 
@@ -118,6 +150,12 @@ def make_labeled_contact_sheet(
         y = row * (cell_h + pad) + label_height
         x = col * (max_w + pad)
         h, w = image.shape[-2:]
+        warn_cpu_transfer(
+            "stereo_runtime.make_labeled_contact_sheet",
+            "image.cpu() canvas copy",
+            detail=describe_tensor(image),
+            key="stereo_runtime_labeled_contact_sheet_image_cpu",
+        )
         canvas[:, :, y : y + h, x : x + w] = image.cpu()
     return _draw_labels(canvas, labels, columns=columns, cell_width=max_w, cell_height=cell_h, pad=pad, label_height=label_height)
 
@@ -133,7 +171,14 @@ def _draw_labels(
 ) -> torch.Tensor:
     from PIL import Image, ImageDraw, ImageFont
 
-    array = (canvas[0].clamp(0, 1).permute(1, 2, 0).mul(255).byte().numpy())
+    label_tensor = canvas[0].clamp(0, 1).permute(1, 2, 0).mul(255).byte()
+    warn_cpu_transfer(
+        "stereo_runtime.draw_labels",
+        ".byte().numpy() for PIL labels",
+        detail=describe_tensor(label_tensor),
+        key="stereo_runtime_draw_labels_cpu_numpy",
+    )
+    array = label_tensor.numpy()
     image = Image.fromarray(array, mode="RGB")
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default()

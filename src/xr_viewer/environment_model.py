@@ -1,5 +1,7 @@
 # Desktop2Stereo OpenXR viewer: environment model loading and switching helpers.
 
+import moderngl
+
 from .implementation import *
 
 
@@ -439,7 +441,8 @@ class EnvironmentModelMixin:
         self._kb_cached_position = None
         self._configure_environment_profile()
         self._configure_profile_view_layout()
-        self._init_env_model()
+        self._env_model_init_done = False
+        self._ensure_env_model_initialized("Switch")
         self._apply_profile_screen_layout(show_border=True)
         self._xr_profile_space_applied = False
         views = getattr(self, '_last_located_views', None)

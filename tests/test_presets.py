@@ -95,6 +95,8 @@ def test_openxr_presets_map_shared_stereo_params():
 
     assert isinstance(traditional, OpenXRRenderConfig)
     assert traditional.parallax_preset == "standard"
+    assert traditional.output_mode == "rgb_depth"
+    assert cinema.output_mode == "full_synthesis_eyes"
     assert not hasattr(traditional, "max_shift_ratio")
     assert isinstance(openxr, OpenXRRenderConfig)
     assert openxr.screen_roll == 0.5

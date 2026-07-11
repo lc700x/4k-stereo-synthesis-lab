@@ -67,6 +67,17 @@ def test_find_local_model_weight_prefers_direct_weight_file(tmp_path: Path):
     assert find_local_model_weight(model_dir) == weight
 
 
+def test_find_local_model_weight_ignores_empty_weight_file(tmp_path: Path):
+    model_dir = tmp_path / "model"
+    nested = model_dir / "snapshots" / "ok"
+    nested.mkdir(parents=True)
+    (model_dir / "model.safetensors").write_bytes(b"")
+    weight = nested / "model.safetensors"
+    weight.write_bytes(b"weights")
+
+    assert find_local_model_weight(model_dir) == weight
+
+
 def test_prepare_model_artifacts_reports_missing_without_side_effects(tmp_path: Path):
     result = prepare_model_artifacts(
         "Distill-Any-Depth-Base",
@@ -102,7 +113,11 @@ def test_prepare_model_artifacts_passes_local_files_only_to_onnx_export(monkeypa
 
     import stereo_runtime.onnx_export as onnx_export
 
-    monkeypatch.setattr("huggingface_hub.snapshot_download", lambda **kwargs: str(paths.model_dir / "snapshots" / "fake"))
+    def fake_snapshot_download(**kwargs):
+        (paths.model_dir / "model.safetensors").write_bytes(b"weights")
+        return str(paths.model_dir / "snapshots" / "fake")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
     monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com",))
     monkeypatch.setattr(onnx_export, "export_depth_model_onnx", fake_export)
 
@@ -279,6 +294,7 @@ def test_prepare_model_artifacts_confirms_model_before_onnx_export(monkeypatch, 
     def fake_snapshot_download(**kwargs):
         calls.append("download")
         paths.model_dir.mkdir(parents=True, exist_ok=True)
+        (paths.model_dir / "model.safetensors").write_bytes(b"weights")
         return str(paths.model_dir / "snapshots" / "fake")
 
     def fake_export(**kwargs):
@@ -339,6 +355,7 @@ def test_generic_download_confirms_snapshot_even_when_cache_dir_exists(monkeypat
     model_dir.mkdir(parents=True)
 
     def fake_snapshot_download(**kwargs):
+        (model_dir / "model.safetensors").write_bytes(b"weights")
         calls.update(kwargs)
         return str(model_dir / "snapshots" / "fake")
 
@@ -350,6 +367,82 @@ def test_generic_download_confirms_snapshot_even_when_cache_dir_exists(monkeypat
     assert calls["cache_dir"] == str(tmp_path)
     assert calls["local_files_only"] is False
     assert calls["force_download"] is False
+
+
+def test_generic_snapshot_download_uses_structured_progress_patch(monkeypatch, tmp_path: Path):
+    from contextlib import contextmanager
+
+    events = []
+    spec = ModelRegistry.default().get("Distill-Any-Depth-Base")
+    model_dir = spec.model_dir(tmp_path)
+    model_dir.mkdir(parents=True)
+
+    @contextmanager
+    def fake_progress_patch():
+        events.append("enter")
+        try:
+            yield
+        finally:
+            events.append("exit")
+
+    def fake_snapshot_download(**kwargs):
+        events.append("download")
+        (model_dir / "model.safetensors").write_bytes(b"weights")
+        return str(model_dir / "snapshots" / "fake")
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr("stereo_runtime.depth_provider._hf_download_progress_patch", fake_progress_patch)
+    monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com",))
+
+    assert ensure_model_downloaded(spec, cache_dir=tmp_path, local_files_only=False) == model_dir
+    assert events == ["enter", "download", "exit"]
+
+
+def test_generic_snapshot_download_falls_back_when_weight_is_empty(monkeypatch, tmp_path: Path):
+    spec = ModelRegistry.default().get("Distill-Any-Depth-Base")
+    model_dir = spec.model_dir(tmp_path)
+    model_dir.mkdir(parents=True)
+    (model_dir / "model.safetensors").write_bytes(b"")
+    direct_calls = []
+
+    def fake_snapshot_download(**kwargs):
+        return str(model_dir / "snapshots" / "fake")
+
+    def fake_direct(model_id, filename, cache_dir, endpoint):
+        direct_calls.append((model_id, filename, endpoint))
+        target = model_dir / filename
+        target.write_bytes(b"weights")
+        return str(target)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com",))
+    monkeypatch.setattr("stereo_runtime.depth_provider._download_hf_file_direct", fake_direct)
+
+    assert ensure_model_downloaded(spec, cache_dir=tmp_path, local_files_only=False) == model_dir
+    assert direct_calls == [("lc700x/Distill-Any-Depth-Base-hf", "model.safetensors", "https://hf-mirror.com")]
+
+
+def test_generic_snapshot_download_error_falls_back_to_direct(monkeypatch, tmp_path: Path):
+    spec = ModelRegistry.default().get("Distill-Any-Depth-Base")
+    model_dir = spec.model_dir(tmp_path)
+    direct_calls = []
+
+    def fake_snapshot_download(**kwargs):
+        raise RuntimeError("hub cache failed")
+
+    def fake_direct(model_id, filename, cache_dir, endpoint):
+        direct_calls.append((model_id, filename, endpoint))
+        target = model_dir / filename
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(b"weights")
+        return str(target)
+
+    monkeypatch.setattr("huggingface_hub.snapshot_download", fake_snapshot_download)
+    monkeypatch.setattr("stereo_runtime.depth_provider._reachable_hf_endpoints", lambda model_id: ("https://hf-mirror.com",))
+    monkeypatch.setattr("stereo_runtime.depth_provider._download_hf_file_direct", fake_direct)
+
+    assert ensure_model_downloaded(spec, cache_dir=tmp_path, local_files_only=False) == model_dir
+    assert direct_calls == [("lc700x/Distill-Any-Depth-Base-hf", "model.safetensors", "https://hf-mirror.com")]
 
 
 def test_prepare_model_artifacts_builds_trt_from_existing_onnx(monkeypatch, tmp_path: Path):

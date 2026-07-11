@@ -10,7 +10,7 @@ from OpenGL.GL import *
 from utils import OS_NAME, DEVICE_INFO
 from utils.cpu_warnings import describe_tensor, warn_cpu_fallback, warn_cpu_transfer
 from viewer.assets import crop_icon, get_font_type
-from viewer.gl_texture_uploader import CudaGlTextureUploader
+from viewer.gl_texture_uploader import CudaGlTextureUploader, GlTensorPboUploader
 # 3D monitor mode to hide viewer
 if OS_NAME == "Windows":
     from viewer.window_control import hide_window_from_capture, show_window_in_capture
@@ -1207,6 +1207,12 @@ class OverlayTextureRenderer:
             self.texture = self.ctx.texture((w, h), 4, dtype="f1")
             self.texture.filter = (moderngl.LINEAR, moderngl.LINEAR)
             self.size = (w, h)
+        warn_cpu_transfer(
+            "OverlayTextureRenderer",
+            "CPU RGBA texture.write",
+            detail=f"shape={getattr(rgba, 'shape', 'unknown')}",
+            key="overlay_texture_renderer_cpu_write",
+        )
         self.texture.write(np.ascontiguousarray(rgba).tobytes())
         return True
 
@@ -1297,7 +1303,7 @@ class StereoWindow:
         self._runtime_direct_output = False
         self._runtime_output_format = None
         self._runtime_output_size_logged = False
-        self._gl_upload_mode = str(os.environ.get("D2S_GL_UPLOAD_MODE", "pbo") or "pbo").strip().lower()
+        self._gl_upload_mode = str(os.environ.get("D2S_GL_UPLOAD_MODE", "image") or "image").strip().lower()
         self._texture_size = None
         self.fill_16_9 = fill_16_9
         self.frame_size = frame_size
@@ -1514,6 +1520,8 @@ class StereoWindow:
         self._cuda_rgba_upload = None
         self._cuda_rgba_upload_size = None
         self._runtime_texture_uploader = None
+        self._gl_color_pbo_uploader = None
+        self._gl_depth_pbo_uploader = None
         self._color_tex_components = 3
         # Persistent page-locked (pinned) staging buffer for the colour upload.
         # Reused every frame to avoid per-frame device allocations and to make the
@@ -1555,13 +1563,8 @@ class StereoWindow:
             glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
             self._cuda_resource_color = self._cudart.register_buffer(self._pbo_color)
 
-            # Depth PBO (float32, 4 bytes/pixel). Depth always lives on the GPU,
-            # so a device-to-device copy is optimal on every backend/GPU type.
-            self._pbo_depth = glGenBuffers(1)
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._pbo_depth)
-            glBufferData(GL_PIXEL_UNPACK_BUFFER, width * height * 4, None, GL_STREAM_DRAW)
-            glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
-            self._cuda_resource_depth = self._cudart.register_buffer(self._pbo_depth)
+            # RGB/depth GPU tensor uploads use GlTensorPboUploader so CUDA and HIP
+            # share the same registered-PBO implementation.
 
             # Final runtime-output texture upload is handled by CudaGlTextureUploader.
             self._cuda_resource_color_image = None
@@ -1606,6 +1609,12 @@ class StereoWindow:
         """
         # Integrated GPU (or no pinned staging / colour PBO): direct texture write.
         if self._cuda_integrated or self._pinned_rgb is None or self._cuda_resource_color is None:
+            warn_cpu_transfer(
+                "StereoWindow color upload",
+                "CPU RGB texture.write",
+                detail=f"shape={getattr(rgb_host, 'shape', 'unknown')} integrated={self._cuda_integrated}",
+                key="stereo_window_color_texture_write_cpu",
+            )
             self.color_tex.write(np.ascontiguousarray(rgb_host).tobytes())
             return
 
@@ -1613,10 +1622,22 @@ class StereoWindow:
         nbytes = h * w * 3
         if self._pinned_rgb.shape[:2] == (h, w):
             # In-place CPU copy numpy -> pinned torch buffer
+            warn_cpu_transfer(
+                "StereoWindow color upload",
+                "CPU numpy -> pinned torch staging",
+                detail=f"shape={getattr(rgb_host, 'shape', 'unknown')}",
+                key="stereo_window_color_pinned_staging_cpu",
+            )
             self._pinned_rgb.copy_(torch.from_numpy(np.ascontiguousarray(rgb_host)))
             src_ptr = self._pinned_rgb_ptr
         else:
             # Size mismatch fallback: copy directly from the (pageable) numpy buffer
+            warn_cpu_fallback(
+                "StereoWindow color upload",
+                "pinned_staging_size_mismatch",
+                detail=f"rgb_shape={getattr(rgb_host, 'shape', 'unknown')} pinned_shape={getattr(self._pinned_rgb, 'shape', 'unknown')}",
+                key="stereo_window_color_pageable_cpu_fallback",
+            )
             rgb_c = np.ascontiguousarray(rgb_host)
             src_ptr = rgb_c.ctypes.data
             nbytes = rgb_c.nbytes
@@ -1636,21 +1657,14 @@ class StereoWindow:
         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
 
     def _upload_color_cuda(self, rgb_gpu):
-        """Upload a GPU tensor (H,W,3) uint8 to colour texture using PBO."""
+        """Upload a GPU tensor (H,W,3) uint8 to colour texture using shared PBO uploader."""
         h, w, _ = rgb_gpu.shape
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._pbo_color)
-        ptr = self._cudart.map_resource(self._cuda_resource_color)
-        try:
-            self._cudart.memcpy_d2d(ptr, rgb_gpu.data_ptr(), rgb_gpu.nbytes)
-        finally:
-            self._cudart.unmap_resource(self._cuda_resource_color)
-
-        # Update ModernGL texture from the PBO
-        glActiveTexture(GL_TEXTURE0)
-        glBindTexture(GL_TEXTURE_2D, self.color_tex.glo)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
-                        GL_RGB, GL_UNSIGNED_BYTE, None)
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+        if self._gl_color_pbo_uploader is None:
+            self._gl_color_pbo_uploader = GlTensorPboUploader(
+                self._cudart,
+                log_prefix="StereoWindow color upload",
+            )
+        self._gl_color_pbo_uploader.upload_rgb_u8(self.color_tex, rgb_gpu, w, h, build_mipmaps=False)
 
     def _upload_color_cuda_image(self, rgb_gpu):
         """Upload a GPU tensor into a CUDA-registered RGBA GL texture."""
@@ -1684,21 +1698,14 @@ class StereoWindow:
 
 
     def _upload_depth_cuda(self, depth_gpu):
-        """Upload a GPU tensor (H,W) float32 to depth texture using PBO."""
+        """Upload a GPU tensor (H,W) float32 to depth texture using shared PBO uploader."""
         h, w = depth_gpu.shape
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, self._pbo_depth)
-        ptr = self._cudart.map_resource(self._cuda_resource_depth)
-        try:
-            self._cudart.memcpy_d2d(ptr, depth_gpu.data_ptr(), depth_gpu.nbytes)
-        finally:
-            self._cudart.unmap_resource(self._cuda_resource_depth)
-
-        # Update ModernGL texture from the PBO
-        glActiveTexture(GL_TEXTURE1)
-        glBindTexture(GL_TEXTURE_2D, self.depth_tex.glo)
-        glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, w, h,
-                        GL_RED, GL_FLOAT, None)
-        glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0)
+        if self._gl_depth_pbo_uploader is None:
+            self._gl_depth_pbo_uploader = GlTensorPboUploader(
+                self._cudart,
+                log_prefix="StereoWindow depth upload",
+            )
+        self._gl_depth_pbo_uploader.upload_depth_f32(self.depth_tex, depth_gpu, w, h)
 
     def cleanup_cuda(self):
         """Release CUDA resources and delete PBOs."""
@@ -1712,23 +1719,19 @@ class StereoWindow:
                 if self._runtime_texture_uploader:
                     self._runtime_texture_uploader.release()
                     self._runtime_texture_uploader = None
+                if self._gl_color_pbo_uploader:
+                    self._gl_color_pbo_uploader.release()
+                    self._gl_color_pbo_uploader = None
+                if self._gl_depth_pbo_uploader:
+                    self._gl_depth_pbo_uploader.release()
+                    self._gl_depth_pbo_uploader = None
                 if self._cuda_resource_color_image:
                     self._cudart.unregister_resource(self._cuda_resource_color_image)
             except Exception:
                 pass
             try:
-                if self._cuda_resource_depth:
-                    self._cudart.unregister_resource(self._cuda_resource_depth)
-            except Exception:
-                pass
-            try:
                 if self._pbo_color and bool(glDeleteBuffers):
                     glDeleteBuffers(1, [self._pbo_color])
-            except Exception:
-                pass
-            try:
-                if self._pbo_depth and bool(glDeleteBuffers):
-                    glDeleteBuffers(1, [self._pbo_depth])
             except Exception:
                 pass
             # Release the persistent pinned staging buffer

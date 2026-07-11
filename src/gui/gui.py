@@ -9,6 +9,10 @@ Mixins:
 import os
 import asyncio
 import logging
+from .flet_runtime import ensure_vendored_flet_view
+
+ensure_vendored_flet_view()
+
 import flet as ft
 from utils import VERSION, OS_NAME, read_yaml
 from .builders import GUIBuilderMixin
@@ -19,7 +23,6 @@ from .config import DEFAULTS
 from .controls import S
 from .paths import BASE_DIR, GUI_READY_FILE, LOG_DIR
 from .localization import UI_MESSAGES
-from .flet_runtime import ensure_vendored_flet_view
 
 
 logger = logging.getLogger(__name__)
@@ -60,7 +63,7 @@ class Desktop2StereoGUI(
         self._local_ip_task = None
         self.gui_log_handler = None
         self._log_poll_task = None
-        self._progress_log_controls = {}
+        self._progress_log_spans = {}
 
     async def setup(self):
         self.gui_log_handler = _setup_console_logging()
@@ -124,6 +127,7 @@ class Desktop2StereoGUI(
         self.page.window.visible = True
         self.page.update()
         await asyncio.sleep(0)
+        self._fit_window_to_content(update=True, resize_window=True)
         self._signal_gui_ready()
         asyncio.create_task(self._prepare_startup_after_window_visible())
 

@@ -45,7 +45,7 @@ def resolve_parallax_budget(
     render_width: int,
     render_height: int,
     preset: str,
-    convergence: float = 0.0,
+    convergence: Any = 0.0,
     *,
     max_disparity_px: float | None = None,
 ) -> ParallaxBudget:
@@ -59,7 +59,10 @@ def resolve_parallax_budget(
         resolved_max_disparity = _resolve_table_budget(width, height, normalized_preset)
 
     def depth_response(depth):
-        return depth.clamp(0, 1) - float(convergence)
+        conv = convergence
+        if hasattr(conv, "to") and hasattr(depth, "device"):
+            conv = conv.to(device=depth.device, dtype=depth.dtype)
+        return depth.clamp(0, 1) - conv
 
     return ParallaxBudget(
         max_disparity_px=float(resolved_max_disparity),

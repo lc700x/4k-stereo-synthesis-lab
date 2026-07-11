@@ -2,6 +2,7 @@ import math
 import os
 
 import moderngl
+from .gl_state import get_depth_mask, set_depth_mask
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
@@ -161,7 +162,7 @@ class CoreOverlayPanelsMixin:
             mvp = vp_mat
 
         mgl_fbo.use()
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         self._overlay_tex.use(location=2)
@@ -169,7 +170,7 @@ class CoreOverlayPanelsMixin:
         self._overlay_prog['u_alpha'].value = 1.0
         self._overlay_vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     def _render_brand_osd(self, eye_index, mgl_fbo, vp_mat):
         """Render controller brand indicator attached to the right controller."""
@@ -264,7 +265,7 @@ class CoreOverlayPanelsMixin:
         mvp = vp_mat @ trans @ rot @ scale
 
         mgl_fbo.use()
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         self._brand_osd_tex.use(location=2)
@@ -273,7 +274,7 @@ class CoreOverlayPanelsMixin:
         self._brand_osd_vao.render(moderngl.TRIANGLE_STRIP)
         self._overlay_prog['u_alpha'].value = 1.0
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     def _render_calibration_panel(self, mgl_fbo, vp_mat):
         """Draw semi-transparent calibration panel in VR (reuses FPS overlay shader)."""
@@ -363,7 +364,7 @@ class CoreOverlayPanelsMixin:
             return
         mgl_fbo.use()
         # depth_mask = False  # do not write semi-transparent pixels to depth
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         tex.use(location=2)
@@ -371,7 +372,7 @@ class CoreOverlayPanelsMixin:
         self._overlay_prog['u_alpha'].value = alpha
         self._overlay_vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     # Shortcuts help panel (right controller attachment)
     def _controller_guide_rows(self):
@@ -689,7 +690,7 @@ class CoreOverlayPanelsMixin:
 
         mvp = vp_mat @ model
         mgl_fbo.use()
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         self._team_status_tex.use(location=2)
@@ -698,7 +699,7 @@ class CoreOverlayPanelsMixin:
         self._overlay_vao.render(moderngl.TRIANGLE_STRIP)
         self._overlay_prog['u_alpha'].value = 1.0
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     def _render_team_help_panel(self, mgl_fbo, vp_mat):
         """Render teammate shortcuts panel hinged to the left side of the screen."""
@@ -744,7 +745,7 @@ class CoreOverlayPanelsMixin:
 
         mvp = vp_mat @ model
         mgl_fbo.use()
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         self._team_help_tex.use(location=2)
@@ -753,7 +754,7 @@ class CoreOverlayPanelsMixin:
         self._help_vao.render(moderngl.TRIANGLE_STRIP)
         self._overlay_prog['u_alpha'].value = 1.0
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)
 
     def _render_help_panel(self, mgl_fbo, vp_mat):
         """Render the help/shortcut panel attached to the right controller.
@@ -844,7 +845,7 @@ class CoreOverlayPanelsMixin:
 
         mgl_fbo.use()
         # depth_mask = False  # do not write semi-transparent pixels to depth
-        self.ctx.depth_mask = False
+        set_depth_mask(False)
         self.ctx.enable(moderngl.BLEND)
         self.ctx.blend_func = moderngl.SRC_ALPHA, moderngl.ONE_MINUS_SRC_ALPHA
         self._help_tex.use(location=2)
@@ -852,4 +853,4 @@ class CoreOverlayPanelsMixin:
         self._overlay_prog['u_alpha'].value = 0.75
         self._help_vao.render(moderngl.TRIANGLE_STRIP)
         self.ctx.disable(moderngl.BLEND)
-        self.ctx.depth_mask = True
+        set_depth_mask(True)

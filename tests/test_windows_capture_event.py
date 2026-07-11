@@ -103,19 +103,19 @@ def test_windows_capture_runner_uses_copy_or_clone_buffers(monkeypatch):
     runner.run(shutdown_event=shutdown_event, on_frame=on_frame, on_error=on_error)
 
     capture = module.WindowsCapture.last_instance
-    assert capture.kwargs == {"monitor_index": 3}
+    assert capture.kwargs == {"monitor_index": 3, "minimum_update_interval": 17}
     assert len(capture.handlers) == 2
 
     shutdown_event.clear()
     copy_buffer = CopyBuffer()
     capture.handlers[0](FakeFrame(copy_buffer), FakeControl())
-    assert copy_buffer.copied is True
+    assert copy_buffer.copied is False
     assert isinstance(received[-1], CapturedFrame)
-    assert received[-1].frame == "copied-buffer"
+    assert received[-1].frame is copy_buffer
     assert received[-1].target_height == (3840, 2160)
-    assert received[-1].copy_mode is FrameCopyMode.COPY
+    assert received[-1].copy_mode is FrameCopyMode.GPU_TENSOR
     assert received[-1].frame_raw_device == "cuda"
-    assert received[-1].metadata["zero_copy"] is False
+    assert received[-1].metadata["zero_copy"] is True
     assert received[-1].capture_tool == "WindowsCaptureCUDA"
     assert received[-1].capture_mode == "Monitor"
     assert received[-1].monitor_index == 3
@@ -125,14 +125,24 @@ def test_windows_capture_runner_uses_copy_or_clone_buffers(monkeypatch):
     shutdown_event.clear()
     clone_buffer = CloneBuffer()
     capture.handlers[0](FakeFrame(clone_buffer), FakeControl())
+    assert clone_buffer.cloned is False
+    assert received[-1].frame is clone_buffer
+    assert received[-1].copy_mode is FrameCopyMode.GPU_TENSOR
+
+
+def test_windows_capture_cuda_can_force_frame_copy(monkeypatch):
+    monkeypatch.setenv("D2S_WGC_COPY_FRAME_BUFFER", "1")
+    clone_buffer = CloneBuffer()
+
+    raw, copy_mode, device = windows_capture_event._copy_frame_buffer(clone_buffer, "WindowsCaptureCUDA")
+
     assert clone_buffer.cloned is True
-    assert received[-1].frame == "cloned-buffer"
-    assert received[-1].copy_mode is FrameCopyMode.CLONE
-    assert received[-1].frame_raw_device == "cuda"
-    assert received[-1].original_format == "CloneBuffer"
+    assert raw == "cloned-buffer"
+    assert copy_mode is FrameCopyMode.CLONE
+    assert device == "cuda"
 
 
-def test_windows_capture_runner_marks_rocm_clone_device(monkeypatch):
+def test_windows_capture_runner_marks_rocm_direct_device(monkeypatch):
     module = _install_capture_module(monkeypatch, "wc_rocm")
     monkeypatch.setattr(windows_capture_event, "_setup_dpi_awareness", lambda: None)
     monkeypatch.setattr(windows_capture_event.WindowsCaptureEventRunner, "_start_keyboard_worker", lambda self, event: None)
@@ -160,11 +170,11 @@ def test_windows_capture_runner_marks_rocm_clone_device(monkeypatch):
     shutdown_event.clear()
     capture.handlers[0](FakeFrame(clone_buffer), FakeControl())
 
-    assert clone_buffer.cloned is True
-    assert received[-1].frame == "cloned-buffer"
-    assert received[-1].copy_mode is FrameCopyMode.CLONE
+    assert clone_buffer.cloned is False
+    assert received[-1].frame is clone_buffer
+    assert received[-1].copy_mode is FrameCopyMode.GPU_TENSOR
     assert received[-1].frame_raw_device == "rocm"
-    assert received[-1].metadata["zero_copy"] is False
+    assert received[-1].metadata["zero_copy"] is True
 
 
 def test_windows_capture_cuda_source_fps_log_defaults_off(capsys):
@@ -195,6 +205,40 @@ def test_windows_capture_cuda_logs_source_fps_when_enabled(monkeypatch, capsys):
         "[WindowsCaptureCUDA] capture_fps=2.0 frames=2 monitor=1 mode=Monitor "
         "copy_ms=3.00 enqueue_ms=2.00 handler_ms=5.00"
     ) in capsys.readouterr().out
+
+
+def _reset_capture_gap_defer_state():
+    windows_capture_event._PENDING_CAPTURE_GAP_LOGS.clear()
+    windows_capture_event._CAPTURE_GAP_DEFER_RELEASED = False
+
+
+def test_windows_capture_cuda_logs_callback_gap(capsys):
+    _reset_capture_gap_defer_state()
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_gap(10.0, {"monitor_index": 1, "minimum_update_interval": 8})
+    runner._log_capture_gap(10.2, {"monitor_index": 1, "minimum_update_interval": 8})
+    assert capsys.readouterr().out == ""
+
+    runner._log_capture_gap(10.8, {"monitor_index": 1, "minimum_update_interval": 8})
+    assert "[CaptureGap] tool=WindowsCaptureCUDA mode=Monitor monitor=1 gap=0.60s" in capsys.readouterr().out
+
+
+def test_windows_capture_cuda_defers_gap_until_openxr_projection(monkeypatch, capsys):
+    _reset_capture_gap_defer_state()
+    monkeypatch.setenv("D2S_DEFER_CAPTURE_GAP_UNTIL_OPENXR_PROJECTION", "1")
+    runner = windows_capture_event.WindowsCaptureEventRunner(
+        CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
+    )
+
+    runner._log_capture_gap(10.0, {"monitor_index": 1, "minimum_update_interval": 8})
+    runner._log_capture_gap(10.8, {"monitor_index": 1, "minimum_update_interval": 8})
+
+    assert capsys.readouterr().out == ""
+    windows_capture_event.flush_pending_capture_gap_logs()
+    assert "[CaptureGap] tool=WindowsCaptureCUDA mode=Monitor monitor=1 gap=0.80s" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize("capture_tool", ["WindowsCapture", "WindowsCaptureROCm"])
@@ -239,13 +283,17 @@ def test_windows_capture_runner_uses_window_name_for_window_capture(monkeypatch)
 def test_windows_capture_cuda_accepts_env_capture_options(monkeypatch):
     config = CaptureConfig(capture_tool="WindowsCaptureCUDA", capture_mode="Monitor", monitor_index=1)
 
-    assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {"monitor_index": 1}
+    assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {
+        "monitor_index": 1,
+        "minimum_update_interval": 17,
+    }
 
     monkeypatch.setenv("D2S_WGC_REUSE_OUTPUT_BUFFER", "1")
     monkeypatch.setenv("D2S_WGC_OUTPUT_BUFFER_COUNT", "6")
 
     assert windows_capture_event._windows_capture_kwargs(config, "WindowsCaptureCUDA") == {
         "monitor_index": 1,
+        "minimum_update_interval": 17,
         "reuse_output_buffer": True,
         "output_buffer_count": 6,
     }

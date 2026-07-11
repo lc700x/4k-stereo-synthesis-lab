@@ -20,7 +20,7 @@ def test_render_size_config_from_settings_parses_gui_fields():
             "Render Fixed Height": "900",
             "Render Max Pixels": "2073600",
             "Render Min Dimension": "540",
-            "Render Align": "8",
+            "Render Align": "1",
         }
     )
 
@@ -31,7 +31,7 @@ def test_render_size_config_from_settings_parses_gui_fields():
         fixed_height=900,
         max_pixels=2073600,
         min_dimension=540,
-        align=8,
+        align=1,
     )
 
 
@@ -39,6 +39,7 @@ def test_render_size_config_from_settings_defaults_invalid_policy_to_scaled():
     config = render_size_config_from_settings({"Render Size Policy": "unknown"})
 
     assert config.policy is RenderSizePolicy.SCALED
+    assert config.align == 1
 
 
 def test_resolve_render_size_native_aligns_capture_size():
@@ -50,22 +51,22 @@ def test_resolve_render_size_native_aligns_capture_size():
 @pytest.mark.parametrize(
     ("capture_size", "tier", "expected"),
     [
-        ((3840, 2160), "1K / 50%", (1920, 1080)),
-        ((2160, 3840), "1K / 50%", (1080, 1920)),
-        ((3840, 2400), "2K / 75%", (2880, 1800)),
-        ((4096, 2160), "3K / 85%", (3480, 1832)),
+        ((3840, 2160), "1K / 50%", (1920, 1072)),
+        ((2160, 3840), "1K / 50%", (1072, 1920)),
+        ((3840, 2400), "2K / 75%", (2880, 1792)),
+        ((4096, 2160), "3K / 85%", (3472, 1824)),
         ((3840, 1600), "2K / 75%", (2880, 1200)),
     ],
 )
 def test_resolve_render_size_scaled_uses_fixed_4k_scale_tiers_for_4k_inputs(capture_size, tier, expected):
-    config = RenderSizeConfig(policy=RenderSizePolicy.SCALED, scale_factor=tier, align=8)
+    config = RenderSizeConfig(policy=RenderSizePolicy.SCALED, scale_factor=tier, align=16)
 
     assert resolve_render_size(capture_size, config) == expected
 
 
 @pytest.mark.parametrize("capture_size", [(2560, 1440), (3440, 1440), (1080, 1920), (1000, 3000)])
 def test_resolve_render_size_scaled_keeps_non_4k_tier_input_native(capture_size):
-    config = RenderSizeConfig(policy=RenderSizePolicy.SCALED, scale_factor="1K / 50%", align=8)
+    config = RenderSizeConfig(policy=RenderSizePolicy.SCALED, scale_factor="1K / 50%", align=1)
 
     assert resolve_render_size(capture_size, config) == capture_size
 

@@ -27,7 +27,6 @@
   "screen_quality_filter": false,
   "screen_quality_sharpness": 0.35,
   "screen_quality_oversample": 1.0,
-  "xr_quad_layer_enabled": false,
   "xr_quad_layer_debug_offset": 0.0,
   "xr_quad_layer_stereo_boost": 1.0,
   "env_ambient_color": [
@@ -41,9 +40,6 @@
     0.48
   ],
   "screen_light_intensity": 3.5,
-  "screen_light_dynamic": true,
-  "screen_light_sample_interval": 3,
-  "screen_light_lerp": 0.35,
   "controller_hdr_lighting": false,
   "env_fill_lights": [],
   "lighting_presets": [

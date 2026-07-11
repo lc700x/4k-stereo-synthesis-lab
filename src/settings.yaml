@@ -313,7 +313,7 @@ Model List:
     resolutions:
     - 1536
 Depth Model: Distill-Any-Depth-Base
-Depth Strength: 0.25
+Depth Strength: 0.2
 Depth Quick: Standard
 Depth Resolution: 518
 Anti-aliasing: 1
@@ -331,7 +331,7 @@ Stereo Preset: cinema
 Stereo Quality: quality_4k
 Parallax Budget Preset: standard
 Temporal: true
-Temporal Strength: 0.25
+Temporal Strength: 0.2
 Auto Scene Reset: true
 Scene Reset Threshold: 0.22
 Edge Dilation: 1
@@ -366,7 +366,7 @@ Render Fixed Width: 1920
 Render Fixed Height: 1080
 Render Max Pixels: 8294400
 Render Min Dimension: 480
-Render Align: 8
+Render Align: 1
 Upscaler: 'Off'
 Upscaler Sharpness: 0.0
 Stream Protocol: HLS

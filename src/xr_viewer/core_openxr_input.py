@@ -31,7 +31,6 @@ class CoreOpenXRInputMixin:
                 state = xr.SessionState(event.state)
                 if state == xr.SessionState.READY:
                     now = time.perf_counter()
-                    self._debug_openxr_trace("event READY", now)
                     if (
                         now < self._openxr_retry_cooldown_until
                         or self._xr_session is None
@@ -53,7 +52,6 @@ class CoreOpenXRInputMixin:
                     self._openxr_ready_since = now
                     self._session_idle_since = 0.0
                     self._session_idle_notice_emitted = False
-                    self._debug_openxr_trace("event READY begin_session", now)
                     print("[OpenXRViewer] Session READY - awaiting render confirmation")
 
                 elif state in (

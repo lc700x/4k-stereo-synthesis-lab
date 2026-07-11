@@ -21,11 +21,22 @@ class RuntimeCallbacks:
     def breakdown_add_time(self, name, seconds):
         self.context.fps_breakdown.add_time(name, seconds)
 
+    def breakdown_add_value(self, name, value):
+        self.context.fps_breakdown.add_value(name, value)
+
+    def breakdown_set_latest(self, name, value):
+        self.context.fps_breakdown.set_latest(name, value)
+
     def breakdown_add_runtime_timing(self, runtime_result):
         self.context.fps_breakdown.add_runtime_timing(runtime_result)
 
+    def _render_active_for_breakdown(self):
+        render_active = getattr(getattr(self.context, "openxr_state", None), "render_active", None)
+        return render_active is None or render_active.is_set()
+
     def log_fps_breakdown(self, now=None):
-        self.context.fps_breakdown.log(now)
+        if self._render_active_for_breakdown():
+            self.context.fps_breakdown.log(now)
 
     def source_stat_inc(self, name, amount=1, **values):
         self.context.source_health.inc(name, amount, **values)
@@ -35,7 +46,8 @@ class RuntimeCallbacks:
 
     def log_source_health(self, now=None, force=False):
         self.context.source_health.log(now, force)
-        self.context.fps_breakdown.log(now)
+        if self._render_active_for_breakdown():
+            self.context.fps_breakdown.log(now)
 
     def openxr_source_paused(self):
         return self.context.openxr_state.source_paused()

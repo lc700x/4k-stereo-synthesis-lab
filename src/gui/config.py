@@ -153,7 +153,7 @@ DEFAULTS = {
     "Render Fixed Height": 1080,
     "Render Max Pixels": 3840 * 2160,
     "Render Min Dimension": 480,
-    "Render Align": 8,
+    "Render Align": 1,
     "Upscaler": "Off",
     "Upscaler Sharpness": 0.0,
     "Stream Protocol": "HLS",

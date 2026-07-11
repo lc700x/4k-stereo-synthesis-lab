@@ -7,6 +7,7 @@ from stereo_runtime import (
     StereoRuntime,
     StereoRuntimeConfig,
     StereoRuntimeResult,
+    openxr_config_for_preset,
     openxr_result_from_stereo_result,
 )
 from stereo_runtime.depth_provider import DepthProfileResult
@@ -75,6 +76,45 @@ def test_process_openxr_frame_defaults_to_rgb_depth_runtime_result():
     assert result.active_settings_version == 0
     assert result.hot_reload_class == "no_change"
     assert result.hot_reload_changed_fields == ()
+
+
+def test_traditional_openxr_preset_keeps_rgb_depth_when_global_prewarp_enabled(monkeypatch):
+    monkeypatch.setenv("D2S_OPENXR_PREWARP_EYES", "1")
+    config = StereoRuntimeConfig(
+        model_id="Distill-Any-Depth-Base",
+        cache_dir="models",
+        device="cpu",
+        depth_backend="pytorch_cuda",
+        stereo_preset="traditional_fastest",
+    )
+    runtime = StereoRuntime(config, depth_provider=FakeDepthProvider(), collect_memory_stats=False)
+    rgb = torch.rand(1, 3, 12, 16)
+
+    result = runtime.process_openxr_frame(rgb, openxr_config_for_preset("traditional_fastest"))
+
+    assert result.left_eye is rgb
+    assert result.right_eye is rgb
+    assert result.output_format == "openxr_rgb_depth"
+    assert result.debug_info["stereo_synthesis_mode"] == "rgb_depth_direct"
+
+
+def test_cinema_openxr_preset_uses_full_synthesis_when_global_prewarp_disabled(monkeypatch):
+    monkeypatch.setenv("D2S_OPENXR_PREWARP_EYES", "0")
+    monkeypatch.setenv("D2S_OPENXR_RUNTIME_OUTPUT_UINT8", "0")
+    config = StereoRuntimeConfig(
+        model_id="Distill-Any-Depth-Base",
+        cache_dir="models",
+        device="cpu",
+        depth_backend="pytorch_cuda",
+        stereo_preset="cinema",
+    )
+    runtime = StereoRuntime(config, depth_provider=FakeDepthProvider(), collect_memory_stats=False)
+    rgb = torch.rand(1, 3, 12, 16)
+
+    result = runtime.process_openxr_frame(rgb, openxr_config_for_preset("cinema"))
+
+    assert result.output_format == "openxr_eye_views"
+    assert result.debug_info["stereo_synthesis_mode"] == "full_synthesis_eyes"
 
 
 def test_process_openxr_frame_debug_info_carries_preprocess_device_metadata():
@@ -170,11 +210,12 @@ def test_openxr_result_from_stereo_result_keeps_full_size_eye_views_for_quality_
         provider_info={"provider": "fake"},
     )
 
-    result = openxr_result_from_stereo_result(stereo_result)
+    source_rgb = torch.full((1, 3, 2, 4), 0.5)
+    result = openxr_result_from_stereo_result(stereo_result, source_rgb=source_rgb)
 
     assert isinstance(result, OpenXRRuntimeResult)
     assert result.depth is depth
-    assert result.source_rgb is None
+    assert result.source_rgb is source_rgb
     assert result.left_eye.dtype == torch.uint8
     assert result.right_eye.dtype == torch.uint8
     assert result.left_eye.shape == (2, 4, 4)
@@ -263,6 +304,9 @@ def test_openxr_rgb_depth_debug_info_carries_structured_shader_uniforms():
         "depth_response": "linear_clamp_convergence_v1",
         "depth_strength": 2.0,
         "convergence": 0.0,
+        "foreground_shift_scale": 1.0,
+        "midground_shift_scale": 1.0,
+        "background_shift_scale": 1.0,
         "render_size": (16, 12),
         "screen_roll": 0.0,
     }
@@ -465,3 +509,33 @@ def test_process_openxr_frame_can_keep_prewarped_float_eye_views_when_disabled(m
     assert result.right_eye.dtype == torch.float32
     assert result.debug_info["runtime_output_dtype"] == "float32"
     assert result.debug_info["runtime_output_pack_backend"] == "none"
+
+
+def test_process_openxr_frame_cross_eyed_swaps_prewarped_eye_views(monkeypatch):
+    import stereo_runtime.runtime as runtime_module
+    from stereo_runtime.openxr_render import OpenXRStereoResult
+
+    monkeypatch.setenv("D2S_OPENXR_PREWARP_EYES", "1")
+    monkeypatch.setenv("D2S_OPENXR_RUNTIME_OUTPUT_UINT8", "0")
+
+    def fake_render_openxr_stereo(rgb, depth, config):
+        left = torch.zeros_like(rgb)
+        right = torch.ones_like(rgb)
+        return OpenXRStereoResult(left_eye=left, right_eye=right, debug_info={"backend": "fake"})
+
+    monkeypatch.setattr(runtime_module, "render_openxr_stereo", fake_render_openxr_stereo)
+    config = StereoRuntimeConfig(
+        model_id="Distill-Any-Depth-Base",
+        cache_dir="models",
+        device="cpu",
+        depth_backend="pytorch_cuda",
+        cross_eyed=True,
+    )
+    runtime = StereoRuntime(config, depth_provider=FakeDepthProvider(), collect_memory_stats=False)
+    rgb = torch.rand(1, 3, 12, 16)
+
+    result = runtime.process_openxr_frame(rgb, OpenXRRenderConfig())
+
+    assert torch.equal(result.left_eye, torch.ones_like(rgb))
+    assert torch.equal(result.right_eye, torch.zeros_like(rgb))
+    assert result.debug_info["cross_eyed"] == 1

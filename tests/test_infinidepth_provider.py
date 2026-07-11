@@ -26,7 +26,7 @@ def test_infinidepth_models_use_specialized_provider(model_id, encoder):
 
     assert isinstance(provider, InfiniDepthProvider)
     assert provider.encoder == encoder
-    assert provider.info.provider == "models.InfiniDepth.api.InfiniDepthModel"
+    assert provider.info.provider == "stereo_runtime.model_impl.InfiniDepth.api.InfiniDepthModel"
     assert provider.info.runtime == "infinidepth"
 
 

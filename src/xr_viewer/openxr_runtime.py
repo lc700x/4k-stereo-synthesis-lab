@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from queue import Empty
 from typing import Callable
 
 
@@ -21,6 +22,7 @@ class OpenXRRuntimeConfig:
     show_preview_window: bool
     capture_mode: str
     monitor_index: int
+    frame_size: tuple[int, int] = (1280, 720)
 
 
 @dataclass
@@ -33,6 +35,11 @@ class OpenXRRuntimeCallbacks:
     bootstrap_done_set: Callable
     breakdown_inc: Callable = _noop
     breakdown_add_time: Callable = _noop
+    breakdown_add_value: Callable = _noop
+    breakdown_set_latest: Callable = _noop
+    render_active_event: object | None = None
+    source_active_event: object | None = None
+    idle_active_event: object | None = None
 
 
 def use_environment_viewer(environment_model):
@@ -88,6 +95,8 @@ def load_openxr_viewer(environment_model):
 
 def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRuntimeCallbacks):
     OpenXRViewer = load_openxr_viewer(config.environment_model)
+    runtime_result = None
+    capture_start_time = None
     runtime_result, capture_start_time = runtime_q.get()
     callbacks.breakdown_inc("viewer_get")
     width, height = frame_size_from_runtime_result(runtime_result)
@@ -107,13 +116,18 @@ def run_openxr_mode(runtime_q, config: OpenXRRuntimeConfig, callbacks: OpenXRRun
             show_preview_window=config.show_preview_window,
             capture_mode=config.capture_mode,
             monitor_index=config.monitor_index,
-            render_active_event=None,
-            source_active_event=None,
-            idle_active_event=None,
+            render_active_event=callbacks.render_active_event,
+            source_active_event=callbacks.source_active_event,
+            idle_active_event=callbacks.idle_active_event,
             runtime_config_callback=callbacks.update_runtime_config,
         )
         viewer._fps_breakdown_inc = callbacks.breakdown_inc
         viewer._fps_breakdown_add_time = callbacks.breakdown_add_time
+        viewer._fps_breakdown_add_value = callbacks.breakdown_add_value
+        callbacks.breakdown_set_latest(
+            "openxr_async_effects_enabled",
+            bool(getattr(viewer, "_openxr_async_effects_enabled", True)),
+        )
         callbacks.source_active_set()
         callbacks.render_active_clear()
         callbacks.wait_idle_clear()

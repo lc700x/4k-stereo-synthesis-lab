@@ -169,7 +169,7 @@ class RuntimeConfigPublisher(CoreSourceStateMixin):
         self.depth_strength = 2.5
         self.convergence = 0.1
 
-    def _quad_layer_can_replace_projection_screen(self):
+    def _quad_layer_screen_presentable(self):
         return False
 
 
